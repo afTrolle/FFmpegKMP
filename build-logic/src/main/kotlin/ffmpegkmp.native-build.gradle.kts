@@ -1,6 +1,16 @@
+import io.github.aftrolle.ffmpegkmp.buildlogic.nativebuild.FfmpegNativeBuildExtension
+import io.github.aftrolle.ffmpegkmp.buildlogic.nativebuild.NativeBuildRegistration
+
 plugins {
     id("ffmpegkmp.project")
 }
 
-// Native compiler invocations, output metadata, hashes, and reproducibility
-// checks will be added here rather than duplicated by each target module.
+val ffmpegNativeBuild = extensions.create<FfmpegNativeBuildExtension>("ffmpegNativeBuild")
+val sharedConfiguration = parent?.extensions?.findByType(FfmpegNativeBuildExtension::class.java)
+    ?: error("${project.path} requires the :native-build shared configuration project")
+
+NativeBuildRegistration.inherit(sharedConfiguration, ffmpegNativeBuild)
+
+afterEvaluate {
+    NativeBuildRegistration.register(project, ffmpegNativeBuild)
+}

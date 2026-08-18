@@ -67,8 +67,8 @@ FFmpegKMP/
 
 - `build-logic/` contains the included Gradle build and convention plugins.
 - `ffmpeg/` is reserved for the pinned FFmpeg Git submodule.
-- `native-build/` will produce reproducible, target-specific FFmpeg artifacts
-  locally on the user's machine.
+- `native-build/` produces traceable, target-specific FFmpeg artifacts locally
+  on the user's machine.
 - `bindings/` is one KMP module containing generated interop code and internal
   adapters. JVM and Android share one JNI C++/Java binding implementation.
 - `library/` contains the platform-neutral API exposed to consumers.
@@ -88,8 +88,9 @@ model and reproducibility requirements.
 5. Add the FFmpeg command API and FFprobe metadata models.
 6. Add the optional filter-graph DSL, samples, tests, and publishing.
 
-The current repository covers the first stage and the FFmpeg source-pinning part
-of the second stage. No compilation or native build is expected to work yet.
+The current repository covers the first stage and the Android, Apple, and JVM
+desktop binary pipelines from the second stage. WebAssembly and generated
+bindings remain later work.
 
 ## Documentation
 
