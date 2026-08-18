@@ -21,6 +21,7 @@ object NativeBuildRegistration {
             child.android.profiles.maybeCreate(source.name)
             child.apple.profiles.maybeCreate(source.name)
             child.jvm.profiles.maybeCreate(source.name)
+            child.wasm.profiles.maybeCreate(source.name)
         }
     }
 
@@ -29,7 +30,7 @@ object NativeBuildRegistration {
             "android" -> registerAndroid(project, extension)
             "apple" -> registerApple(project, extension)
             "jvm" -> registerJvm(project, extension)
-            "wasm" -> project.logger.lifecycle("FFmpeg Wasm native build remains intentionally unimplemented")
+            "wasm" -> registerWasm(project, extension)
             else -> project.logger.warn("No FFmpeg native-build family registered for ${project.path}")
         }
     }
@@ -182,6 +183,34 @@ object NativeBuildRegistration {
         registerFamilyLifecycle(project, extension, profileAssemblies)
     }
 
+    private fun registerWasm(project: Project, extension: FfmpegNativeBuildExtension) {
+        extension.wasm.emscriptenDirectory.convention(resolveEmscriptenDirectory(project))
+        val profileAssemblies = mutableMapOf<String, TaskProvider<*>>()
+
+        extension.profiles.forEach { profile ->
+            val profileSuffix = profileTaskSuffix(profile.name)
+            val target = "wasm32"
+            val resolved = resolve(extension, profile.name, extension.wasm, target)
+            val buildTask = project.tasks.register(
+                "buildFfmpeg${profileSuffix}${targetTaskSuffix(target)}",
+                FfmpegBuildTask::class.java,
+            ) {
+                group = "ffmpeg native build"
+                description = "Builds FFmpeg ${profile.name} static libraries for browser Wasm"
+                applyCommonTaskInputs(project, extension, resolved, profile.name, target, "wasm")
+                architecture.set("wasm")
+                targetTriple.set("wasm32-unknown-emscripten")
+                emscriptenDirectory.set(extension.wasm.emscriptenDirectory)
+            }
+            profileAssemblies[profile.name] = project.tasks.register("assembleFfmpeg$profileSuffix") {
+                group = "ffmpeg native build"
+                description = "Assembles FFmpeg ${profile.name} static libraries for browser Wasm"
+                dependsOn(buildTask)
+            }
+        }
+        registerFamilyLifecycle(project, extension, profileAssemblies)
+    }
+
     private fun registerFamilyLifecycle(
         project: Project,
         extension: FfmpegNativeBuildExtension,
@@ -324,6 +353,15 @@ object NativeBuildRegistration {
                     ?: defaultAndroidSdkDirectory()
                 File(sdk, "ndk/${version.get()}").absolutePath
             },
+        )
+
+    private fun resolveEmscriptenDirectory(project: Project): Provider<String> =
+        project.providers.gradleProperty("ffmpegkmp.wasm.emscriptenDir").orElse(
+            project.providers.environmentVariable("EMSCRIPTEN").orElse(
+                project.providers.environmentVariable("EMSDK")
+                    .map { File(it, "upstream/emscripten").absolutePath }
+                    .orElse(""),
+            ),
         )
 
     private fun defaultAndroidSdkDirectory(): String {

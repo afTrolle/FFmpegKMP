@@ -1,7 +1,8 @@
 # Contributing
 
-FFmpegKMP is still in its initial scaffolding and source-pinning stages. No
-compilation or native build is expected to work yet.
+FFmpegKMP is still in its early implementation stages. The native FFmpeg build
+pipelines are available, while generated bindings and the public runtime remain
+future work.
 
 ## Development checkout
 
@@ -19,9 +20,10 @@ the submodule so it matches the revision expected by the parent repository:
 git submodule update --init --recursive
 ```
 
-The Gradle daemon uses an Adoptium Java 21 toolchain. Additional SDK, NDK, and
-Emscripten requirements will be documented as the corresponding native build
-pipelines are implemented.
+The Gradle daemon uses an Adoptium Java 21 toolchain. Android builds require the
+configured Android NDK, Apple builds require Xcode, JVM builds require the host
+C toolchain, and browser builds require an activated Emscripten SDK. See the
+native build documentation for versions, overrides, and target-specific setup.
 
 ## Dependency integrity
 

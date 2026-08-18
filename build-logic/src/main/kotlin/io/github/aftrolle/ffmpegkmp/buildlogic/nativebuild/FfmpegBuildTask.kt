@@ -46,6 +46,7 @@ abstract class FfmpegBuildTask : DefaultTask() {
     @get:Input abstract val deploymentTarget: Property<String>
     @get:Input abstract val androidApiLevel: Property<Int>
     @get:Input abstract val androidNdkDirectory: Property<String>
+    @get:Input abstract val emscriptenDirectory: Property<String>
     @get:Input abstract val jobs: Property<Int>
 
     @get:Input abstract val buildPrograms: Property<Boolean>
@@ -81,6 +82,7 @@ abstract class FfmpegBuildTask : DefaultTask() {
         targetTriple.convention("")
         androidApiLevel.convention(24)
         androidNdkDirectory.convention("")
+        emscriptenDirectory.convention("")
         encoders.convention(emptySet())
         decoders.convention(emptySet())
         muxers.convention(emptySet())
@@ -128,6 +130,7 @@ abstract class FfmpegBuildTask : DefaultTask() {
             "android" -> configureAndroid(arguments)
             "apple" -> configureApple(arguments)
             "jvm" -> configureJvm(arguments)
+            "wasm" -> configureWasm(arguments)
             else -> error("Unsupported FFmpeg target kind: ${targetKind.get()}")
         }
 
@@ -148,10 +151,15 @@ abstract class FfmpegBuildTask : DefaultTask() {
 
         val configureLog = work.resolve("configure.log")
         val output = ByteArrayOutputStream()
-        val configureCommand = if (System.getProperty("os.name").lowercase().contains("windows")) {
+        val configureInvocation = if (System.getProperty("os.name").lowercase().contains("windows")) {
             listOf("bash", configure.absolutePath) + arguments
         } else {
             listOf(configure.absolutePath) + arguments
+        }
+        val configureCommand = if (targetKind.get() == "wasm") {
+            listOf(emscriptenTool("emconfigure")) + configureInvocation
+        } else {
+            configureInvocation
         }
         val configureResult = execOperations.exec {
             workingDir(work)
@@ -170,12 +178,12 @@ abstract class FfmpegBuildTask : DefaultTask() {
 
         execOperations.exec {
             workingDir(work)
-            commandLine("make", "-j${jobs.get()}")
+            commandLine(makeCommand("-j${jobs.get()}"))
             environment(reproducibleEnvironment())
         }
         execOperations.exec {
             workingDir(work)
-            commandLine("make", "install-libs", "install-headers")
+            commandLine(makeCommand("install-libs", "install-headers"))
             environment(reproducibleEnvironment())
         }
 
@@ -346,6 +354,72 @@ abstract class FfmpegBuildTask : DefaultTask() {
         }
     }
 
+    private fun configureWasm(arguments: MutableList<String>) {
+        val requiredTools = listOf("emcc", "em++", "emar", "emnm", "emranlib", "emconfigure", "emmake")
+        requiredTools.forEach { tool ->
+            require(commandExists(emscriptenTool(tool))) {
+                "Emscripten tool '$tool' was not found. Source emsdk_env.sh or set " +
+                    "-Pffmpegkmp.wasm.emscriptenDir=<directory-containing-emcc>."
+            }
+        }
+        arguments += listOf(
+            "--target-os=none",
+            "--arch=${architecture.get()}",
+            "--enable-cross-compile",
+            "--cc=${emscriptenTool("emcc")}",
+            "--cxx=${emscriptenTool("em++")}",
+            "--ar=${emscriptenTool("emar")}",
+            "--nm=${emscriptenTool("emnm")}",
+            "--ranlib=${emscriptenTool("emranlib")}",
+            "--enable-static",
+            "--disable-shared",
+            "--disable-stripping",
+            "--disable-pthreads",
+            "--disable-w32threads",
+            "--disable-os2threads",
+            "--disable-runtime-cpudetect",
+        )
+        if (extraCompilerArgs.get().isNotEmpty()) {
+            arguments += "--extra-cflags=${extraCompilerArgs.get().joinToString(" ")}"
+        }
+        if (extraLinkerArgs.get().isNotEmpty()) {
+            arguments += "--extra-ldflags=${extraLinkerArgs.get().joinToString(" ")}"
+        }
+    }
+
+    private fun makeCommand(vararg arguments: String): List<String> =
+        if (targetKind.get() == "wasm") {
+            listOf(emscriptenTool("emmake"), "make") + arguments
+        } else {
+            listOf("make") + arguments
+        }
+
+    private fun emscriptenTool(name: String): String {
+        val directory = emscriptenDirectory.get().trim()
+        if (directory.isEmpty()) return name
+        val base = File(directory)
+        val candidates = if (System.getProperty("os.name").lowercase().contains("windows")) {
+            listOf(base.resolve("$name.bat"), base.resolve("$name.cmd"), base.resolve(name))
+        } else {
+            listOf(base.resolve(name))
+        }
+        return candidates.firstOrNull(File::isFile)?.absolutePath ?: candidates.first().absolutePath
+    }
+
+    private fun commandExists(command: String): Boolean {
+        val file = File(command)
+        if (file.isAbsolute || command.contains(File.separatorChar)) return file.isFile
+        val path = System.getenv("PATH").orEmpty().split(File.pathSeparatorChar)
+        val suffixes = if (System.getProperty("os.name").lowercase().contains("windows")) {
+            listOf("", ".bat", ".cmd", ".exe")
+        } else {
+            listOf("")
+        }
+        return path.any { directory ->
+            suffixes.any { suffix -> File(directory, command + suffix).isFile }
+        }
+    }
+
     private fun addComponentFlags(arguments: MutableList<String>, type: String, values: Set<String>) {
         values.sorted().forEach { arguments += "--enable-$type=$it" }
     }
@@ -358,6 +432,7 @@ abstract class FfmpegBuildTask : DefaultTask() {
         val extension = when (targetKind.get()) {
             "android" -> "so"
             "apple" -> "a"
+            "wasm" -> "a"
             "jvm" -> when (targetName.get().substringBefore('-')) {
                 "macos" -> "dylib"
                 "windows" -> "dll"
@@ -420,6 +495,9 @@ abstract class FfmpegBuildTask : DefaultTask() {
         val toolchain = when (targetKind.get()) {
             "apple" -> runCatching { commandOutput("xcodebuild", "-version") }.getOrDefault("unknown")
             "android" -> File(androidNdkDirectory.get()).resolve("source.properties").takeIf(File::isFile)?.readText()?.trim() ?: "unknown"
+            "wasm" -> runCatching {
+                commandOutput(emscriptenTool("emcc"), "--version").lineSequence().first()
+            }.getOrDefault("unknown")
             else -> runCatching { commandOutput("cc", "--version").lineSequence().first() }.getOrDefault("unknown")
         }
         val artifacts = install.walkTopDown()

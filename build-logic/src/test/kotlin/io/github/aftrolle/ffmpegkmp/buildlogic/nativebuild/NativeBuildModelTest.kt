@@ -4,6 +4,7 @@ import org.gradle.testfixtures.ProjectBuilder
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
+import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 
 class NativeBuildModelTest {
@@ -60,5 +61,18 @@ class NativeBuildModelTest {
         assertEquals("Standard", profileTaskSuffix("standard"))
         assertEquals("Arm64V8a", targetTaskSuffix("arm64-v8a"))
         assertEquals("MyProfile", profileTaskSuffix("my_profile"))
+    }
+
+    @Test
+    fun `shared profiles are inherited by the wasm platform`() {
+        val objects = ProjectBuilder.builder().build().objects
+        val parent = objects.newInstance(FfmpegNativeBuildExtension::class.java).apply {
+            profiles.create("standard")
+        }
+        val child = objects.newInstance(FfmpegNativeBuildExtension::class.java)
+
+        NativeBuildRegistration.inherit(parent, child)
+
+        assertNotNull(child.wasm.profiles.findByName("standard"))
     }
 }

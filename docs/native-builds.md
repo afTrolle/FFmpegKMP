@@ -4,8 +4,9 @@ The Gradle modules under `native-build` compile the pinned FFmpeg source into
 client-consumable libraries. Android produces a Prefab AAR, Apple produces raw
 static install trees and one XCFramework per FFmpeg library, and JVM desktop
 produces raw shared libraries for each configured machine that the active host
-can compile. Binding generation is a separate stage and is intentionally not
-part of these tasks.
+can compile. Wasm produces Emscripten static archives for the browser bindings
+link step. Binding generation is a separate stage and is intentionally not part
+of these tasks.
 
 ## Quick start
 
@@ -23,12 +24,14 @@ The root task selects a profile with `-Pffmpegkmp.profile=min`, `standard`, or
 ./gradlew :native-build:android:assembleFfmpegStandard
 ./gradlew :native-build:apple:assembleFfmpegStandard
 ./gradlew :native-build:jvm:assembleFfmpegStandard
+./gradlew :native-build:wasm:assembleFfmpegStandard
 ```
 
 `assemble` in a family module builds only its configured default profile.
 `assembleAllFfmpegProfiles` builds all profiles. Target tasks follow the form
 `buildFfmpeg<Profile><Target>`, for example
-`buildFfmpegStandardArm64V8a` and `buildFfmpegStandardIosArm64`.
+`buildFfmpegStandardArm64V8a`, `buildFfmpegStandardIosArm64`, and
+`buildFfmpegStandardWasm32`.
 
 Use `-Pffmpegkmp.jobs=<count>` to limit native make parallelism. Android uses
 NDK `30.0.15729638` (r30 beta 2) by default. Override its location with
@@ -157,6 +160,35 @@ macOS `standard`/`full` uses VideoToolbox and AudioToolbox and emits relocatable
 `@rpath` dylib IDs. Windows uses FFmpeg's SDK-provided D3D paths where available.
 Linux hardware APIs stay disabled until a pinned native dependency layer is
 added.
+
+### WebAssembly
+
+Wasm builds use the active Emscripten SDK to compile `wasm32` static archives
+under `native-build/wasm/out/<profile>/wasm32/`. The output contains the seven
+`libav*.a` archives, public headers, licence files, the redistribution
+disclaimer, and `build-manifest.json`. The future bindings pipeline will link
+these archives into the JavaScript and `.wasm` runtime artifacts; this native
+build deliberately does not invent an exported C/JavaScript API.
+
+Activate Emscripten in the shell before running the task:
+
+```shell
+source /path/to/emsdk/emsdk_env.sh
+./gradlew :native-build:wasm:assembleFfmpegStandard
+```
+
+Alternatively, point Gradle at the directory containing `emcc`, `emconfigure`,
+and `emmake`:
+
+```shell
+./gradlew :native-build:wasm:assembleFfmpegStandard \
+  -Pffmpegkmp.wasm.emscriptenDir=/path/to/emsdk/upstream/emscripten
+```
+
+Browser builds disable host devices, network sockets, hardware acceleration,
+and pthreads for predictable single-threaded deployment. Profile component
+selection and target overrides remain available through `wasm { ... }`; the
+only registered target name is `wasm32`.
 
 ## Traceability and licensing checks
 

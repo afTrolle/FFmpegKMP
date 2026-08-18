@@ -88,8 +88,8 @@ model and reproducibility requirements.
 5. Add the FFmpeg command API and FFprobe metadata models.
 6. Add the optional filter-graph DSL, samples, tests, and publishing.
 
-The current repository covers the first stage and the Android, Apple, and JVM
-desktop binary pipelines from the second stage. WebAssembly and generated
+The current repository covers the first stage and the Android, Apple, JVM
+desktop, and WebAssembly binary pipelines from the second stage. Generated
 bindings remain later work.
 
 ## Documentation

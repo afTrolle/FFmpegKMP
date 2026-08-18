@@ -8,7 +8,7 @@ val selectedNativeProfile = providers.gradleProperty("ffmpegkmp.profile").orElse
 
 tasks.register("assembleNativeBinaries") {
     group = "ffmpeg native build"
-    description = "Assembles the selected FFmpeg profile for Android, Apple, and the configured JVM machines"
+    description = "Assembles the selected FFmpeg profile for Android, Apple, JVM, and browser Wasm"
     dependsOn(selectedNativeProfile.map { profile ->
         val suffix = profile.split('-', '_').joinToString("") { part ->
             part.replaceFirstChar { if (it.isLowerCase()) it.titlecase() else it.toString() }
@@ -17,6 +17,7 @@ tasks.register("assembleNativeBinaries") {
             ":native-build:android:assembleFfmpeg$suffix",
             ":native-build:apple:assembleFfmpeg$suffix",
             ":native-build:jvm:assembleFfmpeg$suffix",
+            ":native-build:wasm:assembleFfmpeg$suffix",
         )
     })
 }

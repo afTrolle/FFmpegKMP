@@ -114,6 +114,11 @@ abstract class JvmBuildOptions : FfmpegPlatformOptions() {
     abstract val macosDeploymentTarget: Property<String>
 }
 
+abstract class WasmBuildOptions : FfmpegPlatformOptions() {
+    /** Directory containing emcc, emconfigure, and the other Emscripten tools. */
+    abstract val emscriptenDirectory: Property<String>
+}
+
 abstract class FfmpegNativeBuildExtension @Inject constructor(objects: ObjectFactory) {
     abstract val defaultProfile: Property<String>
     abstract val sourceDirectory: Property<String>
@@ -125,12 +130,14 @@ abstract class FfmpegNativeBuildExtension @Inject constructor(objects: ObjectFac
     val android: AndroidBuildOptions = objects.newInstance(AndroidBuildOptions::class.java)
     val apple: AppleBuildOptions = objects.newInstance(AppleBuildOptions::class.java)
     val jvm: JvmBuildOptions = objects.newInstance(JvmBuildOptions::class.java)
+    val wasm: WasmBuildOptions = objects.newInstance(WasmBuildOptions::class.java)
 
     fun common(action: Action<in FfmpegBuildOptions>) = action.execute(common)
     fun profiles(action: Action<in NamedDomainObjectContainer<FfmpegProfile>>) = action.execute(profiles)
     fun android(action: Action<in AndroidBuildOptions>) = action.execute(android)
     fun apple(action: Action<in AppleBuildOptions>) = action.execute(apple)
     fun jvm(action: Action<in JvmBuildOptions>) = action.execute(jvm)
+    fun wasm(action: Action<in WasmBuildOptions>) = action.execute(wasm)
 }
 
 internal data class MutableResolvedOptions(
