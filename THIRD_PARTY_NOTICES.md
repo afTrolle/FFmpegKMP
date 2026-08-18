@@ -1,0 +1,77 @@
+# Third-party notices
+
+This file identifies third-party material intentionally referenced or included
+in the FFmpegKMP source tree and material that users may compile locally. It
+does not replace the applicable license texts.
+
+## FFmpeg
+
+FFmpegKMP contains a pinned FFmpeg source checkout in the `ffmpeg/` Git
+submodule and provides build logic that can compile target-specific FFmpeg
+binaries locally. Publication and downstream-distribution rules are defined in
+the [licensing and distribution policy](docs/licensing.md).
+
+FFmpeg is developed by the FFmpeg project and its contributors:
+
+- Project: <https://ffmpeg.org/>
+- Source: <https://git.ffmpeg.org/ffmpeg.git>
+- Licence information: <https://ffmpeg.org/doxygen/trunk/md_LICENSE.html>
+- Compliance guidance: <https://ffmpeg.org/legal.html>
+
+Most FFmpeg files are licensed under the GNU Lesser General Public License
+version 2.1 or later (`LGPL-2.1-or-later`). Some optional FFmpeg components and
+external libraries are licensed under the GNU General Public License. Enabling
+those components changes the licence that applies to the resulting FFmpeg
+binary. Enabling `--enable-nonfree` produces a binary that FFmpeg describes as
+unredistributable.
+
+The authoritative licence texts for the pinned source are included in the
+submodule, including:
+
+- `ffmpeg/LICENSE.md`
+- `ffmpeg/COPYING.LGPLv2.1`
+- `ffmpeg/COPYING.LGPLv3`
+- `ffmpeg/COPYING.GPLv2`
+- `ffmpeg/COPYING.GPLv3`
+
+FFmpegKMP's Apache License 2.0 does not replace or alter these licences.
+
+Recommended attribution for an LGPL build:
+
+> This product uses libraries from the FFmpeg project under the GNU Lesser
+> General Public License version 2.1 or later. Corresponding source and build
+> information are provided with the product or from its download location.
+
+FFmpeg includes JPEG implementation files derived from work by the Independent
+JPEG Group. When distributing executable-only FFmpeg artifacts, preserve the
+credit and change-disclosure requirements described in `ffmpeg/LICENSE.md`.
+
+> This software is based in part on the work of the Independent JPEG Group.
+
+FFmpeg is a trademark of Fabrice Bellard. FFmpegKMP is an independent project
+and is not affiliated with or endorsed by the FFmpeg project.
+
+## Bindings module licence
+
+As a cautious boundary for material generated from FFmpeg's LGPL-licensed
+headers, the FFmpegKMP `bindings` module and its generated bindings are licensed
+under `LGPL-2.1-or-later`. The complete licence text is included in
+`bindings/LICENSE`. This module-level licence does not apply to the separate
+high-level Kotlin API and build-logic modules, which remain Apache-2.0.
+
+The policy for generated header-derived bindings is documented in
+[Licensing and distribution](docs/licensing.md).
+
+## Downstream distribution responsibility
+
+The [licensing and distribution policy](docs/licensing.md) describes the
+responsibilities that apply when distributing a locally generated FFmpeg binary,
+generated bindings, or an application containing them.
+
+## Other dependencies
+
+Kotlin, Gradle plugins, native libraries, binding generators, and other build or
+runtime dependencies retain their respective copyrights and licences. Before a
+dependency is bundled into a release, its licence and notices must be added to
+the release materials and checked against the effective FFmpeg build licence.
+This file must be updated when such dependencies are introduced.

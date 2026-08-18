@@ -1,0 +1,44 @@
+# Local Gradle and Kotlin state
+.gradle/
+.kotlin/
+**/build/
+
+# IDE and local machine configuration
+.idea/
+*.iml
+local.properties
+.DS_Store
+
+# Android native build output
+.cxx/
+.externalNativeBuild/
+captures/
+
+# Apple local state
+xcuserdata/
+DerivedData/
+*.xcuserstate
+
+# JavaScript tooling
+node_modules/
+
+# Reproducible native-build intermediates and artifacts
+/native-build/**/work/
+/native-build/**/out/
+/native-build/**/toolchains/
+
+### Gradle ###
+.gradle
+!src/**/build/
+
+# Ignore Gradle GUI config
+gradle-app.setting
+
+# Avoid ignoring Gradle wrapper jar file (.jar files are usually ignored)
+!gradle-wrapper.jar
+
+# Avoid ignore Gradle wrappper properties
+!gradle-wrapper.properties
+
+# Cache of project
+.gradletasknamecache
