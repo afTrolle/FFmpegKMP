@@ -32,8 +32,6 @@ import kotlinx.io.buffered
 import kotlinx.io.files.Path
 import kotlinx.io.files.SystemFileSystem
 import kotlinx.io.files.SystemTemporaryDirectory
-import kotlinx.io.readByteArray
-import kotlinx.io.write
 import kotlin.random.Random
 
 @InternalFFmpegKmpApi
@@ -85,7 +83,8 @@ private class NativeCInteropExecutionBridge : NativeExecutionBridge {
                     "The FFmpegKMP bridge was built without the patched fftools entry points",
                 )
             }
-            return NativeExecutionResult(returnCode, staging.readOutputs())
+            staging.writeOutputs()
+            return NativeExecutionResult(returnCode)
         } finally {
             callbackState.emit = null
             staging.close()
@@ -106,7 +105,7 @@ private class NativeCInteropExecutionBridge : NativeExecutionBridge {
 }
 
 private class NativeCommandStaging(request: NativeExecutionRequest) : AutoCloseable {
-    private val root: Path? = if (request.inputs.isEmpty() && request.outputPaths.isEmpty()) {
+    private val root: Path? = if (request.inputs.isEmpty() && request.outputs.isEmpty()) {
         null
     } else {
         Path(
@@ -115,27 +114,29 @@ private class NativeCommandStaging(request: NativeExecutionRequest) : AutoClosea
         ).also { SystemFileSystem.createDirectories(it, mustCreate = true) }
     }
     private val paths = mutableMapOf<String, Path>()
-    private val outputPaths = request.outputPaths
+    private val outputs = request.outputs
 
     init {
         request.inputs.forEachIndexed { index, input ->
             val path = Path(root!!, "input-$index${input.path.fileSuffix()}")
-            SystemFileSystem.sink(path).buffered().use { sink -> sink.write(input.bytes) }
+            SystemFileSystem.sink(path).buffered().use { sink -> sink.transferFrom(input.source) }
             paths[input.path] = path
         }
-        request.outputPaths.forEachIndexed { index, output ->
-            paths[output] = Path(root!!, "output-$index${output.fileSuffix()}")
+        request.outputs.forEachIndexed { index, output ->
+            paths[output.path] = Path(root!!, "output-$index${output.path.fileSuffix()}")
         }
     }
 
     fun resolve(argument: String): String = paths[argument]?.toString() ?: argument
 
-    fun readOutputs(): Map<String, ByteArray> = outputPaths.mapNotNull { original ->
-        val path = paths.getValue(original)
-        if (!SystemFileSystem.exists(path)) null else {
-            original to SystemFileSystem.source(path).buffered().use { it.readByteArray() }
+    fun writeOutputs() {
+        outputs.forEach { output ->
+            val path = paths.getValue(output.path)
+            if (SystemFileSystem.exists(path)) {
+                SystemFileSystem.source(path).buffered().use { it.transferTo(output.sink) }
+            }
         }
-    }.toMap()
+    }
 
     override fun close() {
         paths.values.toSet().forEach { path ->

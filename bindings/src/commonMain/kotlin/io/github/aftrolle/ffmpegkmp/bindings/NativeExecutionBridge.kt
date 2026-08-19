@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: LGPL-2.1-or-later
 package io.github.aftrolle.ffmpegkmp.bindings
 
+import kotlinx.io.RawSink
+import kotlinx.io.RawSource
+
 /** Internal ABI shared by the public Kotlin modules and the generated platform bindings. */
 @RequiresOptIn(
     message = "This is an internal FFmpegKMP binding API and may change without notice.",
@@ -16,9 +19,15 @@ public enum class NativeCommandKind {
 }
 
 @InternalFFmpegKmpApi
-public data class NativeMountedInput(
-    val path: String,
-    val bytes: ByteArray,
+public class NativeMountedInput(
+    public val path: String,
+    public val source: RawSource,
+)
+
+@InternalFFmpegKmpApi
+public class NativeMountedOutput(
+    public val path: String,
+    public val sink: RawSink,
 )
 
 @InternalFFmpegKmpApi
@@ -27,7 +36,7 @@ public data class NativeExecutionRequest(
     val kind: NativeCommandKind,
     val arguments: List<String>,
     val inputs: List<NativeMountedInput> = emptyList(),
-    val outputPaths: List<String> = emptyList(),
+    val outputs: List<NativeMountedOutput> = emptyList(),
 )
 
 @InternalFFmpegKmpApi
@@ -38,10 +47,10 @@ public sealed interface NativeExecutionEvent {
     public enum class Stream { STDOUT, STDERR }
 }
 
+/** Mounted output data is streamed into each [NativeMountedOutput.sink] before execute returns. */
 @InternalFFmpegKmpApi
 public data class NativeExecutionResult(
     val returnCode: Int,
-    val outputs: Map<String, ByteArray> = emptyMap(),
 )
 
 @InternalFFmpegKmpApi

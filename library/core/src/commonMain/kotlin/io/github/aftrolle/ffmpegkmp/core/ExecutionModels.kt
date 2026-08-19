@@ -40,6 +40,21 @@ public sealed interface ExecutionEvent {
         val stream: OutputStream,
         val text: String,
     ) : ExecutionEvent
+
+    /**
+     * Periodic encoding progress parsed from FFmpeg's status reports.
+     * Emission frequency follows `-stats_period` (default 0.5s).
+     * Fields are null when FFmpeg reported no value (`N/A`).
+     */
+    public data class Progress(
+        val frame: Long? = null,
+        val fps: Double? = null,
+        val outTime: Duration? = null,
+        val totalSizeBytes: Long? = null,
+        val bitrate: String? = null,
+        val speed: Double? = null,
+        val end: Boolean = false,
+    ) : ExecutionEvent
 }
 
 public data class ExecutionResult(
@@ -50,6 +65,11 @@ public data class ExecutionResult(
     val logs: List<ExecutionEvent.Log>,
     val duration: Duration,
     val cancelled: Boolean,
+    /**
+     * The last progress report FFmpeg emitted, if any. A run can exit 0 without encoding a
+     * single video frame (broken hardware encoders); check `finalProgress?.frame` to detect it.
+     */
+    val finalProgress: ExecutionEvent.Progress? = null,
 ) {
     public val isSuccess: Boolean get() = !cancelled && returnCode == 0
 }

@@ -43,6 +43,8 @@ struct ffmpegkmp_context {
 };
 
 static _Atomic(ffmpegkmp_context *) active_context = NULL;
+/* Unsynchronized on purpose: hosts set it once, before the first execute. */
+static char ffmpegkmp_temp_directory[448];
 static atomic_int active_kind;
 static _Thread_local jmp_buf exit_target;
 static _Thread_local int exit_target_active;
@@ -113,7 +115,7 @@ int ffmpegkmp_execute(
     int (*entry)(int, char **);
     int result;
 #if FFMPEGKMP_EMBEDDED_FFTOOLS
-    char probe_output[64] = { 0 };
+    char probe_output[512] = { 0 };
     char **effective_argv = (char **) argv;
     int effective_argc = argc;
 #endif
@@ -127,6 +129,10 @@ int ffmpegkmp_execute(
     atomic_store(&active_kind, kind);
 #if FFMPEGKMP_EMBEDDED_FFTOOLS
     av_log_set_callback(ffmpegkmp_log_callback);
+    /* fftools' -v/-loglevel mutates the process-global log level, so a run that
+     * passed `-v error` (a typical ffprobe) would silence every later run in the
+     * same process — including the stats lines callers parse. Reset per run. */
+    av_log_set_level(AV_LOG_INFO);
 #endif
     entry = kind == FFMPEGKMP_COMMAND_FFMPEG
             ? ffmpegkmp_ffmpeg_entry
@@ -141,8 +147,20 @@ int ffmpegkmp_execute(
         snprintf(probe_output, sizeof(probe_output), "/ffmpegkmp-probe-output.json");
         remove(probe_output);
 #else
+        /* A relative template resolves against the process cwd, which in Android app
+         * processes is the unwritable "/" — mkstemp fails and the -o redirect is
+         * silently dropped, losing the probe JSON. Anchor the file in an explicitly
+         * configured directory, or TMPDIR (set on Apple platforms), before falling
+         * back to the cwd for CLI-style hosts. */
         int probe_fd;
-        snprintf(probe_output, sizeof(probe_output), "ffmpegkmp-probe-XXXXXX");
+        const char *temp_directory = ffmpegkmp_temp_directory[0]
+                ? ffmpegkmp_temp_directory
+                : getenv("TMPDIR");
+        if (temp_directory && *temp_directory)
+            snprintf(probe_output, sizeof(probe_output),
+                    "%s/ffmpegkmp-probe-XXXXXX", temp_directory);
+        else
+            snprintf(probe_output, sizeof(probe_output), "ffmpegkmp-probe-XXXXXX");
         probe_fd = mkstemp(probe_output);
         if (probe_fd >= 0)
             close(probe_fd);
@@ -197,6 +215,14 @@ int ffmpegkmp_execute(
 #endif
     atomic_store(&active_context, NULL);
     return result;
+}
+
+void ffmpegkmp_set_temp_directory(const char *path) {
+    if (!path || !*path) {
+        ffmpegkmp_temp_directory[0] = 0;
+        return;
+    }
+    snprintf(ffmpegkmp_temp_directory, sizeof(ffmpegkmp_temp_directory), "%s", path);
 }
 
 void ffmpegkmp_exit(int status) {

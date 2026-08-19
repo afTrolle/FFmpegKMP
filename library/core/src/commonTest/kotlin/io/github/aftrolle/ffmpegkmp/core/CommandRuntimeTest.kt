@@ -25,6 +25,7 @@ import kotlinx.io.RawSink
 import kotlinx.io.RawSource
 import kotlinx.io.buffered
 import kotlinx.io.readByteArray
+import kotlinx.io.write
 
 class CommandRuntimeTest {
     @Test
@@ -63,9 +64,13 @@ class CommandRuntimeTest {
         val input = TrackingRawSource("hello".encodeToByteArray())
         val output = TrackingRawSink()
         val bridge = FakeBridge { request, emit ->
-            assertContentEquals("hello".encodeToByteArray(), request.inputs.single().bytes)
+            val mounted = request.inputs.single()
+            assertContentEquals("hello".encodeToByteArray(), mounted.source.buffered().readByteArray())
             emit(NativeExecutionEvent.Output(NativeExecutionEvent.Stream.STDOUT, "done"))
-            NativeExecutionResult(0, mapOf("result.bin" to "world".encodeToByteArray()))
+            val sink = request.outputs.single { it.path == "result.bin" }.sink
+            val payload = Buffer().also { it.write("world".encodeToByteArray()) }
+            sink.write(payload, payload.size)
+            NativeExecutionResult(0)
         }
         val client = CommandRuntimeClient(CommandKind.FFMPEG, bridge)
         val result = client.execute(

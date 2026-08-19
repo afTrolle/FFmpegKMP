@@ -7,6 +7,9 @@ import io.github.aftrolle.ffmpegkmp.bindings.generated.bridge.ffmpegkmp_context
 import io.github.aftrolle.ffmpegkmp.bindings.generated.bridge.ffmpegkmp_event_callback
 import io.github.aftrolle.ffmpegkmp.bindings.generated.bridge.global.bridge
 import java.io.File
+import kotlinx.io.buffered
+import kotlinx.io.files.Path
+import kotlinx.io.files.SystemFileSystem
 import org.bytedeco.javacpp.BytePointer
 import org.bytedeco.javacpp.Loader
 import org.bytedeco.javacpp.Pointer
@@ -44,6 +47,12 @@ private class JavaCppExecutionBridge : NativeExecutionBridge {
         }
         context = bridge.ffmpegkmp_context_create(callback, null)
             ?: throw NativeBridgeUnavailableException("FFmpegKMP JavaCPP context allocation failed")
+        // Android app processes have an unwritable cwd and no TMPDIR, which breaks the
+        // bridge's ffprobe stdout redirect; java.io.tmpdir is always app-writable.
+        System.getProperty("java.io.tmpdir")
+            ?.let(::File)
+            ?.takeIf(File::isDirectory)
+            ?.let { bridge.ffmpegkmp_set_temp_directory(it.absolutePath) }
     }
 
     override suspend fun execute(
@@ -51,7 +60,7 @@ private class JavaCppExecutionBridge : NativeExecutionBridge {
         emit: (NativeExecutionEvent) -> Unit,
     ): NativeExecutionResult {
         check(!closed) { "The JavaCPP execution bridge is closed" }
-        val staging = if (request.inputs.isNotEmpty() || request.outputPaths.isNotEmpty()) {
+        val staging = if (request.inputs.isNotEmpty() || request.outputs.isNotEmpty()) {
             createStagingDirectory(request.id)
         } else {
             null
@@ -60,11 +69,11 @@ private class JavaCppExecutionBridge : NativeExecutionBridge {
         try {
             request.inputs.forEachIndexed { index, input ->
                 val file = File(staging, "input-$index${input.path.fileSuffix()}")
-                file.writeBytes(input.bytes)
+                SystemFileSystem.sink(Path(file.absolutePath)).buffered().use { it.transferFrom(input.source) }
                 stagedPaths[input.path] = file
             }
-            request.outputPaths.forEachIndexed { index, path ->
-                stagedPaths[path] = File(staging, "output-$index${path.fileSuffix()}")
+            request.outputs.forEachIndexed { index, output ->
+                stagedPaths[output.path] = File(staging, "output-$index${output.path.fileSuffix()}")
             }
 
             val executable = if (request.kind == NativeCommandKind.FFMPEG) "ffmpeg" else "ffprobe"
@@ -93,11 +102,13 @@ private class JavaCppExecutionBridge : NativeExecutionBridge {
                     "The FFmpegKMP JNI bridge was built without embedded fftools entry points",
                 )
             }
-            val outputs = request.outputPaths.mapNotNull { path ->
-                val file = stagedPaths.getValue(path)
-                if (file.isFile) path to file.readBytes() else null
-            }.toMap()
-            return NativeExecutionResult(returnCode, outputs)
+            request.outputs.forEach { output ->
+                val file = stagedPaths.getValue(output.path)
+                if (file.isFile) {
+                    SystemFileSystem.source(Path(file.absolutePath)).buffered().use { it.transferTo(output.sink) }
+                }
+            }
+            return NativeExecutionResult(returnCode)
         } finally {
             staging?.deleteRecursively()
         }

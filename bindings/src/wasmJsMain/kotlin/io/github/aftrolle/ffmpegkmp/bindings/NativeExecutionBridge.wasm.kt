@@ -13,6 +13,10 @@ import kotlin.js.JsAny
 import kotlin.coroutines.resume
 import kotlinx.coroutines.CancellableContinuation
 import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlinx.io.Buffer
+import kotlinx.io.Source
+import kotlinx.io.buffered
+import kotlinx.io.readByteArray
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
@@ -49,6 +53,7 @@ private class WasmWorkerExecutionBridge : NativeExecutionBridge {
                 when (value.string("type")) {
                     "event" -> emit(value.toNativeEvent())
                     "complete" -> {
+                        value.writeOutputsTo(request.outputs)
                         completeActive(request.id, value.toNativeResult())
                     }
                     "failure" -> {
@@ -121,13 +126,15 @@ internal fun NativeExecutionRequest.toWorkerJson(): JsonObject = buildJsonObject
     put("arguments", JsonArray(arguments.map(::JsonPrimitive)))
     put("inputs", buildJsonArray {
         inputs.forEach { input ->
+            // The worker boundary is message-based, so mounted sources materialize here.
+            val bytes = input.source.buffered().use(Source::readByteArray)
             add(buildJsonObject {
                 put("path", JsonPrimitive(input.path))
-                put("base64", JsonPrimitive(Base64.Default.encode(input.bytes)))
+                put("base64", JsonPrimitive(Base64.Default.encode(bytes)))
             })
         }
     })
-    put("outputPaths", JsonArray(outputPaths.map(::JsonPrimitive)))
+    put("outputPaths", JsonArray(outputs.map { JsonPrimitive(it.path) }))
 }
 
 private fun JsonObject.toNativeEvent(): NativeExecutionEvent {
@@ -141,11 +148,21 @@ private fun JsonObject.toNativeEvent(): NativeExecutionEvent {
 
 private fun JsonObject.toNativeResult(): NativeExecutionResult = NativeExecutionResult(
     returnCode = jsonPrimitive("returnCode").int,
-    outputs = (get("outputs")?.jsonArray ?: JsonArray(emptyList())).associate { element ->
+)
+
+private fun JsonObject.writeOutputsTo(outputs: List<NativeMountedOutput>) {
+    val decoded = (get("outputs")?.jsonArray ?: JsonArray(emptyList())).associate { element ->
         val output = element.jsonObject
         output.string("path").orEmpty() to Base64.Default.decode(output.string("base64").orEmpty())
-    },
-)
+    }
+    outputs.forEach { output ->
+        decoded[output.path]?.let { bytes ->
+            val buffer = Buffer()
+            buffer.write(bytes)
+            output.sink.write(buffer, buffer.size)
+        }
+    }
+}
 
 private fun JsonObject.string(name: String): String? = get(name)?.jsonPrimitive?.content
 private fun JsonObject.jsonPrimitive(name: String): JsonPrimitive = getValue(name).jsonPrimitive

@@ -57,6 +57,11 @@ FFMPEGKMP_EXPORT void ffmpegkmp_emit(
 /* Replaces fftools exit() calls so a command can never terminate its host. */
 FFMPEGKMP_EXPORT void ffmpegkmp_exit(int status);
 
+/* Directory for the bridge's scratch files (ffprobe stdout redirect). Hosts whose
+ * process has no usable cwd or TMPDIR (Android apps) must call this once before
+ * running ffprobe. Copies the string; pass NULL to reset to the defaults. */
+FFMPEGKMP_EXPORT void ffmpegkmp_set_temp_directory(const char *path);
+
 #ifdef __cplusplus
 }
 #endif

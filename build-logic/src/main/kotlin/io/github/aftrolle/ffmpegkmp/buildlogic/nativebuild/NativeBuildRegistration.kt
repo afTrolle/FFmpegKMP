@@ -43,6 +43,44 @@ object NativeBuildRegistration {
         val version = ffmpegVersion(project, extension)
         val profileAssemblies = mutableMapOf<String, TaskProvider<*>>()
 
+        val aomRequired = extension.profiles.any { profile ->
+            extension.android.abis.get().any { abi ->
+                "libaom" in resolve(extension, profile.name, extension.android, abi).thirdPartyLibraries
+            }
+        }
+        val aomTasks = if (!aomRequired) {
+            emptyMap()
+        } else {
+            extension.android.abis.get().filter { it in androidTargets }.associateWith { abi ->
+                project.tasks.register(
+                    "buildAomAndroid${targetTaskSuffix(abi)}",
+                    ThirdPartyCmakeBuildTask::class.java,
+                ) {
+                    group = "ffmpeg native build"
+                    description = "Builds libaom for Android $abi"
+                    libraryName.set("aom")
+                    sourceDirectory.set(project.rootProject.layout.projectDirectory.dir("third_party/aom"))
+                    workDirectory.set(project.layout.projectDirectory.dir("work/deps/aom/$abi"))
+                    installDirectory.set(project.layout.projectDirectory.dir("out/deps/aom/$abi"))
+                    androidNdkDirectory.set(extension.android.ndkDirectory)
+                    androidApiLevel.set(extension.android.apiLevel)
+                    androidAbi.set(abi)
+                    jobs.set(extension.jobs)
+                    cmakeArgs.set(
+                        listOf(
+                            "-DENABLE_DOCS=0", "-DENABLE_TESTS=0", "-DENABLE_TESTDATA=0",
+                            "-DENABLE_TOOLS=0", "-DENABLE_EXAMPLES=0",
+                        ) + if (abi.startsWith("x86")) {
+                            // Skips x86 assembly, avoiding a host NASM requirement; these ABIs are emulator-only.
+                            listOf("-DAOM_TARGET_CPU=generic")
+                        } else {
+                            emptyList()
+                        },
+                    )
+                }
+            }
+        }
+
         extension.profiles.forEach { profile ->
             val profileSuffix = profileTaskSuffix(profile.name)
             val buildTasks = linkedMapOf<String, TaskProvider<FfmpegBuildTask>>()
@@ -60,6 +98,16 @@ object NativeBuildRegistration {
                     targetTriple.set(spec.triple)
                     androidApiLevel.set(extension.android.apiLevel)
                     androidNdkDirectory.set(extension.android.ndkDirectory)
+                    require(resolved.thirdPartyLibraries.all { it == "libaom" }) {
+                        "Unsupported Android third-party FFmpeg libraries: ${resolved.thirdPartyLibraries - "libaom"}"
+                    }
+                    if ("libaom" in resolved.thirdPartyLibraries) {
+                        val aom = requireNotNull(aomTasks[abi]) {
+                            "No libaom build task was registered for Android ABI $abi"
+                        }
+                        dependsOn(aom)
+                        dependenciesInstallDirectory.set(aom.flatMap(ThirdPartyCmakeBuildTask::installDirectory))
+                    }
                 }
                 buildTasks[abi] = task
             }
@@ -312,6 +360,7 @@ object NativeBuildRegistration {
         inputDevices.set(resolved.inputDevices)
         outputDevices.set(resolved.outputDevices)
         hardwareAccelerators.set(resolved.hardwareAccelerators)
+        thirdPartyLibraries.set(resolved.thirdPartyLibraries)
         extraConfigureArgs.set(resolved.extraConfigureArgs)
         extraCompilerArgs.set(resolved.extraCompilerArgs)
         extraLinkerArgs.set(resolved.extraLinkerArgs)
@@ -378,6 +427,7 @@ object NativeBuildRegistration {
         target.inputDevices.convention(source.inputDevices)
         target.outputDevices.convention(source.outputDevices)
         target.hardwareAccelerators.convention(source.hardwareAccelerators)
+        target.thirdPartyLibraries.convention(source.thirdPartyLibraries)
         target.extraConfigureArgs.convention(source.extraConfigureArgs)
         target.extraCompilerArgs.convention(source.extraCompilerArgs)
         target.extraLinkerArgs.convention(source.extraLinkerArgs)

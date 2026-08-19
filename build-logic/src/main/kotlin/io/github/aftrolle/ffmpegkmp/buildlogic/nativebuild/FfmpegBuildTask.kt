@@ -8,6 +8,7 @@ import org.gradle.api.provider.Property
 import org.gradle.api.provider.SetProperty
 import org.gradle.api.tasks.Input
 import org.gradle.api.tasks.InputDirectory
+import org.gradle.api.tasks.Optional
 import org.gradle.api.tasks.OutputDirectory
 import org.gradle.api.tasks.PathSensitive
 import org.gradle.api.tasks.PathSensitivity
@@ -33,6 +34,11 @@ abstract class FfmpegBuildTask : DefaultTask() {
     @get:InputDirectory
     @get:PathSensitive(PathSensitivity.RELATIVE)
     abstract val bridgeSourceDirectory: DirectoryProperty
+
+    @get:InputDirectory
+    @get:Optional
+    @get:PathSensitive(PathSensitivity.RELATIVE)
+    abstract val dependenciesInstallDirectory: DirectoryProperty
 
     @get:OutputDirectory
     abstract val workDirectory: DirectoryProperty
@@ -76,6 +82,7 @@ abstract class FfmpegBuildTask : DefaultTask() {
     @get:Input abstract val inputDevices: SetProperty<String>
     @get:Input abstract val outputDevices: SetProperty<String>
     @get:Input abstract val hardwareAccelerators: SetProperty<String>
+    @get:Input abstract val thirdPartyLibraries: SetProperty<String>
     @get:Input abstract val extraConfigureArgs: ListProperty<String>
     @get:Input abstract val extraCompilerArgs: ListProperty<String>
     @get:Input abstract val extraLinkerArgs: ListProperty<String>
@@ -97,6 +104,7 @@ abstract class FfmpegBuildTask : DefaultTask() {
         inputDevices.convention(emptySet())
         outputDevices.convention(emptySet())
         hardwareAccelerators.convention(emptySet())
+        thirdPartyLibraries.convention(emptySet())
         profileInheritance.convention(emptyList())
         extraConfigureArgs.convention(emptyList())
         extraCompilerArgs.convention(emptyList())
@@ -148,6 +156,7 @@ abstract class FfmpegBuildTask : DefaultTask() {
         addComponentFlags(arguments, "indev", inputDevices.get())
         addComponentFlags(arguments, "outdev", outputDevices.get())
         addComponentFlags(arguments, "hwaccel", hardwareAccelerators.get())
+        addThirdPartyFlags(arguments)
         arguments += extraConfigureArgs.get()
 
         val assessment = assessLicense(arguments)
@@ -407,11 +416,10 @@ abstract class FfmpegBuildTask : DefaultTask() {
             }
             .map(File::getAbsolutePath)
             .toMutableList()
-        work.resolve("compat/android/binder.o").takeIf(File::isFile)?.let { binder ->
-            // fftools/ffmpeg.o calls this helper when MediaCodec support is enabled.
-            // It belongs to the executable's object list rather than a libav archive.
-            fftoolsObjects += binder.absolutePath
-        }
+        // compat/android/binder.o is deliberately NOT linked: it starts a binder thread
+        // pool for the standalone CLI, and libbinder aborts the whole process when the
+        // pool is already running — always the case inside an app. ffmpeg_entry.c
+        // provides a no-op android_binder_threadpool_init_if_required instead.
         execOperations.exec {
             workingDir(work)
             commandLine(
@@ -458,6 +466,26 @@ abstract class FfmpegBuildTask : DefaultTask() {
         values.sorted().forEach { arguments += "--enable-$type=$it" }
     }
 
+    private fun addThirdPartyFlags(arguments: MutableList<String>) {
+        val libraries = thirdPartyLibraries.get()
+        if (libraries.isEmpty()) return
+        require(dependenciesInstallDirectory.isPresent) {
+            "thirdPartyLibraries ${libraries.sorted()} require dependenciesInstallDirectory to be set"
+        }
+        require(commandExists("pkg-config")) {
+            "pkg-config is required to locate third-party libraries ${libraries.sorted()}; install it on the host."
+        }
+        libraries.sorted().forEach { arguments += "--enable-$it" }
+        arguments += "--pkg-config-flags=--static"
+    }
+
+    private fun pkgConfigEnvironment(): Map<String, String> {
+        if (!dependenciesInstallDirectory.isPresent) return emptyMap()
+        val pkgconfig = dependenciesInstallDirectory.get().asFile.resolve("lib/pkgconfig")
+        // PKG_CONFIG_LIBDIR (not _PATH) so cross builds never resolve host libraries.
+        return mapOf("PKG_CONFIG_LIBDIR" to pkgconfig.absolutePath)
+    }
+
     private fun verifyInstalledArtifacts(install: File) {
         val include = install.resolve("include")
         require(include.isDirectory && include.walkTopDown().any { it.isFile && it.extension == "h" }) {
@@ -493,7 +521,7 @@ abstract class FfmpegBuildTask : DefaultTask() {
         "LANG" to "C",
         "TZ" to "UTC",
         "ZERO_AR_DATE" to "1",
-    )
+    ) + pkgConfigEnvironment()
 
     private fun copyLicences(source: File, install: File) {
         val destination = install.resolve("share/licenses/ffmpeg")
@@ -502,6 +530,15 @@ abstract class FfmpegBuildTask : DefaultTask() {
             .map(source::resolve)
             .filter(File::isFile)
             .forEach { it.copyTo(destination.resolve(it.name), overwrite = true) }
+        if (dependenciesInstallDirectory.isPresent) {
+            val dependencyLicenses = dependenciesInstallDirectory.get().asFile.resolve("share/licenses")
+            if (dependencyLicenses.isDirectory) {
+                fileSystemOperations.copy {
+                    from(dependencyLicenses)
+                    into(install.resolve("share/licenses"))
+                }
+            }
+        }
         install.resolve("DISCLAIMER.txt").writeText(
             """
             This locally generated FFmpeg binary has not been reviewed for licence, patent,
