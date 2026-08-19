@@ -98,6 +98,11 @@ object NativeBuildRegistration {
         extension.apple.macosDeploymentTarget.convention("11.0")
         extension.apple.tvosDeploymentTarget.convention("15.0")
         extension.apple.watchosDeploymentTarget.convention("8.0")
+        if (!System.getProperty("os.name").contains("mac", ignoreCase = true)) {
+            registerUnavailableApple(project, extension)
+            return
+        }
+
         val profileAssemblies = mutableMapOf<String, TaskProvider<*>>()
 
         extension.profiles.forEach { profile ->
@@ -137,6 +142,42 @@ object NativeBuildRegistration {
                 group = "ffmpeg native build"
                 description = "Assembles the FFmpeg ${profile.name} Apple binary packages"
                 dependsOn(xcframeworks)
+            }
+        }
+        registerFamilyLifecycle(project, extension, profileAssemblies)
+    }
+
+    private fun registerUnavailableApple(project: Project, extension: FfmpegNativeBuildExtension) {
+        val reason = "Apple binaries require a macOS host with Xcode"
+        val profileAssemblies = mutableMapOf<String, TaskProvider<*>>()
+
+        extension.profiles.forEach { profile ->
+            val profileSuffix = profileTaskSuffix(profile.name)
+            appleTargets(extension).forEach { spec ->
+                project.tasks.register(
+                    "buildFfmpeg${profileSuffix}${targetTaskSuffix(spec.name)}",
+                    UnavailableFfmpegTargetTask::class.java,
+                ) {
+                    group = "ffmpeg native build"
+                    description = "Reports why FFmpeg ${profile.name} cannot be built for ${spec.name} on this host"
+                    machine.set(spec.name)
+                    this.reason.set(reason)
+                }
+            }
+
+            val unavailablePackage = project.tasks.register(
+                "packageFfmpeg${profileSuffix}Xcframeworks",
+                UnavailableFfmpegTargetTask::class.java,
+            ) {
+                group = "ffmpeg native build"
+                description = "Reports why FFmpeg ${profile.name} Apple XCFrameworks cannot be packaged on this host"
+                machine.set("Apple XCFrameworks")
+                this.reason.set(reason)
+            }
+            profileAssemblies[profile.name] = project.tasks.register("assembleFfmpeg$profileSuffix") {
+                group = "ffmpeg native build"
+                description = "Skips FFmpeg ${profile.name} Apple binary packages on unsupported hosts"
+                dependsOn(unavailablePackage)
             }
         }
         registerFamilyLifecycle(project, extension, profileAssemblies)
