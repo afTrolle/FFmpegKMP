@@ -6,6 +6,7 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
+import kotlin.io.path.createTempDirectory
 
 class NativeBuildModelTest {
     @Test
@@ -74,5 +75,17 @@ class NativeBuildModelTest {
         NativeBuildRegistration.inherit(parent, child)
 
         assertNotNull(child.wasm.profiles.findByName("standard"))
+    }
+
+    @Test
+    fun `emscripten discovery returns a complete tool directory from PATH`() {
+        val tools = createTempDirectory("emscripten-tools").toFile()
+        listOf("emcc", "em++", "emar", "emnm", "emranlib", "emconfigure", "emmake")
+            .forEach { tools.resolve(it).writeText("") }
+
+        assertEquals(
+            tools.absolutePath,
+            discoverEmscriptenDirectory(tools.absolutePath, osName = "Linux", userHome = tools.resolve("home").path),
+        )
     }
 }

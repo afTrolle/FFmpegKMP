@@ -4,10 +4,50 @@
 let modulePromise;
 let activeContext = 0;
 let activeId = null;
+let nativeRuntimeUnwound = false;
+const nativeDiagnostics = [];
+
+function installPthreadFailureForwarding(module) {
+  for (const worker of module.PThread?.unusedWorkers ?? []) {
+    worker.onerror = event => {
+      const location = event.filename
+        ? ` (${event.filename}:${event.lineno || 0}:${event.colno || 0})`
+        : '';
+      const fallback = event.error?.stack || event.message || 'An FFmpeg pthread crashed';
+      event.preventDefault?.();
+      // Messages written by the pthread immediately before the ErrorEvent are
+      // queued separately. Give their proxied printErr calls one event-loop
+      // turn to arrive so the caller receives the native stack, not a wrapper.
+      setTimeout(() => {
+        const diagnostics = nativeDiagnostics.slice(-20);
+        if (!diagnostics.some(line => line.includes(fallback))) diagnostics.push(fallback);
+        const detail = diagnostics.join('\n');
+        if (activeId !== null) {
+          self.postMessage({
+            type: 'failure',
+            id: activeId,
+            message: `${detail}${location}`,
+          });
+          activeId = null;
+        }
+      }, 0);
+    };
+  }
+}
 
 function loadModule(moduleUrl) {
   if (!modulePromise) {
-    modulePromise = import(moduleUrl).then(({ default: createModule }) => createModule());
+    modulePromise = import(moduleUrl).then(async ({ default: createModule }) => {
+      const module = await createModule({
+        printErr: line => {
+          nativeDiagnostics.push(String(line));
+          if (nativeDiagnostics.length > 100) nativeDiagnostics.shift();
+          console.error(line);
+        },
+      });
+      installPthreadFailureForwarding(module);
+      return module;
+    });
   }
   return modulePromise;
 }
@@ -40,11 +80,14 @@ self.onmessage = async ({ data }) => {
   }
   if (data.type !== 'execute') return;
 
-  const module = await loadModule(data.moduleUrl);
+  let module;
   const mountedPaths = [];
   let callback = 0;
   let allocated;
+  nativeRuntimeUnwound = false;
+  nativeDiagnostics.length = 0;
   try {
+    module = await loadModule(data.moduleUrl);
     for (const input of data.inputs ?? []) {
       ensureParentDirectories(module.FS, input.path);
       module.FS.writeFile(input.path, new Uint8Array(input.bytes));
@@ -72,16 +115,26 @@ self.onmessage = async ({ data }) => {
     });
     self.postMessage({ type: 'complete', id: data.id, returnCode, outputs });
   } catch (error) {
-    self.postMessage({ type: 'failure', id: data.id, message: String(error?.stack ?? error) });
+    if (error === 'unwind') {
+      // Emscripten uses this sentinel when the main runtime notices a crashed
+      // pthread. The pthread's error event contains the real failure. Do not
+      // release native memory or callback-table entries while it is unwinding.
+      nativeRuntimeUnwound = true;
+    } else {
+      self.postMessage({ type: 'failure', id: data.id, message: String(error?.stack ?? error) });
+    }
   } finally {
-    if (allocated) {
+    if (nativeRuntimeUnwound) return;
+    if (module && allocated) {
       allocated.strings.forEach(pointer => module._free(pointer));
       module._free(allocated.argv);
     }
-    if (activeContext) module._ffmpegkmp_context_destroy(activeContext);
-    if (callback) module.removeFunction(callback);
-    for (const path of [...mountedPaths, ...(data.outputPaths ?? [])]) {
-      try { module.FS.unlink(path); } catch (_) {}
+    if (module && activeContext) module._ffmpegkmp_context_destroy(activeContext);
+    if (module && callback) module.removeFunction(callback);
+    if (module) {
+      for (const path of [...mountedPaths, ...(data.outputPaths ?? [])]) {
+        try { module.FS.unlink(path); } catch (_) {}
+      }
     }
     activeContext = 0;
     activeId = null;

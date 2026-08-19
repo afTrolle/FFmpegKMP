@@ -38,6 +38,11 @@ class ExportCommandFactoryTest {
         assertTrue("anullsrc=r=48000:cl=stereo" in plan.filterGraph)
         assertTrue("[v0][a0][v1][a1]concat=n=2:v=1:a=1[outv][outa]" in plan.filterGraph)
         assertTrue(plan.command.arguments.containsAll(listOf("-map", "[outv]", "mpeg4", "-q:v", "+faststart")))
+        assertTrue(plan.command.arguments.containsAll(listOf("-filter_complex_threads", "1")))
+        assertEquals(
+            clips.size + 1,
+            plan.command.arguments.windowed(2).count { it == listOf("-threads", "1") },
+        )
         assertTrue("-preset" !in plan.command.arguments)
     }
 

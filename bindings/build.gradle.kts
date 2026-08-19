@@ -35,6 +35,12 @@ val hostArchitecture = providers.systemProperty("os.arch").map { architecture ->
     }
 }
 val hostMachine = hostOperatingSystem.zip(hostArchitecture) { os, architecture -> "$os-$architecture" }
+val buildHostFfmpeg = selectedNativeProfileTaskSuffix.zip(hostMachine) { profileSuffix, machine ->
+    val machineSuffix = machine.split('-', '_').joinToString("") { part ->
+        part.replaceFirstChar(Char::titlecase)
+    }
+    ":native-build:jvm:buildFfmpeg$profileSuffix$machineSuffix"
+}
 val javaCppGenerator by configurations.creating
 
 dependencies {
@@ -79,6 +85,7 @@ val generateJavaCppBindings = javaCppFamilies.map { family ->
         group = "ffmpeg bindings"
         description = "Parses pinned ${family.lowercase()} headers into local Java declarations"
         dependsOn(compileJavaCppPresets)
+        dependsOn(buildHostFfmpeg.get())
         classpath = javaCppGenerator
         mainClass.set("org.bytedeco.javacpp.tools.Builder")
 

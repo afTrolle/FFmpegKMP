@@ -51,6 +51,21 @@ credit and change-disclosure requirements described in `ffmpeg/LICENSE.md`.
 FFmpeg is a trademark of Fabrice Bellard. FFmpegKMP is an independent project
 and is not affiliated with or endorsed by the FFmpeg project.
 
+## Big Buck Bunny test clip
+
+The Wasm FFprobe browser integration test includes an approximately one-second
+excerpt of *Big Buck Bunny*:
+
+- Original work: Copyright 2008 Blender Foundation
+- Source clip: <https://github.com/cseitz/sample-files/blob/main/assets/video/mp4/bbb_short.mp4>
+- Project: <https://peach.blender.org/>
+- Licence: Creative Commons Attribution 3.0
+  (<https://creativecommons.org/licenses/by/3.0/>)
+
+The included test fixture was shortened and remuxed without re-encoding. Its
+source and modification details are also recorded beside the fixture in
+`library/ffprobe/src/wasmJsTest/resources/README.md`.
+
 ## Bindings module licence
 
 As a cautious boundary for material generated from FFmpeg's LGPL-licensed

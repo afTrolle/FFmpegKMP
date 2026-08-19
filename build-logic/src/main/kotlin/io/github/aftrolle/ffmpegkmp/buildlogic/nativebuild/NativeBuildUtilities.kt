@@ -90,3 +90,31 @@ internal fun profileTaskSuffix(profile: String): String =
     }
 
 internal fun targetTaskSuffix(target: String): String = profileTaskSuffix(target)
+
+/**
+ * Finds a complete Emscripten tool directory without launching a subprocess.
+ * Android Studio does not inherit the user's interactive shell PATH on macOS,
+ * so include the standard emsdk and Homebrew locations as fallbacks.
+ */
+fun discoverEmscriptenDirectory(
+    searchPath: String,
+    osName: String = System.getProperty("os.name"),
+    userHome: String = System.getProperty("user.home"),
+): String {
+    val windows = osName.contains("windows", ignoreCase = true)
+    val suffixes = if (windows) listOf(".bat", ".cmd", ".exe", "") else listOf("")
+    val requiredTools = listOf("emcc", "em++", "emar", "emnm", "emranlib", "emconfigure", "emmake")
+    val directories = buildList {
+        addAll(searchPath.split(File.pathSeparatorChar).filter(String::isNotBlank).map(::File))
+        add(File(userHome, ".emsdk/upstream/emscripten"))
+        add(File(userHome, "emsdk/upstream/emscripten"))
+        if (osName.contains("mac", ignoreCase = true)) {
+            add(File("/opt/homebrew/bin"))
+            add(File("/usr/local/bin"))
+        }
+    }.distinctBy { it.absoluteFile.normalize().path }
+
+    return directories.firstOrNull { directory ->
+        requiredTools.all { tool -> suffixes.any { suffix -> directory.resolve(tool + suffix).isFile } }
+    }?.absolutePath.orEmpty()
+}

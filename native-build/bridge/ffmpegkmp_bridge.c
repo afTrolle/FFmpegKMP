@@ -5,6 +5,9 @@
 #include <setjmp.h>
 #include <stdio.h>
 #include <stdlib.h>
+#if defined(__EMSCRIPTEN__)
+#include <emscripten/threading.h>
+#endif
 #if !defined(_WIN32)
 #include <unistd.h>
 #endif
@@ -44,6 +47,27 @@ static atomic_int active_kind;
 static _Thread_local jmp_buf exit_target;
 static _Thread_local int exit_target_active;
 static _Thread_local int requested_exit_status;
+
+#if defined(__EMSCRIPTEN__)
+typedef struct ffmpegkmp_emscripten_event {
+    ffmpegkmp_context *context;
+    ffmpegkmp_event_kind kind;
+    int level;
+    const uint8_t *data;
+    size_t size;
+} ffmpegkmp_emscripten_event;
+
+static void ffmpegkmp_deliver_emscripten_event(void *opaque) {
+    const ffmpegkmp_emscripten_event *event = opaque;
+    if (event->context && event->context->callback)
+        event->context->callback(
+                event->context->opaque,
+                event->kind,
+                event->level,
+                event->data,
+                event->size);
+}
+#endif
 
 #if FFMPEGKMP_EMBEDDED_FFTOOLS
 static void ffmpegkmp_log_callback(void *avcl, int level, const char *format, va_list arguments) {
@@ -203,6 +227,26 @@ void ffmpegkmp_emit(
         const uint8_t *data,
         size_t size) {
     ffmpegkmp_context *context = atomic_load(&active_context);
+    if (!context || !context->callback || !data || !size)
+        return;
+#if defined(__EMSCRIPTEN__)
+    if (!emscripten_is_main_runtime_thread()) {
+        ffmpegkmp_emscripten_event event = {
+                .context = context,
+                .kind = kind,
+                .level = level,
+                .data = data,
+                .size = size,
+        };
+        /* addFunction() updates only the main runtime worker's Wasm table.
+         * Proxy there before invoking the JavaScript-backed callback. */
+        emscripten_sync_run_in_main_runtime_thread(
+                EM_FUNC_SIG_VI,
+                ffmpegkmp_deliver_emscripten_event,
+                &event);
+        return;
+    }
+#endif
     if (context && context->callback && data && size)
         context->callback(context->opaque, kind, level, data, (uint64_t)size);
 }

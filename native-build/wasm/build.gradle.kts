@@ -1,3 +1,5 @@
+import io.github.aftrolle.ffmpegkmp.buildlogic.nativebuild.discoverEmscriptenDirectory
+
 plugins {
     id("ffmpegkmp.native-build")
 }
@@ -22,7 +24,13 @@ ffmpegNativeBuild {
 val selectedProfile = providers.gradleProperty("ffmpegkmp.profile").orElse("standard")
 val emscriptenDirectory = providers.gradleProperty("ffmpegkmp.wasm.emscriptenDir").orElse(
     providers.environmentVariable("EMSCRIPTEN").orElse(
-        providers.environmentVariable("EMSDK").map { "$it/upstream/emscripten" }.orElse(""),
+        providers.environmentVariable("EMSDK").map { "$it/upstream/emscripten" }.orElse(
+            providers.environmentVariable("PATH").orElse("")
+                .zip(providers.systemProperty("os.name")) { path, os -> path to os }
+                .zip(providers.systemProperty("user.home")) { (path, os), home ->
+                    discoverEmscriptenDirectory(path, os, home)
+                },
+        ),
     ),
 )
 
@@ -63,12 +71,15 @@ tasks.register<Exec>("linkFfmpegKmpWorker") {
             "-pthread",
             // fftools uses separate demux/decode/filter/mux scheduler threads.
             // Leave headroom for codec workers so commands cannot exhaust the pool.
-            "-sPTHREAD_POOL_SIZE=16",
+            "-sPTHREAD_POOL_SIZE=32",
+            // Never fall back to asynchronously creating a worker while the
+            // synchronous fftools scheduler is blocked waiting for it.
+            "-sPTHREAD_POOL_SIZE_STRICT=2",
             "-sINITIAL_MEMORY=67108864",
             "-sALLOW_MEMORY_GROWTH=1",
             "-sALLOW_TABLE_GROWTH=1",
             "-sEXPORTED_FUNCTIONS=['_malloc','_free','_ffmpegkmp_context_create','_ffmpegkmp_context_destroy','_ffmpegkmp_execute','_ffmpegkmp_cancel']",
-            "-sEXPORTED_RUNTIME_METHODS=['addFunction','removeFunction','setValue','stringToNewUTF8','FS','HEAPU8']",
+            "-sEXPORTED_RUNTIME_METHODS=['addFunction','removeFunction','setValue','stringToNewUTF8','FS','HEAPU8','PThread']",
             "-sASSERTIONS=1",
         ),
     )

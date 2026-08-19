@@ -152,10 +152,10 @@ private fun JsonObject.jsonPrimitive(name: String): JsonPrimitive = getValue(nam
 
 private fun startWorker(requestJson: String, callback: (String) -> Unit): JsAny = js(
     """
-    (requestJson, callback) => {
+    {
       const request = JSON.parse(requestJson);
       const workerUrl = globalThis.FFMPEGKMP_WORKER_URL || 'ffmpegkmp-worker.mjs';
-      const moduleUrl = globalThis.FFMPEGKMP_MODULE_URL || 'ffmpegkmp.mjs';
+      const moduleUrl = globalThis.FFMPEGKMP_MODULE_URL || './ffmpegkmp.mjs';
       const worker = new Worker(workerUrl, { type: 'module' });
       const fromBase64 = value => Uint8Array.from(atob(value), char => char.charCodeAt(0));
       const toBase64 = bytes => {
@@ -181,7 +181,24 @@ private fun startWorker(requestJson: String, callback: (String) -> Unit): JsAny 
         if (data.type === 'complete' || data.type === 'failure') worker.terminate();
       };
       worker.onerror = event => {
-        callback(JSON.stringify({ type: 'failure', id: request.id, message: event.message }));
+        const location = event.filename
+          ? ' (' + event.filename + ':' + (event.lineno || 0) + ':' + (event.colno || 0) + ')'
+          : '';
+        const detail = event.message ||
+          'Could not load the FFmpegKMP Web Worker at ' + workerUrl;
+        callback(JSON.stringify({
+          type: 'failure',
+          id: request.id,
+          message: detail + location + '; module URL: ' + moduleUrl,
+        }));
+        worker.terminate();
+      };
+      worker.onmessageerror = () => {
+        callback(JSON.stringify({
+          type: 'failure',
+          id: request.id,
+          message: 'Could not decode a message from ' + workerUrl + '; module URL: ' + moduleUrl,
+        }));
         worker.terminate();
       };
       request.inputs = request.inputs.map(input => ({
@@ -194,6 +211,6 @@ private fun startWorker(requestJson: String, callback: (String) -> Unit): JsAny 
     """,
 )
 
-private fun terminateWorker(worker: JsAny): Unit = js("worker => worker.terminate()")
+private fun terminateWorker(worker: JsAny): Unit = js("worker.terminate()")
 
 private const val CANCELLED_RETURN_CODE = 255

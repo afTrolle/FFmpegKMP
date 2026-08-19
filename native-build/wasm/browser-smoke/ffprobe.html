@@ -1,0 +1,55 @@
+<!doctype html>
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>FFmpegKMP Wasm ffprobe smoke test</title>
+</head>
+<body>
+  <h1>FFmpegKMP Wasm ffprobe smoke test</h1>
+  <p id="status">loading fixture</p>
+  <pre id="events"></pre>
+  <script type="module">
+    const status = document.querySelector('#status');
+    const eventsNode = document.querySelector('#events');
+    const decoder = new TextDecoder();
+    const fixtureResponse = await fetch(
+      '/library/ffprobe/src/wasmJsTest/resources/big-buck-bunny-1s.mp4',
+    );
+    const fixture = new Uint8Array(await fixtureResponse.arrayBuffer());
+    const worker = new Worker(
+      '/bindings/src/wasmJsMain/resources/ffmpegkmp-worker.mjs',
+      { type: 'module' },
+    );
+
+    status.textContent = 'probing video';
+    worker.onmessage = ({ data }) => {
+      if (data.type === 'event') {
+        eventsNode.textContent += decoder.decode(data.bytes);
+        return;
+      }
+      status.textContent = data.type === 'complete' && data.returnCode === 0
+        ? 'PASS: ffprobe read the mounted Big Buck Bunny clip'
+        : `FAIL: ${data.message ?? `returnCode=${data.returnCode}`}`;
+      worker.terminate();
+    };
+    worker.onerror = event => {
+      status.textContent = `FAIL: ${event.message}`;
+      worker.terminate();
+    };
+    worker.postMessage({
+      type: 'execute',
+      id: 'ffprobe-browser-smoke',
+      kind: 'ffprobe',
+      arguments: [
+        '-v', 'error', '-of', 'json', '-show_format', '-show_streams',
+        '/fixtures/big-buck-bunny-1s.mp4',
+      ],
+      inputs: [{ path: '/fixtures/big-buck-bunny-1s.mp4', bytes: fixture }],
+      outputPaths: [],
+      moduleUrl: '/native-build/wasm/build/worker/standard/ffmpegkmp.mjs',
+    });
+  </script>
+</body>
+</html>

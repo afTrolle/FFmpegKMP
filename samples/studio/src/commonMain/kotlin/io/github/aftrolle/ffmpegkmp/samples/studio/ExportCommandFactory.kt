@@ -27,7 +27,14 @@ internal object ExportCommandFactory {
 
         val command = FFmpegCommand {
             overwrite()
-            inputPaths.forEach(::input)
+            // Browser Wasm must synchronously acquire pthreads from its fixed
+            // Emscripten pool. Explicit limits also keep the demo predictable
+            // on native targets instead of multiplying threads per clip.
+            option("-filter_complex_threads", "1")
+            inputPaths.forEach { path ->
+                option("-threads", "1")
+                input(path)
+            }
             complexFilter(graph)
             map("[outv]")
             map("[outa]")
@@ -37,6 +44,7 @@ internal object ExportCommandFactory {
             option("-q:v", quality.videoQuality.toString())
             audioCodec("aac")
             option("-b:a", "192k")
+            option("-threads", "1")
             option("-movflags", "+faststart")
             output(outputPath, format = "mp4")
         }

@@ -402,7 +402,13 @@ object NativeBuildRegistration {
             project.providers.environmentVariable("EMSCRIPTEN").orElse(
                 project.providers.environmentVariable("EMSDK")
                     .map { File(it, "upstream/emscripten").absolutePath }
-                    .orElse(""),
+                    .orElse(
+                        project.providers.environmentVariable("PATH").orElse("")
+                            .zip(project.providers.systemProperty("os.name")) { path, os -> path to os }
+                            .zip(project.providers.systemProperty("user.home")) { (path, os), home ->
+                                discoverEmscriptenDirectory(path, os, home)
+                            },
+                    ),
             ),
         )
 

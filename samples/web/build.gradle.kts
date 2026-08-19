@@ -15,8 +15,12 @@ val stageFFmpegKmpWasmRuntime = tasks.register<Sync>("stageFFmpegKmpWasmRuntime"
     dependsOn(":native-build:wasm:linkFfmpegKmpWorker")
     from(selectedNativeProfile.map { profile ->
         rootProject.layout.projectDirectory.dir("native-build/wasm/build/worker/$profile")
-    })
-    include("ffmpegkmp.mjs", "ffmpegkmp.wasm")
+    }) {
+        include("ffmpegkmp.mjs", "ffmpegkmp.wasm")
+    }
+    from(rootProject.layout.projectDirectory.dir("bindings/src/wasmJsMain/resources")) {
+        include("ffmpegkmp-worker.mjs")
+    }
     into(layout.buildDirectory.dir("generated/ffmpegkmp-wasm-runtime"))
 }
 
