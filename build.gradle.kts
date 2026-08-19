@@ -2,6 +2,7 @@ plugins {
     id("ffmpegkmp.project")
     alias(libs.plugins.android.kotlin.multiplatform.library) apply false
     alias(libs.plugins.kotlin.multiplatform) apply false
+    alias(libs.plugins.kotlin.serialization) apply false
 }
 
 val selectedNativeProfile = providers.gradleProperty("ffmpegkmp.profile").orElse("standard")

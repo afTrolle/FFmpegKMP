@@ -1,7 +1,8 @@
 # Native FFmpeg builds
 
 The Gradle modules under `native-build` compile the pinned FFmpeg source into
-client-consumable libraries. Android produces a Prefab AAR, Apple produces raw
+client-consumable libraries. Every target also installs the internal static
+`libffmpegkmp_bridge.a`. Android produces a Prefab AAR, Apple produces raw
 static install trees and one XCFramework per FFmpeg library, and JVM desktop
 produces raw shared libraries for each configured machine that the active host
 can compile. Wasm produces Emscripten static archives for the browser bindings
@@ -166,9 +167,9 @@ added.
 Wasm builds use the active Emscripten SDK to compile `wasm32` static archives
 under `native-build/wasm/out/<profile>/wasm32/`. The output contains the seven
 `libav*.a` archives, public headers, licence files, the redistribution
-disclaimer, and `build-manifest.json`. The future bindings pipeline will link
-these archives into the JavaScript and `.wasm` runtime artifacts; this native
-build deliberately does not invent an exported C/JavaScript API.
+disclaimer, and `build-manifest.json`. `linkFfmpegKmpWorker` links these archives
+and the bridge into ignored local `ffmpegkmp.mjs` and `.wasm` outputs. The
+committed worker facade keeps execution off the browser UI thread.
 
 Activate Emscripten in the shell before running the task:
 
@@ -185,10 +186,24 @@ and `emmake`:
   -Pffmpegkmp.wasm.emscriptenDir=/path/to/emsdk/upstream/emscripten
 ```
 
-Browser builds disable host devices, network sockets, hardware acceleration,
-and pthreads for predictable single-threaded deployment. Profile component
+Browser builds disable host devices, network sockets, and hardware acceleration.
+The pinned `ffmpeg` scheduler itself requires pthreads, so
+the final module uses a bounded Emscripten pthread pool inside the command Web
+Worker. Deployments must provide `SharedArrayBuffer` through cross-origin
+isolation (`Cross-Origin-Opener-Policy: same-origin` and
+`Cross-Origin-Embedder-Policy: require-corp`). Profile component
 selection and target overrides remain available through `wasm { ... }`; the
 only registered target name is `wasm32`.
+
+After linking, run the committed browser smoke harness from the repository root:
+
+```shell
+python3 native-build/wasm/browser-smoke/server.py
+# Open http://127.0.0.1:8765/native-build/wasm/browser-smoke/
+```
+
+It executes a generated-video FFmpeg command in the module worker and checks
+that a main-page heartbeat continues while the command is running.
 
 ## Traceability and licensing checks
 
@@ -213,10 +228,10 @@ patents, export rules, and app-store policy. See
 
 ## Binding inputs
 
-The stable `include/` and `lib/` directories are intended for the later
-`:bindings` implementation. Kotlin/Native cinterop definition files can point
-at them using `compilerOpts`, `linkerOpts`, `staticLibraries`, and
-`libraryPaths`. The native build modules do not generate wrappers or cinterop
-klibs.
+The stable `include/` and `lib/` directories feed `:bindings`. Build manifests
+hash the bridge header and archive alongside the seven FFmpeg libraries.
+Kotlin/Native consumes them with one umbrella cinterop; JavaCPP consumes the
+matching JVM/Android headers and libraries. Generated declarations, JNI code,
+klibs, and WebAssembly modules remain ignored local outputs.
 
 [Back to the project README](../README.md)

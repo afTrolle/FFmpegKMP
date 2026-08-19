@@ -1,6 +1,6 @@
 # Architecture
 
-FFmpegKMP is planned as a Kotlin-first public API over platform-specific FFmpeg
+FFmpegKMP is a Kotlin-first public API over platform-specific FFmpeg
 bindings and locally generated native artifacts.
 
 ```text
@@ -41,6 +41,11 @@ The `library` modules provide the platform-neutral API:
 - `ffprobe` exposes typed media-inspection models; and
 - `filters` provides the optional filter-graph DSL.
 
+Every `FFmpegClient` and `FFprobeClient` submits to one process-wide FIFO. This
+is intentional: FFmpeg's command tools and logging retain process-global state.
+Sessions use `StateFlow` and `Flow`, own transferred I/O, and treat nonzero tool
+return codes as results. Bridge loading and serialization errors are exceptions.
+
 ## Bindings
 
 The single [`:bindings` module](../bindings/README.md) stages FFmpeg headers once
@@ -50,6 +55,11 @@ interop.
 
 Keeping binding generation behind common Kotlin interfaces minimizes handwritten
 native mappings and aligns every backend with the same pinned FFmpeg revision.
+
+Apple uses one umbrella interop so an `AV*` declaration has exactly one Kotlin
+identity. JVM and Android use per-library JavaCPP presets within the same module.
+Browser Wasm uses an Emscripten ES module in a dedicated worker and never tries
+to consume a Kotlin/Native klib.
 
 ## Native builds
 

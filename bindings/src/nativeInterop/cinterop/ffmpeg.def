@@ -1,0 +1,16 @@
+package = io.github.aftrolle.ffmpegkmp.bindings.cinterop
+headers = ffmpegkmp_umbrella.h
+headerFilter = ffmpegkmp_bridge.h libavcodec/** libavdevice/** libavfilter/** libavformat/** libavutil/** libswresample/** libswscale/**
+excludeDependentModules = true
+staticLibraries = libffmpegkmp_bridge.a libavdevice.a libavfilter.a libavformat.a libavcodec.a libswscale.a libswresample.a libavutil.a
+
+---
+#include <libavcodec/avcodec.h>
+#include <libavdevice/avdevice.h>
+#include <libavfilter/avfilter.h>
+#include <libavformat/avformat.h>
+#include <libavutil/avutil.h>
+#include <libavutil/rational.h>
+#include <ffmpegkmp_macros.h>
+#include <libswresample/swresample.h>
+#include <libswscale/swscale.h>

@@ -30,6 +30,10 @@ abstract class FfmpegBuildTask : DefaultTask() {
     @get:PathSensitive(PathSensitivity.RELATIVE)
     abstract val sourceDirectory: DirectoryProperty
 
+    @get:InputDirectory
+    @get:PathSensitive(PathSensitivity.RELATIVE)
+    abstract val bridgeSourceDirectory: DirectoryProperty
+
     @get:OutputDirectory
     abstract val workDirectory: DirectoryProperty
 
@@ -118,7 +122,7 @@ abstract class FfmpegBuildTask : DefaultTask() {
 
         val arguments = mutableListOf<String>()
         arguments += "--prefix=${install.absolutePath}"
-        arguments += if (buildPrograms.get()) "--enable-programs" else "--disable-programs"
+        if (!buildPrograms.get()) arguments += "--disable-programs"
         arguments += if (buildDocumentation.get()) "--enable-doc" else "--disable-doc"
         if (!externalAutodetect.get()) arguments += "--disable-autodetect"
         if (!network.get()) arguments += "--disable-network"
@@ -186,6 +190,8 @@ abstract class FfmpegBuildTask : DefaultTask() {
             commandLine(makeCommand("install-libs", "install-headers"))
             environment(reproducibleEnvironment())
         }
+
+        buildBridge(work, install)
 
         verifyInstalledArtifacts(install)
         copyLicences(source, install)
@@ -374,17 +380,15 @@ abstract class FfmpegBuildTask : DefaultTask() {
             "--enable-static",
             "--disable-shared",
             "--disable-stripping",
-            "--disable-pthreads",
+            // The pinned fftools scheduler requires pthreads even when codec-level
+            // parallelism is disabled. Emscripten runs these inside the command worker.
+            "--enable-pthreads",
             "--disable-w32threads",
             "--disable-os2threads",
             "--disable-runtime-cpudetect",
         )
-        if (extraCompilerArgs.get().isNotEmpty()) {
-            arguments += "--extra-cflags=${extraCompilerArgs.get().joinToString(" ")}"
-        }
-        if (extraLinkerArgs.get().isNotEmpty()) {
-            arguments += "--extra-ldflags=${extraLinkerArgs.get().joinToString(" ")}"
-        }
+        arguments += "--extra-cflags=${(listOf("-pthread") + extraCompilerArgs.get()).joinToString(" ")}"
+        arguments += "--extra-ldflags=${(listOf("-pthread") + extraLinkerArgs.get()).joinToString(" ")}"
     }
 
     private fun makeCommand(vararg arguments: String): List<String> =
@@ -393,6 +397,36 @@ abstract class FfmpegBuildTask : DefaultTask() {
         } else {
             listOf("make") + arguments
         }
+
+    private fun buildBridge(work: File, install: File) {
+        val bridge = bridgeSourceDirectory.get().asFile
+        val fftoolsObjects = work.resolve("fftools").walkTopDown()
+            .filter { file ->
+                file.isFile && file.extension == "o" &&
+                    file.name !in setOf("ffmpeg.o", "ffprobe.o", "ffplay.o", "ffplay_renderer.o")
+            }
+            .map(File::getAbsolutePath)
+            .toMutableList()
+        work.resolve("compat/android/binder.o").takeIf(File::isFile)?.let { binder ->
+            // fftools/ffmpeg.o calls this helper when MediaCodec support is enabled.
+            // It belongs to the executable's object list rather than a libav archive.
+            fftoolsObjects += binder.absolutePath
+        }
+        execOperations.exec {
+            workingDir(work)
+            commandLine(
+                makeCommand(
+                    "-f", bridge.resolve("bridge.mk").absolutePath,
+                    "BRIDGE_SOURCE=${bridge.absolutePath}",
+                    "BRIDGE_INSTALL=${install.absolutePath}",
+                    "FFMPEGKMP_EMBEDDED_FFTOOLS=${if (fftoolsObjects.isEmpty()) 0 else 1}",
+                    "FFTOOLS_OBJECTS=${fftoolsObjects.joinToString(" ")}",
+                    "ffmpegkmp-bridge",
+                ),
+            )
+            environment(reproducibleEnvironment())
+        }
+    }
 
     private fun emscriptenTool(name: String): String {
         val directory = emscriptenDirectory.get().trim()
@@ -448,6 +482,9 @@ abstract class FfmpegBuildTask : DefaultTask() {
         }
         require(missing.isEmpty()) {
             "FFmpeg did not install expected libraries for ${targetName.get()}: ${missing.joinToString()}"
+        }
+        require(install.resolve("lib/libffmpegkmp_bridge.a").isFile) {
+            "FFmpegKMP did not install its command bridge for ${targetName.get()}"
         }
     }
 

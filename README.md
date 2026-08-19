@@ -1,6 +1,6 @@
 # FFmpegKMP
 
-**FFmpegKMP** is a planned Kotlin Multiplatform wrapper around FFmpeg and
+**FFmpegKMP** is a Kotlin Multiplatform wrapper around FFmpeg and
 FFprobe.
 Its goal is to expose one Kotlin-first API for media processing and inspection
 across Apple platforms, Android, JVM desktop, and the browser through
@@ -22,22 +22,25 @@ The intended developer experience includes:
 - a raw argument API as an escape hatch;
 - platform bindings hidden behind common Kotlin interfaces.
 
-An illustrative future API might look like this:
+The common API exposes coroutine sessions and immutable commands:
 
 ```kotlin
-val media = FFprobe.inspect("input.mp4")
+FFprobeClient().use { probe ->
+    val media = probe.inspect("input.mp4")
+}
 
-val result = FFmpeg.execute {
-    input("input.mp4")
-    videoCodec("h264")
-    audioCodec("aac")
-    output("output.mp4")
+FFmpegClient().use { ffmpeg ->
+    val result = ffmpeg.execute(FFmpegCommand.build {
+        overwrite()
+        input("input.mp4")
+        videoCodec("libx264")
+        audioCodec("aac")
+        output("output.mp4")
+    })
 }
 ```
 
-The exact API is not settled; this example describes the intended level of
-abstraction rather than a committed interface. The proposed module layers,
-binding backends, and native build flow are described in the
+The module layers, binding backends, and native build flow are described in the
 [architecture documentation](docs/architecture.md).
 
 ## Target platforms
@@ -78,25 +81,29 @@ Native artifacts are generated locally through target-specific pipelines. See
 the [native build documentation](docs/native-builds.md) for the intended build
 model and reproducibility requirements.
 
-## Planned delivery stages
+## Delivery status
 
-1. Establish the repository, Gradle modules, conventions, and target matrix.
-2. Pin FFmpeg and implement reproducible native builds per platform family.
-3. Generate native, shared JVM/Android JNI, and Wasm bindings locally from the
-   single `:bindings` module without publishing compiled FFmpeg artifacts.
-4. Implement sessions, execution, cancellation, logging, and progress in `core`.
-5. Add the FFmpeg command API and FFprobe metadata models.
-6. Add the optional filter-graph DSL, samples, tests, and publishing.
-
-The current repository covers the first stage and the Android, Apple, JVM
-desktop, and WebAssembly binary pipelines from the second stage. Generated
-bindings remain later work.
+- Native binary builds cover Android, Apple, JVM desktop, and Emscripten.
+- JavaCPP 1.5.13 generates and verifies the seven declaration families and the
+  project bridge locally. The JVM adapter and repeated-command smoke test use
+  those generated JNI libraries; Apple uses one umbrella cinterop klib.
+- `core`, `ffmpeg`, `ffprobe`, and `filters` contain the session API, scheduler,
+  command/tokenizer DSL, typed JSON model, and filter AST.
+- The portable C bridge is installed and hashed with each native build. Its weak
+  fallback reports that the embedded CLI is unavailable if a target was built
+  without the reviewed `fftools` entry objects.
+- JVM and Android share one JavaCPP execution actual. All eight binding families
+  cross-compile for Android's four ABIs and assemble into an ignored local
+  runtime AAR. The browser Kotlin actual drives the Emscripten module in a Web
+  Worker with mounted byte I/O and structured events. Emscripten link/runtime
+  verification still requires an installed `emconfigure` and `emcc` toolchain.
 
 ## Documentation
 
 - [Contributing](docs/contributing.md)
 - [Architecture](docs/architecture.md)
 - [Native builds](docs/native-builds.md)
+- [Binding generation](docs/bindings.md)
 - [Licensing and distribution](docs/licensing.md)
 
 ## Licence and distribution

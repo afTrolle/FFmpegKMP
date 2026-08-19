@@ -4,7 +4,7 @@
 headers from the pinned FFmpeg checkout once and uses that same input for every
 generated platform binding.
 
-The module will contain three backend lanes:
+The module contains three backend lanes:
 
 - Kotlin/Native cinterop for Apple targets;
 - one shared JNI C++/Java binding implementation generated locally for both JVM
@@ -16,10 +16,12 @@ the same generated JNI API and native bridge. Kotlin does not support a shared
 JVM+Android intermediate source set, so shared code generation and C++ sources
 form the common boundary instead.
 
-`prepareFfmpegHeaders` currently stages FFmpeg headers under
-`build/generated/ffmpeg-headers`, together with this module's licence. Later
-generator and cinterop tasks should depend on that task and add target-specific
-generated headers from the matching native-build output.
+`prepareFfmpegHeaders` stages FFmpeg headers under
+`build/generated/ffmpeg-headers`. `generateJavaCppBindings` runs one JavaCPP
+parser task for each library and the command bridge; `verifyJavaCppBindings`
+compiles the complete generated declaration set. Apple targets create one
+`ffmpeg` cinterop from `ffmpeg.def`, the matching target install tree, and the
+umbrella header. See [binding generation](../docs/bindings.md).
 
 ## Generation and distribution policy
 

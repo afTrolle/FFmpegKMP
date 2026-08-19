@@ -241,6 +241,7 @@ object NativeBuildRegistration {
         kind: String,
     ) {
         sourceDirectory.set(project.layout.dir(project.provider { File(extension.sourceDirectory.get()) }))
+        bridgeSourceDirectory.set(project.rootProject.layout.projectDirectory.dir("native-build/bridge"))
         workDirectory.set(project.layout.projectDirectory.dir("work/$profile/$target"))
         installDirectory.set(project.layout.projectDirectory.dir("out/$profile/$target"))
         profileName.set(profile)

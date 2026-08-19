@@ -8,7 +8,8 @@ ffmpegNativeBuild {
     jobs.set(providers.gradleProperty("ffmpegkmp.jobs").map(String::toInt).orElse(Runtime.getRuntime().availableProcessors()))
 
     common {
-        buildPrograms.set(false)
+        // fftools objects are embedded into libffmpegkmp_bridge; no executable is packaged.
+        buildPrograms.set(true)
         buildDocumentation.set(false)
         externalAutodetect.set(false)
         network.set(true)
