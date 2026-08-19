@@ -38,10 +38,15 @@ public enum class CommandKind { FFMPEG, FFPROBE }
 
 @OptIn(ExperimentalAtomicApi::class)
 @InternalFFmpegKmpApi
-public class CommandRuntimeClient(
+public class CommandRuntimeClient private constructor(
     private val kind: CommandKind,
-    private val bridge: NativeExecutionBridge = createPlatformExecutionBridge(),
+    private val bridge: NativeExecutionBridge,
+    @Suppress("UNUSED_PARAMETER") constructorMarker: Unit,
 ) : AutoCloseable {
+    public constructor(kind: CommandKind) : this(kind, createPlatformExecutionBridge(), Unit)
+
+    internal constructor(kind: CommandKind, bridge: NativeExecutionBridge) : this(kind, bridge, Unit)
+
     private val clientState = AtomicReference(ClientState())
     private val bridgeClosed = AtomicBoolean(false)
 

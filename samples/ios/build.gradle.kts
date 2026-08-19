@@ -2,4 +2,4 @@ plugins {
     id("ffmpegkmp.project")
 }
 
-description = "iOS sample placeholder"
+description = "iOS launcher sources for the FFmpegKMP Studio framework"

@@ -32,6 +32,7 @@ include(
     ":library:ffmpeg",
     ":library:ffprobe",
     ":library:filters",
+    ":samples:studio",
     ":samples:android",
     ":samples:desktop",
     ":samples:ios",

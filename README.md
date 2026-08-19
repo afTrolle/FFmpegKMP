@@ -75,7 +75,8 @@ FFmpegKMP/
 - `bindings/` is one KMP module containing generated interop code and internal
   adapters. JVM and Android share one JNI C++/Java binding implementation.
 - `library/` contains the platform-neutral API exposed to consumers.
-- `samples/` will verify the public API from real applications on each platform.
+- `samples/` contains FFmpegKMP Studio, a shared Compose Multiplatform multi-clip
+  editor with Android, iOS, desktop, and browser launchers.
 
 Native artifacts are generated locally through target-specific pipelines. See
 the [native build documentation](docs/native-builds.md) for the intended build
@@ -89,6 +90,8 @@ model and reproducibility requirements.
   those generated JNI libraries; Apple uses one umbrella cinterop klib.
 - `core`, `ffmpeg`, `ffprobe`, and `filters` contain the session API, scheduler,
   command/tokenizer DSL, typed JSON model, and filter AST.
+- FFmpegKMP Studio exercises the public API with FileKit import, FFprobe media
+  inspection, a responsive timeline editor, multi-clip concat, and MP4 export.
 - The portable C bridge is installed and hashed with each native build. Its weak
   fallback reports that the embedded CLI is unavailable if a target was built
   without the reviewed `fftools` entry objects.
