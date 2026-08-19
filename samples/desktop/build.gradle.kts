@@ -15,6 +15,11 @@ kotlin {
         implementation(libs.filekit.core)
         implementation(compose.desktop.currentOs)
     }
+    sourceSets.jvmTest.dependencies {
+        implementation(project(":library:ffmpeg"))
+        implementation(libs.kotlinx.io.core)
+        implementation(kotlin("test"))
+    }
 }
 
 compose.desktop {
@@ -44,7 +49,7 @@ val studioHost = providers.systemProperty("os.name").zip(providers.systemPropert
 }
 
 tasks.withType<JavaExec>().configureEach {
-    if (name != "run") return@configureEach
+    if (name != "run" && name != "jvmRun") return@configureEach
     dependsOn(":bindings:buildJavaCppHostBindings")
     val families = listOf("Avutil", "Swresample", "Swscale", "Avcodec", "Avformat", "Avfilter", "Avdevice", "Bridge")
     val jniPath = families.joinToString(File.pathSeparator) { family ->
@@ -65,4 +70,14 @@ tasks.withType<JavaExec>().configureEach {
         studioHost.get().startsWith("windows") ->
             environment("PATH", "$nativePath${File.pathSeparator}${System.getenv("PATH")}")
     }
+}
+
+// IntelliJ can launch MainKt directly, bypassing the Compose `run` task.
+// Ensure that such a build still produces the local JNI runtime discovered by Main.kt.
+tasks.named("jvmMainClasses") {
+    dependsOn(":bindings:buildJavaCppHostBindings")
+}
+
+tasks.named("jvmTest") {
+    dependsOn(":bindings:buildJavaCppHostBindings")
 }

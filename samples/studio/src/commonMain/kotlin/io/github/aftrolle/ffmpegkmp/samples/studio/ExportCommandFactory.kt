@@ -31,9 +31,10 @@ internal object ExportCommandFactory {
             complexFilter(graph)
             map("[outv]")
             map("[outa]")
-            videoCodec("libx264")
-            option("-preset", quality.videoPreset)
-            option("-crf", quality.crf.toString())
+            // The standard FFmpegKMP profile intentionally avoids GPL-only
+            // libx264. MPEG-4 Part 2 is built into FFmpeg on every sample target.
+            videoCodec("mpeg4")
+            option("-q:v", quality.videoQuality.toString())
             audioCodec("aac")
             option("-b:a", "192k")
             option("-movflags", "+faststart")

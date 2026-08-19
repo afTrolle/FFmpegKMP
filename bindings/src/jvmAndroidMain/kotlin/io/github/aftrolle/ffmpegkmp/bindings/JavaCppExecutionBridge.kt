@@ -25,10 +25,7 @@ private class JavaCppExecutionBridge : NativeExecutionBridge {
     private var closed = false
 
     init {
-        configuredJniPath()?.let { path ->
-            System.setProperty("org.bytedeco.javacpp.platform.library.path", path)
-        }
-        Loader.load(bridge::class.java)
+        JavaCppBridgeLoader.load()
         callback = object : ffmpegkmp_event_callback() {
             override fun call(opaque: Pointer?, kind: Int, level: Int, data: BytePointer?, size: Long) {
                 if (data == null || size <= 0L || size > Int.MAX_VALUE) return
@@ -121,6 +118,51 @@ private class JavaCppExecutionBridge : NativeExecutionBridge {
 
 private fun configuredJniPath(): String? =
     System.getProperty("ffmpegkmp.jni.path")?.takeIf(String::isNotBlank)
+
+/**
+ * Java marks a class as erroneous after a failed static initializer. Keep the first
+ * loader failure so later client instances report the useful native-linker cause
+ * instead of only `Could not initialize class ...global.bridge`.
+ */
+private object JavaCppBridgeLoader {
+    private var firstFailure: Throwable? = null
+    private var loaded = false
+
+    fun load() = synchronized(this) {
+        if (loaded) return@synchronized
+        firstFailure?.let(::throwUnavailable)
+        try {
+            val configuredPath = configuredJniPath()
+            if (configuredPath != null) {
+                // `platform.library.path` is a classpath resource location in
+                // JavaCPP. A generated filesystem path belongs in linkpath.
+                // Pass fresh properties explicitly because Loader may already
+                // have cached its defaults before an application configures us.
+                val properties = Loader.loadProperties(true).apply {
+                    setProperty("platform.linkpath", configuredPath)
+                }
+                Loader.load(bridge::class.java, properties, true)
+            } else {
+                Loader.load(bridge::class.java)
+            }
+            loaded = true
+        } catch (failure: Throwable) {
+            firstFailure = failure
+            throwUnavailable(failure)
+        }
+    }
+
+    private fun throwUnavailable(failure: Throwable): Nothing {
+        val detail = generateSequence(failure) { it.cause }
+            .mapNotNull { it.message?.lineSequence()?.firstOrNull()?.trim() }
+            .lastOrNull { it.isNotEmpty() }
+            ?: failure.toString()
+        throw NativeBridgeUnavailableException(
+            "Could not load the FFmpegKMP native runtime: $detail. " +
+                "On JVM, run through Gradle or set ffmpegkmp.jni.path to the generated JNI libraries.",
+        ).also { it.initCause(failure) }
+    }
+}
 
 private fun createStagingDirectory(executionId: Long): File {
     val marker = File.createTempFile("ffmpegkmp-$executionId-", ".staging")

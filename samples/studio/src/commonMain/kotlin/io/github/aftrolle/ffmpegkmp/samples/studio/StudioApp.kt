@@ -512,7 +512,13 @@ private fun RenderBar(state: StudioState, controller: StudioController) {
                 horizontalArrangement = Arrangement.spacedBy(12.dp),
             ) {
                 Column(Modifier.weight(1f)) {
-                    Text(state.render.message, fontWeight = FontWeight.Medium, fontSize = 13.sp)
+                    Text(
+                        state.render.message,
+                        fontWeight = FontWeight.Medium,
+                        fontSize = 13.sp,
+                        maxLines = if (state.render.stage == RenderStage.FAILED) 2 else 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
                     val detail = state.render.logs.lastOrNull()
                         ?: "${state.canvas.label}  •  ${state.quality.label}  •  ${state.totalDurationSeconds.asTime()}"
                     Text(detail, color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 10.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)

@@ -15,12 +15,11 @@ public enum class CanvasPreset(
 
 public enum class ExportQuality(
     public val label: String,
-    internal val crf: Int,
-    internal val videoPreset: String,
+    internal val videoQuality: Int,
 ) {
-    COMPACT("Compact", 28, "veryfast"),
-    BALANCED("Balanced", 23, "medium"),
-    HIGH("High", 18, "slow"),
+    COMPACT("Compact", 8),
+    BALANCED("Balanced", 5),
+    HIGH("High", 2),
 }
 
 public data class ClipMediaInfo(

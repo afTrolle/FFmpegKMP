@@ -46,6 +46,7 @@ public class StudioController(
                 ) ?: emptyList()
                 if (files.isNotEmpty()) addFiles(files)
             } catch (failure: Throwable) {
+                failure.reportToConsole("Clip import failed")
                 mutableState.update { it.copy(importMessage = failure.readableMessage("Could not import clips")) }
             } finally {
                 mutableState.update { it.copy(isImporting = false) }
@@ -110,6 +111,7 @@ public class StudioController(
                 )
             }
         } catch (failure: Throwable) {
+            failure.reportToConsole("FFprobe failed for ${clip.displayName}")
             updateClip(clip.id) {
                 it.copy(
                     analysisState = ClipAnalysisState.FAILED,
@@ -242,11 +244,13 @@ public class StudioController(
                 }
             } catch (failure: Throwable) {
                 renderSession = null
+                val diagnostics = failure.reportToConsole("Montage render failed")
                 mutableState.update {
                     it.copy(
                         render = it.render.copy(
                             stage = RenderStage.FAILED,
                             message = failure.readableMessage("Render failed"),
+                            logs = (it.render.logs + diagnostics).takeLast(24),
                         ),
                     )
                 }
@@ -284,7 +288,7 @@ public class StudioController(
 
     private fun appendLog(line: String) {
         mutableState.update { current ->
-            current.copy(render = current.render.copy(logs = (current.render.logs + line).takeLast(8)))
+            current.copy(render = current.render.copy(logs = (current.render.logs + line).takeLast(24)))
         }
     }
 }
@@ -293,6 +297,22 @@ private fun String.safeExtension(): String =
     substringAfterLast('.', "mp4").lowercase().filter(Char::isLetterOrDigit).take(8).ifBlank { "mp4" }
 
 private fun Throwable.readableMessage(fallback: String): String =
-    message?.lineSequence()?.firstOrNull()?.take(240)?.let { "$fallback: $it" } ?: fallback
+    causeMessages().lastOrNull()?.take(320)?.let { "$fallback: $it" } ?: fallback
+
+private fun Throwable.reportToConsole(context: String): List<String> {
+    val causes = causeMessages().mapIndexed { index, message ->
+        if (index == 0) "$context: $message" else "Caused by: $message"
+    }
+    println("[FFmpegKMP Studio] $context\n${stackTraceToString()}")
+    return causes
+}
+
+private fun Throwable.causeMessages(): List<String> =
+    generateSequence(this) { it.cause }
+        .mapNotNull { failure -> failure.message?.lineSequence()?.firstOrNull()?.trim() }
+        .filter(String::isNotEmpty)
+        .distinct()
+        .take(8)
+        .toList()
 
 internal expect suspend fun saveRenderedVideo(bytes: ByteArray, fileName: String): Boolean
