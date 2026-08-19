@@ -104,6 +104,7 @@ model and reproducibility requirements.
 ## Documentation
 
 - [Contributing](docs/contributing.md)
+- [Maven Central publishing](docs/publishing.md)
 - [Architecture](docs/architecture.md)
 - [Native builds](docs/native-builds.md)
 - [Binding generation](docs/bindings.md)
@@ -116,8 +117,9 @@ while the [`bindings` module](bindings/README.md) is licensed under
 `LGPL-2.1-or-later`. FFmpeg and other third-party components retain their own
 licences.
 
-FFmpegKMP distributes source and build logic, not compiled FFmpeg artifacts or
-generated bindings. Anyone distributing locally generated binaries or an
+FFmpegKMP's Maven packages contain the high-level libraries and the separately
+licensed bindings module, but not compiled FFmpeg libraries, JNI shims, or
+WebAssembly modules. Anyone distributing locally generated binaries or an
 application containing them is responsible for the applicable open-source,
 patent, and platform requirements. Read the full
 [licensing and distribution policy](docs/licensing.md) and

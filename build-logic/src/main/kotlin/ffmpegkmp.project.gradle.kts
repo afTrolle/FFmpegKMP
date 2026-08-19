@@ -3,5 +3,4 @@ plugins {
 }
 
 group = "io.github.aftrolle.ffmpegkmp"
-version = "0.1.0-SNAPSHOT"
-
+version = providers.gradleProperty("ffmpegkmp.version").orElse("0.1.0-SNAPSHOT").get()

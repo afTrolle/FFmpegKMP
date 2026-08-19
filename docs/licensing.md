@@ -22,28 +22,28 @@ pinned `ffmpeg` submodule.
 
 ## No-binary-distribution policy
 
-FFmpegKMP is a source-and-build-logic project, not an FFmpeg binary
-distribution. Official FFmpegKMP packages, releases, public CI artifacts, and
-downloadable caches do **not** include:
+FFmpegKMP is not an FFmpeg binary distribution. Official FFmpegKMP Maven
+packages may include Kotlin bindings and generated declarations under the
+bindings module's LGPL licence, but they do **not** include:
 
 - FFmpeg executables;
 - static or shared FFmpeg libraries;
 - FFmpeg object code, frameworks, or WebAssembly modules; or
-- generated, header-derived binding sources or objects.
+- locally generated JNI shims or native runtime bundles.
 
-Native build and binding-generation tasks create outputs only inside the user's
-local build environment. CI may compile those outputs for verification, but it
-must discard them after the job and must not expose them as downloadable
-artifacts. Any future publishing task must exclude all such outputs.
+Native FFmpeg build tasks create outputs only inside the user's local build
+environment. CI may use those outputs to compile and verify the LGPL bindings,
+but publishing tasks must exclude the FFmpeg libraries and executable runtime
+outputs listed above.
 
 Downloading, building, or using FFmpeg locally is not an official FFmpegKMP
 binary distribution. A person or organization that gives a generated binary or
 an application containing it to someone else becomes the downstream distributor
 of that output and must independently satisfy the applicable legal requirements.
 
-If generated bindings are ever distributed, they must be kept in a separate
-artifact with the LGPL licence and applicable notices, and that exact artifact
-must be reviewed for compliance before publication.
+Generated bindings are kept in the separate `bindings` artifact with the LGPL
+licence and applicable notices. Each release of that artifact must be reviewed
+for licence compliance before publication.
 
 ## What users need to do
 

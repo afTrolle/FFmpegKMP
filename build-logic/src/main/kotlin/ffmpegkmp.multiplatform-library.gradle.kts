@@ -8,6 +8,7 @@ plugins {
     id("ffmpegkmp.project")
     id("org.jetbrains.kotlin.multiplatform")
     id("com.android.kotlin.multiplatform.library")
+    id("com.vanniktech.maven.publish")
 }
 
 val defaultNamespace = "io.github.aftrolle.ffmpegkmp" +
@@ -19,6 +20,11 @@ val androidNamespace = providers
 val versionCatalog = extensions.getByType<VersionCatalogsExtension>().named("libs")
 val androidCompileSdk = versionCatalog.findVersion("android-compileSdk").get().requiredVersion.toInt()
 val androidMinSdk = versionCatalog.findVersion("android-minSdk").get().requiredVersion.toInt()
+val publicationName = when (project.name) {
+    "ffmpeg" -> "FFmpegKMP FFmpeg"
+    "ffprobe" -> "FFmpegKMP FFprobe"
+    else -> "FFmpegKMP ${project.name.replaceFirstChar(Char::titlecase)}"
+}
 
 extensions.configure<KotlinMultiplatformExtension> {
     android {
@@ -50,6 +56,46 @@ extensions.configure<KotlinMultiplatformExtension> {
     sourceSets {
         commonTest.dependencies {
             implementation(kotlin("test"))
+        }
+    }
+}
+
+mavenPublishing {
+    publishToMavenCentral()
+    signAllPublications()
+    coordinates(project.group.toString(), project.name, project.version.toString())
+
+    pom {
+        name = publicationName
+        description.set(providers.provider {
+            project.description ?: "Kotlin Multiplatform FFmpeg module ${project.path}"
+        })
+        inceptionYear = "2026"
+        url = "https://github.com/afTrolle/FFmpegKMP"
+
+        licenses {
+            license {
+                if (project.path == ":bindings") {
+                    name = "GNU Lesser General Public License, version 2.1 or later"
+                    url = "https://www.gnu.org/licenses/old-licenses/lgpl-2.1.html"
+                } else {
+                    name = "The Apache License, Version 2.0"
+                    url = "https://www.apache.org/licenses/LICENSE-2.0.txt"
+                }
+                distribution = "repo"
+            }
+        }
+        developers {
+            developer {
+                id = "afTrolle"
+                name = "Alexander af Trolle"
+                url = "https://github.com/afTrolle"
+            }
+        }
+        scm {
+            url = "https://github.com/afTrolle/FFmpegKMP"
+            connection = "scm:git:https://github.com/afTrolle/FFmpegKMP.git"
+            developerConnection = "scm:git:ssh://git@github.com/afTrolle/FFmpegKMP.git"
         }
     }
 }
