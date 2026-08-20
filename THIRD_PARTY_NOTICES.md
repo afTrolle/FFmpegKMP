@@ -77,6 +77,16 @@ high-level Kotlin API and build-logic modules, which remain Apache-2.0.
 The policy for generated header-derived bindings is documented in
 [Licensing and distribution](docs/licensing.md).
 
+## Okio
+
+The public mounted-I/O API and platform adapters use Okio:
+
+- Project: <https://square.github.io/okio/>
+- Source: <https://github.com/square/okio>
+- Licence: Apache License 2.0
+
+Okio remains separately copyrighted by Square, Inc. and its contributors.
+
 ## Downstream distribution responsibility
 
 The [licensing and distribution policy](docs/licensing.md) describes the

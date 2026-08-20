@@ -19,6 +19,7 @@ kotlin {
     jvm()
 
     wasmJs {
+        binaries.executable()
         browser()
     }
 
@@ -40,7 +41,7 @@ kotlin {
             implementation(libs.filekit.core)
             implementation(libs.filekit.dialogs.compose)
             implementation(libs.kotlinx.coroutines.core)
-            implementation(libs.kotlinx.io.core)
+            implementation(libs.okio)
             implementation(compose.runtime)
             implementation(compose.foundation)
             implementation(compose.material3)

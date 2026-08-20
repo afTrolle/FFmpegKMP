@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: LGPL-2.1-or-later
 package io.github.aftrolle.ffmpegkmp.bindings
 
-import kotlinx.io.RawSink
-import kotlinx.io.RawSource
+import okio.FileHandle
+import okio.Sink
+import okio.Source
 
 /** Internal ABI shared by the public Kotlin modules and the generated platform bindings. */
 @RequiresOptIn(
@@ -19,15 +20,32 @@ public enum class NativeCommandKind {
 }
 
 @InternalFFmpegKmpApi
-public class NativeMountedInput(
-    public val path: String,
-    public val source: RawSource,
-)
+public enum class NativeIoAccess {
+    READ,
+    WRITE,
+    READ_WRITE,
+}
 
 @InternalFFmpegKmpApi
-public class NativeMountedOutput(
+public sealed interface NativeIoResource
+
+@InternalFFmpegKmpApi
+public class NativeFileResource(
+    public val fileHandle: FileHandle,
+    public val access: NativeIoAccess,
+    public val truncate: Boolean = access == NativeIoAccess.WRITE,
+) : NativeIoResource
+
+@InternalFFmpegKmpApi
+public class NativeSourceResource(public val source: Source) : NativeIoResource
+
+@InternalFFmpegKmpApi
+public class NativeSinkResource(public val sink: Sink) : NativeIoResource
+
+@InternalFFmpegKmpApi
+public class NativeMountedIo(
     public val path: String,
-    public val sink: RawSink,
+    public val resource: NativeIoResource,
 )
 
 @InternalFFmpegKmpApi
@@ -35,8 +53,7 @@ public data class NativeExecutionRequest(
     val id: Long,
     val kind: NativeCommandKind,
     val arguments: List<String>,
-    val inputs: List<NativeMountedInput> = emptyList(),
-    val outputs: List<NativeMountedOutput> = emptyList(),
+    val mounts: List<NativeMountedIo> = emptyList(),
 )
 
 @InternalFFmpegKmpApi
@@ -47,7 +64,7 @@ public sealed interface NativeExecutionEvent {
     public enum class Stream { STDOUT, STDERR }
 }
 
-/** Mounted output data is streamed into each [NativeMountedOutput.sink] before execute returns. */
+/** Mounted resources remain open until the command session completes. */
 @InternalFFmpegKmpApi
 public data class NativeExecutionResult(
     val returnCode: Int,

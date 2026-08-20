@@ -21,9 +21,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
-import kotlinx.io.Buffer
-import kotlinx.io.readByteArray
-import kotlinx.io.write
+import okio.Buffer
 
 public class StudioController(
     private val scope: CoroutineScope,
@@ -198,6 +196,7 @@ public class StudioController(
                             val line = when (event) {
                                 is ExecutionEvent.Log -> event.message.trim()
                                 is ExecutionEvent.Output -> event.text.trim()
+                                is ExecutionEvent.Progress -> ""
                             }
                             if (line.isNotEmpty()) appendLog(line)
                         }

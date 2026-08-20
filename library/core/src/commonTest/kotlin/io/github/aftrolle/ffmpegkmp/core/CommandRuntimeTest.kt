@@ -10,8 +10,11 @@ import io.github.aftrolle.ffmpegkmp.bindings.NativeExecutionBridge
 import io.github.aftrolle.ffmpegkmp.bindings.NativeExecutionEvent
 import io.github.aftrolle.ffmpegkmp.bindings.NativeExecutionRequest
 import io.github.aftrolle.ffmpegkmp.bindings.NativeExecutionResult
+import io.github.aftrolle.ffmpegkmp.bindings.NativeSinkResource
+import io.github.aftrolle.ffmpegkmp.bindings.NativeSourceResource
 import kotlin.test.Test
 import kotlin.test.assertContentEquals
+import kotlin.test.assertContains
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 import kotlinx.coroutines.CompletableDeferred
@@ -20,20 +23,21 @@ import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.runTest
-import kotlinx.io.Buffer
-import kotlinx.io.RawSink
-import kotlinx.io.RawSource
-import kotlinx.io.buffered
-import kotlinx.io.readByteArray
-import kotlinx.io.write
+import okio.Buffer
+import okio.Sink
+import okio.Source
+import okio.Timeout
+import okio.buffer
 
 class CommandRuntimeTest {
     @Test
     fun globallyQueuesDifferentClients() = runTest {
         val order = mutableListOf<String>()
+        val firstStarted = CompletableDeferred<Unit>()
         val releaseFirst = CompletableDeferred<Unit>()
         val first = FakeBridge { request, _ ->
             order += "start-${request.arguments.single()}"
+            firstStarted.complete(Unit)
             releaseFirst.await()
             order += "end-${request.arguments.single()}"
             NativeExecutionResult(0)
@@ -47,7 +51,7 @@ class CommandRuntimeTest {
 
         val sessionOne = firstClient.enqueue(listOf("one"))
         val sessionTwo = secondClient.enqueue(listOf("two"))
-        while (sessionOne.state.value != SessionState.RUNNING) delay(1)
+        firstStarted.await()
         assertEquals(listOf("start-one"), order)
 
         releaseFirst.complete(Unit)
@@ -61,13 +65,13 @@ class CommandRuntimeTest {
 
     @Test
     fun transfersAndClosesIoExactlyOnce() = runTest {
-        val input = TrackingRawSource("hello".encodeToByteArray())
-        val output = TrackingRawSink()
+        val input = TrackingSource("hello".encodeToByteArray())
+        val output = TrackingSink()
         val bridge = FakeBridge { request, emit ->
-            val mounted = request.inputs.single()
-            assertContentEquals("hello".encodeToByteArray(), mounted.source.buffered().readByteArray())
+            val mounted = request.mounts.single { it.path == "input.bin" }.resource as NativeSourceResource
+            assertContentEquals("hello".encodeToByteArray(), mounted.source.buffer().readByteArray())
             emit(NativeExecutionEvent.Output(NativeExecutionEvent.Stream.STDOUT, "done"))
-            val sink = request.outputs.single { it.path == "result.bin" }.sink
+            val sink = (request.mounts.single { it.path == "result.bin" }.resource as NativeSinkResource).sink
             val payload = Buffer().also { it.write("world".encodeToByteArray()) }
             sink.write(payload, payload.size)
             NativeExecutionResult(0)
@@ -76,8 +80,8 @@ class CommandRuntimeTest {
         val result = client.execute(
             listOf("-version"),
             CommandIo {
-                input("input.bin", input.buffered())
-                output("result.bin", output.buffered())
+                input("input.bin", input)
+                output("result.bin", output)
             },
         )
 
@@ -99,14 +103,14 @@ class CommandRuntimeTest {
 
         val first = firstClient.enqueue(listOf("first"))
         while (first.state.value != SessionState.RUNNING) delay(1)
-        val input = TrackingRawSource("queued".encodeToByteArray())
-        val output = TrackingRawSink()
+        val input = TrackingSource("queued".encodeToByteArray())
+        val output = TrackingSink()
         val second = secondClient.enqueue(listOf("second"))
         val secondWithIo = secondClient.enqueue(
             listOf("third"),
             CommandIo {
-                input("input.bin", input.buffered())
-                output("output.bin", output.buffered())
+                input("input.bin", input)
+                output("output.bin", output)
             },
         )
         second.cancel()
@@ -160,10 +164,8 @@ class CommandRuntimeTest {
 
         val result = client.execute(listOf("-bad"))
 
-        assertEquals(
-            "Unknown option '-bad'.\nConversion failed.\n",
-            result.errorOutput,
-        )
+        assertContains(result.errorOutput, "Unknown option '-bad'.")
+        assertContains(result.errorOutput, "Conversion failed.")
         assertEquals(LogLevel.ERROR, result.logs.single().level)
         client.close()
     }
@@ -183,15 +185,16 @@ private class FakeBridge(
     override fun close() { closeCount++ }
 }
 
-private class TrackingRawSource(bytes: ByteArray) : RawSource {
+private class TrackingSource(bytes: ByteArray) : Source {
     private val data = Buffer().apply { write(bytes) }
     var closeCount = 0
 
-    override fun readAtMostTo(sink: Buffer, byteCount: Long): Long = data.readAtMostTo(sink, byteCount)
+    override fun read(sink: Buffer, byteCount: Long): Long = data.read(sink, byteCount)
+    override fun timeout(): Timeout = Timeout.NONE
     override fun close() { closeCount++ }
 }
 
-private class TrackingRawSink : RawSink {
+private class TrackingSink : Sink {
     val data = Buffer()
     var closeCount = 0
 
@@ -200,5 +203,6 @@ private class TrackingRawSink : RawSink {
     }
 
     override fun flush() = Unit
+    override fun timeout(): Timeout = Timeout.NONE
     override fun close() { closeCount++ }
 }

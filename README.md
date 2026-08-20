@@ -40,6 +40,29 @@ FFmpegClient().use { ffmpeg ->
 }
 ```
 
+Mounted I/O is backed by Okio. A `FileHandle` is read and written on demand at
+the offsets requested by FFmpeg, so no full temporary-file staging is needed:
+
+```kotlin
+val input = FileSystem.SYSTEM.openReadOnly("input.mp4".toPath())
+val output = FileSystem.SYSTEM.openReadWrite("output.mp4".toPath())
+
+val io = CommandIo {
+    input("mounted-input.mp4", input)
+    output("mounted-output.mp4", output)
+}
+
+FFmpegClient().use { ffmpeg ->
+    ffmpeg.execute(listOf("-i", "mounted-input.mp4", "mounted-output.mp4"), io)
+}
+```
+
+Okio `Source` and `Sink` mounts are also supported for genuinely streaming I/O.
+On Android, overloads accept file descriptors, `ParcelFileDescriptor`,
+`AssetFileDescriptor`, content `Uri`, and Java input/output streams; seekable
+descriptors use random access and pipe-backed descriptors automatically fall
+back to stream semantics.
+
 The module layers, binding backends, and native build flow are described in the
 [architecture documentation](docs/architecture.md).
 

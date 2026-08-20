@@ -114,8 +114,7 @@ abstract class FfmpegBuildTask : DefaultTask() {
     @TaskAction
     fun buildFfmpeg() {
         val source = sourceDirectory.get().asFile
-        val configure = source.resolve("configure")
-        require(configure.isFile) {
+        require(source.resolve("configure").isFile) {
             "FFmpeg source is not initialized at ${source.absolutePath}; initialize the ffmpeg submodule first."
         }
 
@@ -127,6 +126,9 @@ abstract class FfmpegBuildTask : DefaultTask() {
         fileSystemOperations.delete { delete(work, install) }
         work.mkdirs()
         install.mkdirs()
+
+        val preparedSource = prepareSourceWithIoProtocol(source, work)
+        val configure = preparedSource.resolve("configure")
 
         val arguments = mutableListOf<String>()
         arguments += "--prefix=${install.absolutePath}"
@@ -152,6 +154,7 @@ abstract class FfmpegBuildTask : DefaultTask() {
         addComponentFlags(arguments, "demuxer", demuxers.get())
         addComponentFlags(arguments, "parser", parsers.get())
         addComponentFlags(arguments, "protocol", protocols.get())
+        arguments += "--enable-protocol=ffmpegkmp"
         addComponentFlags(arguments, "filter", filters.get())
         addComponentFlags(arguments, "indev", inputDevices.get())
         addComponentFlags(arguments, "outdev", outputDevices.get())
@@ -205,6 +208,45 @@ abstract class FfmpegBuildTask : DefaultTask() {
         verifyInstalledArtifacts(install)
         copyLicences(source, install)
         writeMetadata(source, install, arguments, assessment)
+    }
+
+    private fun prepareSourceWithIoProtocol(source: File, work: File): File {
+        val prepared = work.resolve("source")
+        fileSystemOperations.sync {
+            from(source) { exclude(".git/**") }
+            into(prepared)
+        }
+        fileSystemOperations.copy {
+            from(bridgeSourceDirectory.file("ffmpegkmp_protocol.c"))
+            into(prepared.resolve("libavformat"))
+        }
+
+        val protocols = prepared.resolve("libavformat/protocols.c")
+        val protocolMarker = "extern const URLProtocol ff_file_protocol;"
+        val protocolText = protocols.readText()
+        require(protocolMarker in protocolText) { "Could not locate FFmpeg protocol declaration marker" }
+        protocols.writeText(
+            protocolText.replace(
+                protocolMarker,
+                "$protocolMarker\nextern const URLProtocol ff_ffmpegkmp_protocol;",
+            ),
+        )
+
+        val hls = prepared.resolve("libavformat/hls.c")
+        val hlsMarker = "if (av_strstart(proto_name, \"file\", NULL)) {"
+        val hlsText = hls.readText()
+        require(hlsMarker in hlsText) { "Could not locate FFmpeg HLS file-protocol marker" }
+        hls.writeText(
+            hlsText.replace(
+                hlsMarker,
+                "if (av_strstart(proto_name, \"file\", NULL) || " +
+                    "av_strstart(proto_name, \"ffmpegkmp\", NULL)) {",
+            ),
+        )
+
+        val makefile = prepared.resolve("libavformat/Makefile")
+        makefile.appendText("\nOBJS-\$(CONFIG_FFMPEGKMP_PROTOCOL) += ffmpegkmp_protocol.o\n")
+        return prepared
     }
 
     private fun configureAndroid(arguments: MutableList<String>) {

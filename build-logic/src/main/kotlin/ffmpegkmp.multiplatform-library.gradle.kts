@@ -31,6 +31,12 @@ extensions.configure<KotlinMultiplatformExtension> {
         namespace = androidNamespace.get()
         compileSdk = androidCompileSdk
         minSdk = androidMinSdk
+
+        withDeviceTestBuilder {
+            sourceSetTreeName = "test"
+        }.configure {
+            instrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+        }
     }
 
     jvm()
@@ -54,8 +60,22 @@ extensions.configure<KotlinMultiplatformExtension> {
     }
 
     sourceSets {
-        commonTest.dependencies {
-            implementation(kotlin("test"))
+        commonTest {
+            dependencies {
+                implementation(kotlin("test"))
+            }
+
+            if (project.path.startsWith(":library:") && project.path != ":library:core") {
+                // Keep media fixtures in one place while making them available to every
+                // library module's platform test compilations.
+                resources.srcDir(
+                    rootProject.layout.projectDirectory.dir("library/core/src/commonTest/resources"),
+                )
+            }
+        }
+
+        getByName("androidDeviceTest").dependencies {
+            implementation(versionCatalog.findLibrary("androidx-test-runner").get())
         }
     }
 }

@@ -13,10 +13,6 @@ import kotlin.js.JsAny
 import kotlin.coroutines.resume
 import kotlinx.coroutines.CancellableContinuation
 import kotlinx.coroutines.suspendCancellableCoroutine
-import kotlinx.io.Buffer
-import kotlinx.io.Source
-import kotlinx.io.buffered
-import kotlinx.io.readByteArray
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
@@ -27,6 +23,7 @@ import kotlinx.serialization.json.int
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
+import okio.Buffer
 
 @InternalFFmpegKmpApi
 public actual fun createPlatformExecutionBridge(): NativeExecutionBridge = WasmWorkerExecutionBridge()
@@ -53,7 +50,7 @@ private class WasmWorkerExecutionBridge : NativeExecutionBridge {
                 when (value.string("type")) {
                     "event" -> emit(value.toNativeEvent())
                     "complete" -> {
-                        value.writeOutputsTo(request.outputs)
+                        value.writeOutputsTo(request.mounts)
                         completeActive(request.id, value.toNativeResult())
                     }
                     "failure" -> {
@@ -124,17 +121,37 @@ internal fun NativeExecutionRequest.toWorkerJson(): JsonObject = buildJsonObject
     put("id", JsonPrimitive(id.toString()))
     put("kind", JsonPrimitive(if (kind == NativeCommandKind.FFMPEG) "ffmpeg" else "ffprobe"))
     put("arguments", JsonArray(arguments.map(::JsonPrimitive)))
-    put("inputs", buildJsonArray {
-        inputs.forEach { input ->
-            // The worker boundary is message-based, so mounted sources materialize here.
-            val bytes = input.source.buffered().use(Source::readByteArray)
+    put("mounts", buildJsonArray {
+        mounts.forEach { mount ->
+            val resource = mount.resource
+            val bytes = when (resource) {
+                is NativeFileResource -> if (resource.access != NativeIoAccess.WRITE || !resource.truncate) {
+                    val buffer = Buffer()
+                    resource.fileHandle.read(0L, buffer, resource.fileHandle.size())
+                    buffer.readByteArray()
+                } else {
+                    ByteArray(0)
+                }
+                is NativeSourceResource -> {
+                    val buffer = Buffer()
+                    while (resource.source.read(buffer, 8_192L) != -1L) {
+                        // Drain the stream into the worker's transferable buffer.
+                    }
+                    buffer.readByteArray()
+                }
+                is NativeSinkResource -> ByteArray(0)
+            }
             add(buildJsonObject {
-                put("path", JsonPrimitive(input.path))
+                put("path", JsonPrimitive(mount.path))
+                put("access", JsonPrimitive(resource.accessName()))
+                put(
+                    "truncate",
+                    JsonPrimitive(resource is NativeFileResource && resource.truncate),
+                )
                 put("base64", JsonPrimitive(Base64.Default.encode(bytes)))
             })
         }
     })
-    put("outputPaths", JsonArray(outputs.map { JsonPrimitive(it.path) }))
 }
 
 private fun JsonObject.toNativeEvent(): NativeExecutionEvent {
@@ -150,18 +167,36 @@ private fun JsonObject.toNativeResult(): NativeExecutionResult = NativeExecution
     returnCode = jsonPrimitive("returnCode").int,
 )
 
-private fun JsonObject.writeOutputsTo(outputs: List<NativeMountedOutput>) {
+private fun JsonObject.writeOutputsTo(mounts: List<NativeMountedIo>) {
     val decoded = (get("outputs")?.jsonArray ?: JsonArray(emptyList())).associate { element ->
         val output = element.jsonObject
         output.string("path").orEmpty() to Base64.Default.decode(output.string("base64").orEmpty())
     }
-    outputs.forEach { output ->
-        decoded[output.path]?.let { bytes ->
-            val buffer = Buffer()
-            buffer.write(bytes)
-            output.sink.write(buffer, buffer.size)
+    mounts.forEach { mount ->
+        decoded[mount.path]?.let { bytes ->
+            when (val resource = mount.resource) {
+                is NativeFileResource -> {
+                    resource.fileHandle.resize(bytes.size.toLong())
+                    resource.fileHandle.write(0L, bytes, 0, bytes.size)
+                }
+                is NativeSinkResource -> {
+                    val buffer = Buffer().write(bytes)
+                    resource.sink.write(buffer, buffer.size)
+                }
+                is NativeSourceResource -> Unit
+            }
         }
     }
+}
+
+private fun NativeIoResource.accessName(): String = when (this) {
+    is NativeFileResource -> when (access) {
+        NativeIoAccess.READ -> "read"
+        NativeIoAccess.WRITE -> "write"
+        NativeIoAccess.READ_WRITE -> "readWrite"
+    }
+    is NativeSourceResource -> "read"
+    is NativeSinkResource -> "write"
 }
 
 private fun JsonObject.string(name: String): String? = get(name)?.jsonPrimitive?.content
@@ -218,11 +253,16 @@ private fun startWorker(requestJson: String, callback: (String) -> Unit): JsAny 
         }));
         worker.terminate();
       };
-      request.inputs = request.inputs.map(input => ({
-        path: input.path,
-        bytes: fromBase64(input.base64),
+      request.mounts = request.mounts.map(mount => ({
+        path: mount.path,
+        access: mount.access,
+        truncate: mount.truncate,
+        bytes: fromBase64(mount.base64),
       }));
-      worker.postMessage({ ...request, moduleUrl });
+      worker.postMessage(
+        { ...request, moduleUrl },
+        request.mounts.map(mount => mount.bytes.buffer),
+      );
       return worker;
     }
     """,

@@ -97,8 +97,9 @@ abstract class ThirdPartyCmakeBuildTask : DefaultTask() {
 
     private fun resolveCmake(): String {
         val onPath = System.getenv("PATH").orEmpty().split(File.pathSeparatorChar)
-            .any { File(it, "cmake").isFile }
-        if (onPath) return "cmake"
+            .map { File(it, "cmake") }
+            .firstOrNull(File::isFile)
+        if (onPath != null) return onPath.absolutePath
         // Gradle daemons started from IDEs often miss Homebrew's PATH entries.
         return listOf("/opt/homebrew/bin/cmake", "/usr/local/bin/cmake", "/usr/bin/cmake")
             .firstOrNull { File(it).isFile }

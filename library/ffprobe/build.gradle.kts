@@ -26,7 +26,7 @@ kotlin {
         commonMain.dependencies {
             api(project(":library:core"))
             api(libs.kotlinx.serialization.json)
-            implementation(libs.kotlinx.io.core)
+            implementation(libs.okio)
         }
         wasmJsTest.dependencies {
             implementation(libs.kotlinx.coroutines.test)

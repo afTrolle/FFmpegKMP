@@ -10,8 +10,11 @@ import io.github.aftrolle.ffmpegkmp.bindings.NativeCommandKind
 import io.github.aftrolle.ffmpegkmp.bindings.NativeExecutionBridge
 import io.github.aftrolle.ffmpegkmp.bindings.NativeExecutionEvent
 import io.github.aftrolle.ffmpegkmp.bindings.NativeExecutionRequest
-import io.github.aftrolle.ffmpegkmp.bindings.NativeMountedInput
-import io.github.aftrolle.ffmpegkmp.bindings.NativeMountedOutput
+import io.github.aftrolle.ffmpegkmp.bindings.NativeFileResource
+import io.github.aftrolle.ffmpegkmp.bindings.NativeIoAccess
+import io.github.aftrolle.ffmpegkmp.bindings.NativeMountedIo
+import io.github.aftrolle.ffmpegkmp.bindings.NativeSinkResource
+import io.github.aftrolle.ffmpegkmp.bindings.NativeSourceResource
 import io.github.aftrolle.ffmpegkmp.bindings.createPlatformExecutionBridge
 import kotlin.concurrent.atomics.AtomicBoolean
 import kotlin.concurrent.atomics.AtomicReference
@@ -208,7 +211,15 @@ private class CommandExecutionSession(
 
             mutableState.value = SessionState.RUNNING
             val nativeResult = executeAndCaptureEvents()
-            io.outputs.forEach { output -> output.sink.flush() }
+            io.mounts.forEach { mount ->
+                when (val resource = mount.resource) {
+                    is NativeFileResource -> if (resource.access != NativeIoAccess.READ) {
+                        resource.fileHandle.flush()
+                    }
+                    is NativeSinkResource -> resource.sink.flush()
+                    is NativeSourceResource -> Unit
+                }
+            }
 
             if (cancelled.load()) {
                 completeCancelled(started.elapsedNow(), nativeResult.returnCode)
@@ -264,8 +275,7 @@ private class CommandExecutionSession(
                     id = id,
                     kind = if (kind == CommandKind.FFMPEG) NativeCommandKind.FFMPEG else NativeCommandKind.FFPROBE,
                     arguments = arguments,
-                    inputs = io.inputs.map { NativeMountedInput(it.path, it.source) },
-                    outputs = io.outputs.map { NativeMountedOutput(it.path, it.sink) },
+                    mounts = io.mounts.map { NativeMountedIo(it.path, it.resource) },
                 ),
             ) { event -> nativeEvents.trySend(event) }
         } finally {
@@ -304,8 +314,15 @@ private class CommandExecutionSession(
 
     private fun closeIoOnce() {
         if (!ioClosed.compareAndSet(expectedValue = false, newValue = true)) return
-        io.inputs.forEach { runCatching { it.source.close() } }
-        io.outputs.forEach { runCatching { it.sink.close() } }
+        io.mounts.forEach { mount ->
+            runCatching {
+                when (val resource = mount.resource) {
+                    is NativeFileResource -> resource.fileHandle.close()
+                    is NativeSourceResource -> resource.source.close()
+                    is NativeSinkResource -> resource.sink.close()
+                }
+            }
+        }
     }
 
     private fun notifyTerminalOnce() {

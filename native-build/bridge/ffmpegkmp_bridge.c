@@ -38,6 +38,7 @@ extern int ffmpegkmp_ffprobe_entry(int argc, char **argv) FFMPEGKMP_WEAK;
 
 struct ffmpegkmp_context {
     ffmpegkmp_event_callback callback;
+    ffmpegkmp_io_callback io_callback;
     void *opaque;
     atomic_bool cancelled;
 };
@@ -49,6 +50,11 @@ static atomic_int active_kind;
 static _Thread_local jmp_buf exit_target;
 static _Thread_local int exit_target_active;
 static _Thread_local int requested_exit_status;
+
+/* Implemented by the custom libavformat ffmpegkmp: protocol. */
+extern void av_ffmpegkmp_protocol_set_callback(
+        ffmpegkmp_io_callback callback,
+        void *opaque);
 
 #if defined(__EMSCRIPTEN__)
 typedef struct ffmpegkmp_emscripten_event {
@@ -106,6 +112,13 @@ void ffmpegkmp_context_destroy(ffmpegkmp_context *context) {
     free(context);
 }
 
+void ffmpegkmp_context_set_io_callback(
+        ffmpegkmp_context *context,
+        ffmpegkmp_io_callback callback) {
+    if (context)
+        context->io_callback = callback;
+}
+
 int ffmpegkmp_execute(
         ffmpegkmp_context *context,
         ffmpegkmp_command_kind kind,
@@ -127,6 +140,7 @@ int ffmpegkmp_execute(
 
     atomic_store(&context->cancelled, 0);
     atomic_store(&active_kind, kind);
+    av_ffmpegkmp_protocol_set_callback(context->io_callback, context->opaque);
 #if FFMPEGKMP_EMBEDDED_FFTOOLS
     av_log_set_callback(ffmpegkmp_log_callback);
     /* fftools' -v/-loglevel mutates the process-global log level, so a run that
@@ -172,6 +186,7 @@ int ffmpegkmp_execute(
         effective_argv = calloc((size_t) argc + 2, sizeof(*effective_argv));
         if (!effective_argv) {
             av_log_set_callback(av_log_default_callback);
+            av_ffmpegkmp_protocol_set_callback(NULL, NULL);
             atomic_store(&active_context, NULL);
             return -12;
         }
@@ -213,6 +228,7 @@ int ffmpegkmp_execute(
         free(effective_argv);
     }
 #endif
+    av_ffmpegkmp_protocol_set_callback(NULL, NULL);
     atomic_store(&active_context, NULL);
     return result;
 }

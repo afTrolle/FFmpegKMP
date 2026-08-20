@@ -5,11 +5,10 @@ package io.github.aftrolle.ffmpegkmp.bindings
 
 import io.github.aftrolle.ffmpegkmp.bindings.generated.bridge.ffmpegkmp_context
 import io.github.aftrolle.ffmpegkmp.bindings.generated.bridge.ffmpegkmp_event_callback
+import io.github.aftrolle.ffmpegkmp.bindings.generated.bridge.ffmpegkmp_io_callback
 import io.github.aftrolle.ffmpegkmp.bindings.generated.bridge.global.bridge
 import java.io.File
-import kotlinx.io.buffered
-import kotlinx.io.files.Path
-import kotlinx.io.files.SystemFileSystem
+import okio.Buffer
 import org.bytedeco.javacpp.BytePointer
 import org.bytedeco.javacpp.Loader
 import org.bytedeco.javacpp.Pointer
@@ -23,7 +22,10 @@ private class JavaCppExecutionBridge : NativeExecutionBridge {
     private var eventConsumer: ((NativeExecutionEvent) -> Unit)? = null
 
     private val callback: ffmpegkmp_event_callback
+    private val ioCallback: ffmpegkmp_io_callback
     private val context: ffmpegkmp_context
+    @Volatile
+    private var mountedResources: Map<Long, MountedResource> = emptyMap()
     @Volatile
     private var closed = false
 
@@ -45,8 +47,21 @@ private class JavaCppExecutionBridge : NativeExecutionBridge {
                 )
             }
         }
+        ioCallback = object : ffmpegkmp_io_callback() {
+            override fun call(
+                opaque: Pointer?,
+                resourceId: Long,
+                operation: Int,
+                offset: Long,
+                data: BytePointer?,
+                size: Long,
+            ): Long = mountedResources[resourceId]
+                ?.dispatch(operation, offset, data, size)
+                ?: IO_FAILURE
+        }
         context = bridge.ffmpegkmp_context_create(callback, null)
             ?: throw NativeBridgeUnavailableException("FFmpegKMP JavaCPP context allocation failed")
+        bridge.ffmpegkmp_context_set_io_callback(context, ioCallback)
         // Android app processes have an unwritable cwd and no TMPDIR, which breaks the
         // bridge's ffprobe stdout redirect; java.io.tmpdir is always app-writable.
         System.getProperty("java.io.tmpdir")
@@ -60,27 +75,20 @@ private class JavaCppExecutionBridge : NativeExecutionBridge {
         emit: (NativeExecutionEvent) -> Unit,
     ): NativeExecutionResult {
         check(!closed) { "The JavaCPP execution bridge is closed" }
-        val staging = if (request.inputs.isNotEmpty() || request.outputs.isNotEmpty()) {
-            createStagingDirectory(request.id)
-        } else {
-            null
-        }
-        val stagedPaths = mutableMapOf<String, File>()
+        val mounts = request.mounts.mapIndexed { index, mount ->
+            val id = index.toLong() + 1L
+            id to MountedResource(mount.resource)
+        }.toMap()
+        val mountedPaths = request.mounts.mapIndexed { index, mount ->
+            mount.path to protocolUrl(index.toLong() + 1L, mount.path)
+        }.toMap()
         try {
-            request.inputs.forEachIndexed { index, input ->
-                val file = File(staging, "input-$index${input.path.fileSuffix()}")
-                SystemFileSystem.sink(Path(file.absolutePath)).buffered().use { it.transferFrom(input.source) }
-                stagedPaths[input.path] = file
-            }
-            request.outputs.forEachIndexed { index, output ->
-                stagedPaths[output.path] = File(staging, "output-$index${output.path.fileSuffix()}")
-            }
-
             val executable = if (request.kind == NativeCommandKind.FFMPEG) "ffmpeg" else "ffprobe"
             val arguments = listOf(executable) + request.arguments.map { argument ->
-                stagedPaths[argument]?.absolutePath ?: argument
+                mountedPaths[argument] ?: argument
             }
             val pointers = PointerPointer<BytePointer>(*arguments.toTypedArray())
+            mountedResources = mounts
             eventConsumer = emit
             val returnCode = try {
                 bridge.ffmpegkmp_execute(
@@ -102,15 +110,9 @@ private class JavaCppExecutionBridge : NativeExecutionBridge {
                     "The FFmpegKMP JNI bridge was built without embedded fftools entry points",
                 )
             }
-            request.outputs.forEach { output ->
-                val file = stagedPaths.getValue(output.path)
-                if (file.isFile) {
-                    SystemFileSystem.source(Path(file.absolutePath)).buffered().use { it.transferTo(output.sink) }
-                }
-            }
             return NativeExecutionResult(returnCode)
         } finally {
-            staging?.deleteRecursively()
+            mountedResources = emptyMap()
         }
     }
 
@@ -122,7 +124,9 @@ private class JavaCppExecutionBridge : NativeExecutionBridge {
         if (closed) return
         closed = true
         eventConsumer = null
+        mountedResources = emptyMap()
         bridge.ffmpegkmp_context_destroy(context)
+        ioCallback.close()
         callback.close()
     }
 }
@@ -175,14 +179,105 @@ private object JavaCppBridgeLoader {
     }
 }
 
-private fun createStagingDirectory(executionId: Long): File {
-    val marker = File.createTempFile("ffmpegkmp-$executionId-", ".staging")
-    check(marker.delete() && marker.mkdir()) { "Could not create FFmpegKMP staging directory at $marker" }
-    return marker
-}
+private fun protocolUrl(id: Long, path: String): String = "ffmpegkmp:$id${path.fileSuffix()}"
 
 private fun String.fileSuffix(): String {
     val name = substringAfterLast('/').substringAfterLast('\\')
     val suffix = name.substringAfterLast('.', missingDelimiterValue = "")
     return if (suffix.isEmpty()) "" else ".$suffix"
 }
+
+private class MountedResource(private val resource: NativeIoResource) {
+    private var truncated = false
+
+    @Synchronized
+    fun dispatch(operation: Int, offset: Long, data: BytePointer?, size: Long): Long = try {
+        when (operation) {
+            IO_OPEN -> open(offset.toInt())
+            IO_READ -> read(offset, data ?: return IO_FAILURE, size.checkedSize())
+            IO_WRITE -> write(offset, data ?: return IO_FAILURE, size.checkedSize())
+            IO_SIZE -> size()
+            IO_CLOSE -> close()
+            else -> IO_FAILURE
+        }
+    } catch (_: Throwable) {
+        IO_FAILURE
+    }
+
+    private fun open(flags: Int): Long = when (resource) {
+        is NativeFileResource -> {
+            if (resource.truncate && flags and AVIO_FLAG_WRITE != 0 && !truncated) {
+                resource.fileHandle.resize(0L)
+                truncated = true
+            }
+            when (resource.access) {
+                NativeIoAccess.READ -> IO_CAP_READ or IO_CAP_SEEK
+                NativeIoAccess.WRITE -> IO_CAP_WRITE or IO_CAP_SEEK
+                NativeIoAccess.READ_WRITE -> IO_CAP_READ or IO_CAP_WRITE or IO_CAP_SEEK
+            }
+        }
+        is NativeSourceResource -> IO_CAP_READ
+        is NativeSinkResource -> IO_CAP_WRITE
+    }.toLong()
+
+    private fun read(offset: Long, data: BytePointer, size: Int): Long {
+        val bytes = ByteArray(size)
+        val count = when (resource) {
+            is NativeFileResource -> resource.fileHandle.read(offset, bytes, 0, size)
+            is NativeSourceResource -> {
+                val buffer = Buffer()
+                val read = resource.source.read(buffer, size.toLong())
+                if (read > 0L) buffer.read(bytes, 0, read.toInt())
+                read.toInt()
+            }
+            is NativeSinkResource -> return IO_FAILURE
+        }
+        if (count <= 0) return 0L
+        data.put(bytes, 0, count)
+        return count.toLong()
+    }
+
+    private fun write(offset: Long, data: BytePointer, size: Int): Long {
+        val bytes = ByteArray(size)
+        data.get(bytes)
+        when (resource) {
+            is NativeFileResource -> resource.fileHandle.write(offset, bytes, 0, size)
+            is NativeSinkResource -> {
+                val buffer = Buffer().write(bytes)
+                resource.sink.write(buffer, size.toLong())
+            }
+            is NativeSourceResource -> return IO_FAILURE
+        }
+        return size.toLong()
+    }
+
+    private fun size(): Long = when (resource) {
+        is NativeFileResource -> resource.fileHandle.size()
+        else -> IO_FAILURE
+    }
+
+    private fun close(): Long {
+        when (resource) {
+            is NativeFileResource -> if (resource.access != NativeIoAccess.READ) resource.fileHandle.flush()
+            is NativeSinkResource -> resource.sink.flush()
+            is NativeSourceResource -> Unit
+        }
+        return 0L
+    }
+}
+
+private fun Long.checkedSize(): Int {
+    require(this in 0..Int.MAX_VALUE.toLong()) { "Invalid native I/O size: $this" }
+    return toInt()
+}
+
+private const val IO_OPEN = 0
+private const val IO_READ = 1
+private const val IO_WRITE = 2
+private const val IO_SIZE = 3
+private const val IO_CLOSE = 4
+private const val IO_CAP_READ = 1
+private const val IO_CAP_WRITE = 2
+private const val IO_CAP_SEEK = 4
+private const val AVIO_FLAG_WRITE = 2
+private const val IO_FAILURE = -1L

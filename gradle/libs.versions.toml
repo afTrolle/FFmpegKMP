@@ -4,9 +4,10 @@ android-compileSdk = "37"
 android-minSdk = "24"
 kotlin = "2.4.10"
 coroutines = "1.11.0"
-kotlinx-io = "0.9.1"
+okio = "3.17.0"
 serialization = "1.11.0"
 javacpp = "1.5.14"
+androidx-test-runner = "1.7.0"
 compose = "1.12.0-rc01"
 filekit = "0.15.0"
 maven-publish = "0.37.0"
@@ -17,9 +18,10 @@ kotlin-gradle-plugin = { module = "org.jetbrains.kotlin:kotlin-gradle-plugin", v
 kotlin-test = { module = "org.jetbrains.kotlin:kotlin-test", version.ref = "kotlin" }
 kotlinx-coroutines-core = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-core", version.ref = "coroutines" }
 kotlinx-coroutines-test = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-test", version.ref = "coroutines" }
-kotlinx-io-core = { module = "org.jetbrains.kotlinx:kotlinx-io-core", version.ref = "kotlinx-io" }
+okio = { module = "com.squareup.okio:okio", version.ref = "okio" }
 kotlinx-serialization-json = { module = "org.jetbrains.kotlinx:kotlinx-serialization-json", version.ref = "serialization" }
 javacpp = { module = "org.bytedeco:javacpp", version.ref = "javacpp" }
+androidx-test-runner = { module = "androidx.test:runner", version.ref = "androidx-test-runner" }
 filekit-core = { module = "io.github.vinceglb:filekit-core", version.ref = "filekit" }
 filekit-dialogs-compose = { module = "io.github.vinceglb:filekit-dialogs-compose", version.ref = "filekit" }
 maven-publish-gradle-plugin = { module = "com.vanniktech:gradle-maven-publish-plugin", version.ref = "maven-publish" }
