@@ -431,8 +431,12 @@ abstract class FfmpegBuildTask : DefaultTask() {
                     "--disable-vdpau", "--disable-vulkan", "--disable-opencl",
                 )
                 if (architecture.get().startsWith("x86")) arguments += "--disable-x86asm"
+                if (enableAvailableSystemFeatures.get()) arguments += "--enable-zlib"
             }
-            "windows" -> arguments += listOf("--target-os=mingw32", "--arch=x86_64", "--disable-x86asm")
+            "windows" -> {
+                arguments += listOf("--target-os=mingw32", "--arch=x86_64", "--disable-x86asm")
+                if (enableAvailableSystemFeatures.get()) arguments += "--enable-zlib"
+            }
             else -> error("Unsupported JVM native host: $os")
         }
         if (os != "macos" && extraCompilerArgs.get().isNotEmpty()) {
