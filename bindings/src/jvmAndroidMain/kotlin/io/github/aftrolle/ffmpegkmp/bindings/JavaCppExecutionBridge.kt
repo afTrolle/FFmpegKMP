@@ -7,6 +7,11 @@ import io.github.aftrolle.ffmpegkmp.bindings.generated.bridge.ffmpegkmp_context
 import io.github.aftrolle.ffmpegkmp.bindings.generated.bridge.ffmpegkmp_event_callback
 import io.github.aftrolle.ffmpegkmp.bindings.generated.bridge.global.bridge
 import java.io.File
+import java.util.concurrent.atomic.AtomicBoolean
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import org.bytedeco.javacpp.BytePointer
 import org.bytedeco.javacpp.Loader
 import org.bytedeco.javacpp.Pointer
@@ -51,7 +56,12 @@ private class JavaCppExecutionBridge : NativeExecutionBridge {
         emit: (NativeExecutionEvent) -> Unit,
     ): NativeExecutionResult {
         check(!closed) { "The JavaCPP execution bridge is closed" }
-        val staging = if (request.inputs.isNotEmpty() || request.outputPaths.isNotEmpty()) {
+        val staging = if (
+            request.kind == NativeCommandKind.FFMPEG ||
+            request.kind == NativeCommandKind.FFPROBE ||
+            request.inputs.isNotEmpty() ||
+            request.outputPaths.isNotEmpty()
+        ) {
             createStagingDirectory(request.id)
         } else {
             null
@@ -68,22 +78,62 @@ private class JavaCppExecutionBridge : NativeExecutionBridge {
             }
 
             val executable = if (request.kind == NativeCommandKind.FFMPEG) "ffmpeg" else "ffprobe"
-            val arguments = listOf(executable) + request.arguments.map { argument ->
-                stagedPaths[argument]?.absolutePath ?: argument
+            val probeOutput = if (request.kind == NativeCommandKind.FFPROBE) {
+                File(staging, "ffprobe-output.json")
+            } else {
+                null
             }
+            val progressOutput = if (request.kind == NativeCommandKind.FFMPEG) {
+                File(staging, "ffmpeg-progress.txt")
+            } else {
+                null
+            }
+            val progressArguments = progressOutput?.let {
+                listOf("-progress", it.absolutePath, "-nostats")
+            }.orEmpty()
+            val arguments = listOf(executable) + progressArguments + request.arguments.map { argument ->
+                stagedPaths[argument]?.absolutePath ?: argument
+            } + probeOutput?.let { listOf("-o", it.absolutePath) }.orEmpty()
             val pointers = PointerPointer<BytePointer>(*arguments.toTypedArray())
             eventConsumer = emit
             val returnCode = try {
-                bridge.ffmpegkmp_execute(
-                    context,
-                    if (request.kind == NativeCommandKind.FFMPEG) {
-                        bridge.FFMPEGKMP_COMMAND_FFMPEG
-                    } else {
-                        bridge.FFMPEGKMP_COMMAND_FFPROBE
-                    },
-                    arguments.size,
-                    pointers,
-                )
+                val code = withContext(Dispatchers.IO) {
+                    val running = AtomicBoolean(true)
+                    val progressReader = progressOutput?.let { output ->
+                        launch {
+                            var emittedCharacters = 0
+                            while (running.get()) {
+                                emittedCharacters = emitCompleteProgress(output, emittedCharacters, emit)
+                                delay(PROGRESS_POLL_INTERVAL_MS)
+                            }
+                            emitProgress(output, emittedCharacters, emit)
+                        }
+                    }
+                    try {
+                        bridge.ffmpegkmp_execute(
+                            context,
+                            if (request.kind == NativeCommandKind.FFMPEG) {
+                                bridge.FFMPEGKMP_COMMAND_FFMPEG
+                            } else {
+                                bridge.FFMPEGKMP_COMMAND_FFPROBE
+                            },
+                            arguments.size,
+                            pointers,
+                        )
+                    } finally {
+                        running.set(false)
+                        progressReader?.join()
+                    }
+                }
+                if (probeOutput?.isFile == true) {
+                    emit(
+                        NativeExecutionEvent.Output(
+                            NativeExecutionEvent.Stream.STDOUT,
+                            probeOutput.readText(),
+                        ),
+                    )
+                }
+                code
             } finally {
                 eventConsumer = null
                 pointers.close()
@@ -114,6 +164,37 @@ private class JavaCppExecutionBridge : NativeExecutionBridge {
         bridge.ffmpegkmp_context_destroy(context)
         callback.close()
     }
+}
+
+private const val PROGRESS_POLL_INTERVAL_MS = 100L
+
+private fun emitCompleteProgress(
+    output: File,
+    emittedCharacters: Int,
+    emit: (NativeExecutionEvent) -> Unit,
+): Int {
+    if (!output.isFile) return emittedCharacters
+    val text = output.readText()
+    val completeLength = text.lastIndexOf('\n').takeIf { it >= emittedCharacters }?.plus(1)
+        ?: return emittedCharacters
+    emitProgressText(text.substring(emittedCharacters, completeLength), emit)
+    return completeLength
+}
+
+private fun emitProgress(
+    output: File,
+    emittedCharacters: Int,
+    emit: (NativeExecutionEvent) -> Unit,
+) {
+    if (!output.isFile) return
+    val text = output.readText()
+    if (text.length > emittedCharacters) {
+        emitProgressText(text.substring(emittedCharacters), emit)
+    }
+}
+
+private fun emitProgressText(text: String, emit: (NativeExecutionEvent) -> Unit) {
+    emit(NativeExecutionEvent.Output(NativeExecutionEvent.Stream.STDERR, text))
 }
 
 private fun configuredJniPath(): String? =

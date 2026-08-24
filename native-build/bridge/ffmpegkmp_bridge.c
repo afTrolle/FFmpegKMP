@@ -5,6 +5,13 @@
 #include <setjmp.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
+#if defined(__ANDROID__)
+#include <android/api-level.h>
+#include "compat/android/binder.h"
+#include <dlfcn.h>
+#include <pthread.h>
+#endif
 #if defined(__EMSCRIPTEN__)
 #include <emscripten/threading.h>
 #endif
@@ -34,6 +41,35 @@ extern void ffmpegkmp_ffmpeg_cancel(void);
 #else
 extern int ffmpegkmp_ffmpeg_entry(int argc, char **argv) FFMPEGKMP_WEAK;
 extern int ffmpegkmp_ffprobe_entry(int argc, char **argv) FFMPEGKMP_WEAK;
+#endif
+
+#if defined(__ANDROID__) && FFMPEGKMP_EMBEDDED_FFTOOLS
+static pthread_once_t binder_thread_pool_once = PTHREAD_ONCE_INIT;
+
+static void ffmpegkmp_start_binder_thread_pool(void) {
+    typedef void (*start_thread_pool_fn)(void);
+    void *library = dlopen("libbinder_ndk.so", RTLD_NOW | RTLD_LOCAL);
+    if (!library) {
+        av_log(NULL, AV_LOG_WARNING,
+               "ffmpegkmp: unable to load libbinder_ndk.so; MediaCodec may not work\n");
+        return;
+    }
+
+    start_thread_pool_fn start_thread_pool =
+            (start_thread_pool_fn) dlsym(library, "ABinderProcess_startThreadPool");
+    if (!start_thread_pool) {
+        av_log(NULL, AV_LOG_WARNING,
+               "ffmpegkmp: ABinderProcess_startThreadPool is unavailable; MediaCodec may not work\n");
+        return;
+    }
+
+    start_thread_pool();
+}
+
+void android_binder_threadpool_init_if_required(void) {
+    if (android_get_device_api_level() >= 35)
+        pthread_once(&binder_thread_pool_once, ffmpegkmp_start_binder_thread_pool);
+}
 #endif
 
 struct ffmpegkmp_context {
@@ -132,7 +168,16 @@ int ffmpegkmp_execute(
             ? ffmpegkmp_ffmpeg_entry
             : ffmpegkmp_ffprobe_entry;
 #if FFMPEGKMP_EMBEDDED_FFTOOLS
+    int has_probe_output = 0;
     if (kind == FFMPEGKMP_COMMAND_FFPROBE) {
+        for (int i = 1; i + 1 < argc; i++) {
+            if (!strcmp(argv[i], "-o")) {
+                has_probe_output = 1;
+                break;
+            }
+        }
+    }
+    if (kind == FFMPEGKMP_COMMAND_FFPROBE && !has_probe_output) {
 #if defined(_WIN32)
         if (!tmpnam(probe_output))
             probe_output[0] = 0;
