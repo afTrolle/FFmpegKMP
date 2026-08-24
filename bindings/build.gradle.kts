@@ -153,6 +153,8 @@ val javaCppDeclarationsJar = tasks.register<Jar>("javaCppDeclarationsJar") {
     from(compileJavaCppPresets.map { it.destinationDirectory })
     outputs.cacheIf { false }
 }
+val javaCppDeclarations = files(javaCppDeclarationsJar.flatMap { it.archiveFile })
+    .builtBy(javaCppDeclarationsJar)
 
 val buildJavaCppHostBindings = javaCppFamilies.map { family ->
     tasks.register<JavaExec>("buildJavaCppHost$family") {
@@ -350,11 +352,11 @@ kotlin {
         }
         jvmMain.dependencies {
             implementation(libs.javacpp)
-            implementation(files(javaCppDeclarationsJar))
+            implementation(javaCppDeclarations)
         }
         androidMain.dependencies {
             implementation(libs.javacpp)
-            implementation(files(javaCppDeclarationsJar))
+            implementation(javaCppDeclarations)
         }
     }
 
