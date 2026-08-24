@@ -10,7 +10,7 @@ import org.bytedeco.javacpp.tools.InfoMapper;
 @Properties(
         value = @Platform(
                 cinclude = "<ffmpegkmp_bridge.h>",
-                link = {"ffmpegkmp_bridge", "avdevice", "avfilter", "avformat", "avcodec", "swscale", "swresample", "avutil"}
+                link = {"ffmpegkmp_bridge#", "avdevice", "avfilter", "avformat", "avcodec", "swscale", "swresample", "avutil", "z"}
         ),
         target = "io.github.aftrolle.ffmpegkmp.bindings.generated.bridge",
         global = "io.github.aftrolle.ffmpegkmp.bindings.generated.bridge.global.bridge"

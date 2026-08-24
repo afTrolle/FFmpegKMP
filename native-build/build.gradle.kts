@@ -38,6 +38,7 @@ ffmpegNativeBuild {
         create("standard") {
             extendsFrom("min")
             network.set(true)
+            enableAvailableSystemFeatures.set(true)
             hardwareAcceleration {
                 decoding.set(true)
                 encoding.set(true)

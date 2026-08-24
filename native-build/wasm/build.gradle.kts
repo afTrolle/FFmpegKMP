@@ -67,6 +67,7 @@ tasks.register<Exec>("linkFfmpegKmpWorker") {
             "-sEXPORT_ES6=1",
             "-sENVIRONMENT=worker",
             "-sFILESYSTEM=1",
+            "-sUSE_ZLIB=1",
             "-sWASM_BIGINT=1",
             "-pthread",
             // fftools uses separate demux/decode/filter/mux scheduler threads.

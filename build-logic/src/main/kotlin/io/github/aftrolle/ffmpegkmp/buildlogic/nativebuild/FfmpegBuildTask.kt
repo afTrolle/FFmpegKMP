@@ -348,8 +348,12 @@ abstract class FfmpegBuildTask : DefaultTask() {
                     "--disable-vdpau", "--disable-vulkan", "--disable-opencl",
                 )
                 if (architecture.get().startsWith("x86")) arguments += "--disable-x86asm"
+                if (enableAvailableSystemFeatures.get()) arguments += "--enable-zlib"
             }
-            "windows" -> arguments += listOf("--target-os=mingw32", "--arch=x86_64", "--disable-x86asm")
+            "windows" -> {
+                arguments += listOf("--target-os=mingw32", "--arch=x86_64", "--disable-x86asm")
+                if (enableAvailableSystemFeatures.get()) arguments += "--enable-zlib"
+            }
             else -> error("Unsupported JVM native host: $os")
         }
         if (os != "macos" && extraCompilerArgs.get().isNotEmpty()) {
@@ -387,8 +391,10 @@ abstract class FfmpegBuildTask : DefaultTask() {
             "--disable-os2threads",
             "--disable-runtime-cpudetect",
         )
-        arguments += "--extra-cflags=${(listOf("-pthread") + extraCompilerArgs.get()).joinToString(" ")}"
-        arguments += "--extra-ldflags=${(listOf("-pthread") + extraLinkerArgs.get()).joinToString(" ")}"
+        val systemFeatureFlags = if (enableAvailableSystemFeatures.get()) listOf("-sUSE_ZLIB=1") else emptyList()
+        if (enableAvailableSystemFeatures.get()) arguments += "--enable-zlib"
+        arguments += "--extra-cflags=${(listOf("-pthread") + systemFeatureFlags + extraCompilerArgs.get()).joinToString(" ")}"
+        arguments += "--extra-ldflags=${(listOf("-pthread") + systemFeatureFlags + extraLinkerArgs.get()).joinToString(" ")}"
     }
 
     private fun makeCommand(vararg arguments: String): List<String> =
@@ -407,11 +413,6 @@ abstract class FfmpegBuildTask : DefaultTask() {
             }
             .map(File::getAbsolutePath)
             .toMutableList()
-        work.resolve("compat/android/binder.o").takeIf(File::isFile)?.let { binder ->
-            // fftools/ffmpeg.o calls this helper when MediaCodec support is enabled.
-            // It belongs to the executable's object list rather than a libav archive.
-            fftoolsObjects += binder.absolutePath
-        }
         execOperations.exec {
             workingDir(work)
             commandLine(
