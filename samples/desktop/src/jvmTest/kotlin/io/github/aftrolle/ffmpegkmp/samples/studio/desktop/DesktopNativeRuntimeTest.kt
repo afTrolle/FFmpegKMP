@@ -27,7 +27,14 @@ class DesktopNativeRuntimeTest {
             }
             val rendered = Buffer()
             val result = client.execute(
-                listOf("-i", "/smoke.ppm", "-c:v", "mpeg4", "-q:v", "5", "/smoke.mp4"),
+                listOf(
+                    "-i", "/smoke.ppm",
+                    "-c:v", "mpeg4",
+                    "-q:v", "5",
+                    // Callback-backed outputs cannot seek, so make the MP4 streamable.
+                    "-movflags", "frag_keyframe+empty_moov",
+                    "/smoke.mp4",
+                ),
                 CommandIo {
                     input("/smoke.ppm", source)
                     output("/smoke.mp4", rendered)

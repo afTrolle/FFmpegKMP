@@ -434,8 +434,9 @@ tasks.withType<Zip>().matching { it.name == "bundleAndroidMainAar" }.configureEa
 
 tasks.named<Test>("jvmTest") {
     dependsOn(buildJavaCppHostBindings)
-    val nativeLibraryPath = nativeJvmInstall.map { install -> install.dir("lib").asFile.absolutePath }
-    val jniPath = layout.buildDirectory.zip(hostMachine) { buildDirectory, machine ->
+    val nativeLibraryPath = nativeJvmInstall.get().dir("lib").asFile.absolutePath
+    val jniPath = layout.buildDirectory.get().let { buildDirectory ->
+        val machine = hostMachine.get()
         javaCppFamilies.joinToString(File.pathSeparator) { family ->
             buildDirectory.dir("generated/javacpp-jni/$machine/$family").asFile.absolutePath
         }
@@ -443,7 +444,7 @@ tasks.named<Test>("jvmTest") {
     systemProperty("ffmpegkmp.jni.path", jniPath)
     systemProperty(
         "java.library.path",
-        jniPath.zip(nativeLibraryPath) { jni, native -> "$jni${File.pathSeparator}$native" },
+        "$jniPath${File.pathSeparator}$nativeLibraryPath",
     )
     environment("DYLD_LIBRARY_PATH", nativeLibraryPath)
     environment("LD_LIBRARY_PATH", nativeLibraryPath)
