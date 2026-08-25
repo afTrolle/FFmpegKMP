@@ -52,17 +52,6 @@ function loadModule(moduleUrl) {
   return modulePromise;
 }
 
-function ensureParentDirectories(FS, path) {
-  const parts = path.split('/').filter(Boolean);
-  let current = '';
-  for (const part of parts.slice(0, -1)) {
-    current += `/${part}`;
-    try { FS.mkdir(current); } catch (error) {
-      if (!String(error).includes('File exists')) throw error;
-    }
-  }
-}
-
 function allocateArguments(module, arguments_) {
   const strings = arguments_.map(value => module.stringToNewUTF8(value));
   const argv = module._malloc(strings.length * 4);
@@ -81,39 +70,102 @@ self.onmessage = async ({ data }) => {
   if (data.type !== 'execute') return;
 
   let module;
-  const mountedPaths = [];
   let callback = 0;
+  let ioCallback = 0;
   let allocated;
   nativeRuntimeUnwound = false;
   nativeDiagnostics.length = 0;
   try {
     module = await loadModule(data.moduleUrl);
-    for (const input of data.inputs ?? []) {
-      ensureParentDirectories(module.FS, input.path);
-      module.FS.writeFile(input.path, new Uint8Array(input.bytes));
-      mountedPaths.push(input.path);
-    }
+    const resources = new Map();
+    const mountedPaths = new Map();
+    (data.mounts ?? []).forEach((mount, index) => {
+      const id = index + 1;
+      const bytes = new Uint8Array(mount.bytes);
+      resources.set(id, {
+        access: mount.access,
+        bytes,
+        size: bytes.length,
+        truncate: mount.truncate,
+        truncated: false,
+        dirty: false,
+      });
+      const extension = mount.path.match(/\.[^./\\]+$/)?.[0] ?? '';
+      mountedPaths.set(mount.path, `ffmpegkmp:${id}${extension}`);
+    });
 
     callback = module.addFunction((opaque, kind, level, bytes, size) => {
       const byteCount = Number(size);
       const value = module.HEAPU8.slice(bytes, bytes + byteCount);
       self.postMessage({ type: 'event', id: data.id, kind, level, bytes: value }, [value.buffer]);
     }, 'viiiij');
+    ioCallback = module.addFunction((opaque, resourceId, operation, offset, bytes, size) => {
+      const resource = resources.get(Number(resourceId));
+      if (!resource) return -1n;
+      const position = Number(offset);
+      const byteCount = Number(size);
+      if (!Number.isSafeInteger(position) || position < 0 ||
+          !Number.isSafeInteger(byteCount) || byteCount < 0) return -1n;
+
+      if (operation === 0) {
+        const flags = position;
+        if (resource.truncate && (flags & 2) !== 0 && !resource.truncated) {
+          resource.size = 0;
+          resource.truncated = true;
+          resource.dirty = true;
+        }
+        const read = resource.access !== 'write' ? 1 : 0;
+        const write = resource.access !== 'read' ? 2 : 0;
+        return BigInt(read | write | 4);
+      }
+      if (operation === 1) {
+        if (resource.access === 'write' || position >= resource.size) return 0n;
+        const count = Math.min(byteCount, resource.size - position);
+        module.HEAPU8.set(resource.bytes.subarray(position, position + count), bytes);
+        return BigInt(count);
+      }
+      if (operation === 2) {
+        if (resource.access === 'read') return -1n;
+        const required = position + byteCount;
+        if (!Number.isSafeInteger(required)) return -1n;
+        if (required > resource.bytes.length) {
+          let capacity = Math.max(resource.bytes.length, 8192);
+          while (capacity < required) capacity = Math.max(required, capacity * 2);
+          const grown = new Uint8Array(capacity);
+          grown.set(resource.bytes.subarray(0, resource.size));
+          resource.bytes = grown;
+        }
+        resource.bytes.set(module.HEAPU8.subarray(bytes, bytes + byteCount), position);
+        resource.size = Math.max(resource.size, required);
+        resource.dirty = true;
+        return BigInt(byteCount);
+      }
+      if (operation === 3) return BigInt(resource.size);
+      if (operation === 4) return 0n;
+      return -1n;
+    }, 'jijijij');
     activeContext = module._ffmpegkmp_context_create(callback, 0);
+    module._ffmpegkmp_context_set_io_callback(activeContext, ioCallback);
     activeId = data.id;
     const executable = data.kind === 'ffprobe' ? 'ffprobe' : 'ffmpeg';
-    allocated = allocateArguments(module, [executable, ...data.arguments]);
+    const arguments_ = data.arguments.map(argument => mountedPaths.get(argument) ?? argument);
+    allocated = allocateArguments(module, [executable, ...arguments_]);
     const returnCode = module._ffmpegkmp_execute(
       activeContext,
       data.kind === 'ffprobe' ? 1 : 0,
       data.arguments.length + 1,
       allocated.argv,
     );
-    const outputs = (data.outputPaths ?? []).map(path => {
-      const bytes = module.FS.readFile(path);
-      return { path, bytes };
+    const outputs = (data.mounts ?? []).flatMap((mount, index) => {
+      if (mount.access === 'read') return [];
+      const resource = resources.get(index + 1);
+      if (!resource.dirty) return [];
+      return [{ path: mount.path, bytes: resource.bytes.slice(0, resource.size) }];
     });
-    self.postMessage({ type: 'complete', id: data.id, returnCode, outputs });
+    self.postMessage(
+      { type: 'complete', id: data.id, returnCode, outputs },
+      outputs.map(output => output.bytes.buffer),
+    );
   } catch (error) {
     if (error === 'unwind') {
       // Emscripten uses this sentinel when the main runtime notices a crashed
@@ -130,12 +182,8 @@ self.onmessage = async ({ data }) => {
       module._free(allocated.argv);
     }
     if (module && activeContext) module._ffmpegkmp_context_destroy(activeContext);
+    if (module && ioCallback) module.removeFunction(ioCallback);
     if (module && callback) module.removeFunction(callback);
-    if (module) {
-      for (const path of [...mountedPaths, ...(data.outputPaths ?? [])]) {
-        try { module.FS.unlink(path); } catch (_) {}
-      }
-    }
     activeContext = 0;
     activeId = null;
   }

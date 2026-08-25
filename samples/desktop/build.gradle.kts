@@ -17,7 +17,7 @@ kotlin {
     }
     sourceSets.jvmTest.dependencies {
         implementation(project(":library:ffmpeg"))
-        implementation(libs.kotlinx.io.core)
+        implementation(libs.okio)
         implementation(kotlin("test"))
     }
 }

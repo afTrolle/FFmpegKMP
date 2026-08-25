@@ -4,7 +4,8 @@
 layer the public API on top without exposing binding details.
 
 - `core` owns process-wide FIFO scheduling, observable sessions, structured
-  events, results, cancellation, and `Source`/`Sink` ownership.
+  events, results, cancellation, and Okio `FileHandle`/`Source`/`Sink`
+  ownership. File handles provide random access; streams remain non-seekable.
 - `ffmpeg` owns raw arguments, deterministic command tokenization, and the
   ordered command DSL.
 - `ffprobe` owns queries plus forward-compatible typed JSON models.

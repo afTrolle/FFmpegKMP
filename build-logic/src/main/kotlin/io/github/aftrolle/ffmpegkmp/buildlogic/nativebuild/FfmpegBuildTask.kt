@@ -8,6 +8,7 @@ import org.gradle.api.provider.Property
 import org.gradle.api.provider.SetProperty
 import org.gradle.api.tasks.Input
 import org.gradle.api.tasks.InputDirectory
+import org.gradle.api.tasks.Optional
 import org.gradle.api.tasks.OutputDirectory
 import org.gradle.api.tasks.PathSensitive
 import org.gradle.api.tasks.PathSensitivity
@@ -33,6 +34,11 @@ abstract class FfmpegBuildTask : DefaultTask() {
     @get:InputDirectory
     @get:PathSensitive(PathSensitivity.RELATIVE)
     abstract val bridgeSourceDirectory: DirectoryProperty
+
+    @get:InputDirectory
+    @get:Optional
+    @get:PathSensitive(PathSensitivity.RELATIVE)
+    abstract val dependenciesInstallDirectory: DirectoryProperty
 
     @get:OutputDirectory
     abstract val workDirectory: DirectoryProperty
@@ -76,6 +82,7 @@ abstract class FfmpegBuildTask : DefaultTask() {
     @get:Input abstract val inputDevices: SetProperty<String>
     @get:Input abstract val outputDevices: SetProperty<String>
     @get:Input abstract val hardwareAccelerators: SetProperty<String>
+    @get:Input abstract val thirdPartyLibraries: SetProperty<String>
     @get:Input abstract val extraConfigureArgs: ListProperty<String>
     @get:Input abstract val extraCompilerArgs: ListProperty<String>
     @get:Input abstract val extraLinkerArgs: ListProperty<String>
@@ -97,6 +104,7 @@ abstract class FfmpegBuildTask : DefaultTask() {
         inputDevices.convention(emptySet())
         outputDevices.convention(emptySet())
         hardwareAccelerators.convention(emptySet())
+        thirdPartyLibraries.convention(emptySet())
         profileInheritance.convention(emptyList())
         extraConfigureArgs.convention(emptyList())
         extraCompilerArgs.convention(emptyList())
@@ -106,8 +114,7 @@ abstract class FfmpegBuildTask : DefaultTask() {
     @TaskAction
     fun buildFfmpeg() {
         val source = sourceDirectory.get().asFile
-        val configure = source.resolve("configure")
-        require(configure.isFile) {
+        require(source.resolve("configure").isFile) {
             "FFmpeg source is not initialized at ${source.absolutePath}; initialize the ffmpeg submodule first."
         }
 
@@ -119,6 +126,9 @@ abstract class FfmpegBuildTask : DefaultTask() {
         fileSystemOperations.delete { delete(work, install) }
         work.mkdirs()
         install.mkdirs()
+
+        val preparedSource = prepareSourceWithIoProtocol(source, work)
+        val configure = preparedSource.resolve("configure")
 
         val arguments = mutableListOf<String>()
         arguments += "--prefix=${install.absolutePath}"
@@ -144,10 +154,12 @@ abstract class FfmpegBuildTask : DefaultTask() {
         addComponentFlags(arguments, "demuxer", demuxers.get())
         addComponentFlags(arguments, "parser", parsers.get())
         addComponentFlags(arguments, "protocol", protocols.get())
+        arguments += "--enable-protocol=ffmpegkmp"
         addComponentFlags(arguments, "filter", filters.get())
         addComponentFlags(arguments, "indev", inputDevices.get())
         addComponentFlags(arguments, "outdev", outputDevices.get())
         addComponentFlags(arguments, "hwaccel", hardwareAccelerators.get())
+        addThirdPartyFlags(arguments)
         arguments += extraConfigureArgs.get()
 
         val assessment = assessLicense(arguments)
@@ -196,6 +208,45 @@ abstract class FfmpegBuildTask : DefaultTask() {
         verifyInstalledArtifacts(install)
         copyLicences(source, install)
         writeMetadata(source, install, arguments, assessment)
+    }
+
+    private fun prepareSourceWithIoProtocol(source: File, work: File): File {
+        val prepared = work.resolve("source")
+        fileSystemOperations.sync {
+            from(source) { exclude(".git/**") }
+            into(prepared)
+        }
+        fileSystemOperations.copy {
+            from(bridgeSourceDirectory.file("ffmpegkmp_protocol.c"))
+            into(prepared.resolve("libavformat"))
+        }
+
+        val protocols = prepared.resolve("libavformat/protocols.c")
+        val protocolMarker = "extern const URLProtocol ff_file_protocol;"
+        val protocolText = protocols.readText()
+        require(protocolMarker in protocolText) { "Could not locate FFmpeg protocol declaration marker" }
+        protocols.writeText(
+            protocolText.replace(
+                protocolMarker,
+                "$protocolMarker\nextern const URLProtocol ff_ffmpegkmp_protocol;",
+            ),
+        )
+
+        val hls = prepared.resolve("libavformat/hls.c")
+        val hlsMarker = "if (av_strstart(proto_name, \"file\", NULL)) {"
+        val hlsText = hls.readText()
+        require(hlsMarker in hlsText) { "Could not locate FFmpeg HLS file-protocol marker" }
+        hls.writeText(
+            hlsText.replace(
+                hlsMarker,
+                "if (av_strstart(proto_name, \"file\", NULL) || " +
+                    "av_strstart(proto_name, \"ffmpegkmp\", NULL)) {",
+            ),
+        )
+
+        val makefile = prepared.resolve("libavformat/Makefile")
+        makefile.appendText("\nOBJS-\$(CONFIG_FFMPEGKMP_PROTOCOL) += ffmpegkmp_protocol.o\n")
+        return prepared
     }
 
     private fun configureAndroid(arguments: MutableList<String>) {
@@ -348,12 +399,8 @@ abstract class FfmpegBuildTask : DefaultTask() {
                     "--disable-vdpau", "--disable-vulkan", "--disable-opencl",
                 )
                 if (architecture.get().startsWith("x86")) arguments += "--disable-x86asm"
-                if (enableAvailableSystemFeatures.get()) arguments += "--enable-zlib"
             }
-            "windows" -> {
-                arguments += listOf("--target-os=mingw32", "--arch=x86_64", "--disable-x86asm")
-                if (enableAvailableSystemFeatures.get()) arguments += "--enable-zlib"
-            }
+            "windows" -> arguments += listOf("--target-os=mingw32", "--arch=x86_64", "--disable-x86asm")
             else -> error("Unsupported JVM native host: $os")
         }
         if (os != "macos" && extraCompilerArgs.get().isNotEmpty()) {
@@ -391,10 +438,8 @@ abstract class FfmpegBuildTask : DefaultTask() {
             "--disable-os2threads",
             "--disable-runtime-cpudetect",
         )
-        val systemFeatureFlags = if (enableAvailableSystemFeatures.get()) listOf("-sUSE_ZLIB=1") else emptyList()
-        if (enableAvailableSystemFeatures.get()) arguments += "--enable-zlib"
-        arguments += "--extra-cflags=${(listOf("-pthread") + systemFeatureFlags + extraCompilerArgs.get()).joinToString(" ")}"
-        arguments += "--extra-ldflags=${(listOf("-pthread") + systemFeatureFlags + extraLinkerArgs.get()).joinToString(" ")}"
+        arguments += "--extra-cflags=${(listOf("-pthread") + extraCompilerArgs.get()).joinToString(" ")}"
+        arguments += "--extra-ldflags=${(listOf("-pthread") + extraLinkerArgs.get()).joinToString(" ")}"
     }
 
     private fun makeCommand(vararg arguments: String): List<String> =
@@ -413,6 +458,10 @@ abstract class FfmpegBuildTask : DefaultTask() {
             }
             .map(File::getAbsolutePath)
             .toMutableList()
+        // compat/android/binder.o is deliberately NOT linked: it starts a binder thread
+        // pool for the standalone CLI, and libbinder aborts the whole process when the
+        // pool is already running — always the case inside an app. ffmpeg_entry.c
+        // provides a no-op android_binder_threadpool_init_if_required instead.
         execOperations.exec {
             workingDir(work)
             commandLine(
@@ -459,6 +508,26 @@ abstract class FfmpegBuildTask : DefaultTask() {
         values.sorted().forEach { arguments += "--enable-$type=$it" }
     }
 
+    private fun addThirdPartyFlags(arguments: MutableList<String>) {
+        val libraries = thirdPartyLibraries.get()
+        if (libraries.isEmpty()) return
+        require(dependenciesInstallDirectory.isPresent) {
+            "thirdPartyLibraries ${libraries.sorted()} require dependenciesInstallDirectory to be set"
+        }
+        require(commandExists("pkg-config")) {
+            "pkg-config is required to locate third-party libraries ${libraries.sorted()}; install it on the host."
+        }
+        libraries.sorted().forEach { arguments += "--enable-$it" }
+        arguments += "--pkg-config-flags=--static"
+    }
+
+    private fun pkgConfigEnvironment(): Map<String, String> {
+        if (!dependenciesInstallDirectory.isPresent) return emptyMap()
+        val pkgconfig = dependenciesInstallDirectory.get().asFile.resolve("lib/pkgconfig")
+        // PKG_CONFIG_LIBDIR (not _PATH) so cross builds never resolve host libraries.
+        return mapOf("PKG_CONFIG_LIBDIR" to pkgconfig.absolutePath)
+    }
+
     private fun verifyInstalledArtifacts(install: File) {
         val include = install.resolve("include")
         require(include.isDirectory && include.walkTopDown().any { it.isFile && it.extension == "h" }) {
@@ -494,7 +563,7 @@ abstract class FfmpegBuildTask : DefaultTask() {
         "LANG" to "C",
         "TZ" to "UTC",
         "ZERO_AR_DATE" to "1",
-    )
+    ) + pkgConfigEnvironment()
 
     private fun copyLicences(source: File, install: File) {
         val destination = install.resolve("share/licenses/ffmpeg")
@@ -503,6 +572,15 @@ abstract class FfmpegBuildTask : DefaultTask() {
             .map(source::resolve)
             .filter(File::isFile)
             .forEach { it.copyTo(destination.resolve(it.name), overwrite = true) }
+        if (dependenciesInstallDirectory.isPresent) {
+            val dependencyLicenses = dependenciesInstallDirectory.get().asFile.resolve("share/licenses")
+            if (dependencyLicenses.isDirectory) {
+                fileSystemOperations.copy {
+                    from(dependencyLicenses)
+                    into(install.resolve("share/licenses"))
+                }
+            }
+        }
         install.resolve("DISCLAIMER.txt").writeText(
             """
             This locally generated FFmpeg binary has not been reviewed for licence, patent,

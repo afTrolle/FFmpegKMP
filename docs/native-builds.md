@@ -65,6 +65,15 @@ These names describe this project's presets; they do not claim compatibility
 with the old FFmpegKit package matrix. `full` does not include libx264, libx265,
 libvpx, libass, FreeType, dav1d, Opus, or any other separately built library.
 
+The one exception is Android, where the `standard` and `full` profiles set
+`thirdPartyLibraries.add("libaom")` to provide a software AV1 encoder. libaom is
+cross-compiled per ABI from the pinned `third_party/aom` submodule (CMake + NDK
+toolchain, static, linked into `libavcodec.so`; BSD-2-Clause plus the AOM patent
+grant, LGPL-compatible). This adds two host requirements: `cmake` and
+`pkg-config` (FFmpeg's configure locates libaom through a pinned
+`PKG_CONFIG_LIBDIR`). x86 and x86_64 build with `AOM_TARGET_CPU=generic` so no
+NASM is needed.
+
 Custom profiles can extend a built-in profile. The DSL has typed sets for
 encoders, decoders, muxers, demuxers, parsers, protocols, filters, input and
 output devices, and hardware accelerators, plus compiler, linker, and configure

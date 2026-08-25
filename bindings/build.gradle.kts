@@ -1,12 +1,50 @@
 // SPDX-License-Identifier: LGPL-2.1-or-later
 
 import org.gradle.api.tasks.Sync
+import com.android.build.api.variant.KotlinMultiplatformAndroidComponentsExtension
+import org.gradle.api.DefaultTask
+import org.gradle.api.file.ArchiveOperations
+import org.gradle.api.file.DirectoryProperty
+import org.gradle.api.file.FileSystemOperations
+import org.gradle.api.file.RegularFileProperty
 import org.gradle.jvm.tasks.Jar
 import org.gradle.api.tasks.bundling.Zip
+import org.gradle.api.tasks.InputFile
+import org.gradle.api.tasks.OutputDirectory
+import org.gradle.api.tasks.TaskAction
 import org.gradle.api.tasks.testing.Test
 import org.gradle.api.tasks.compile.JavaCompile
 import org.jetbrains.kotlin.gradle.plugin.mpp.KotlinNativeTarget
+import javax.inject.Inject
 import java.util.Properties
+
+abstract class StageAndroidJniLibraries : DefaultTask() {
+    @get:InputFile
+    abstract val runtimeAar: RegularFileProperty
+
+    @get:OutputDirectory
+    abstract val outputDirectory: DirectoryProperty
+
+    @get:Inject
+    abstract val archives: ArchiveOperations
+
+    @get:Inject
+    abstract val fileSystem: FileSystemOperations
+
+    @TaskAction
+    fun stage() {
+        fileSystem.sync {
+            from(archives.zipTree(runtimeAar)) {
+                include("jni/**")
+                includeEmptyDirs = false
+                eachFile {
+                    path = path.removePrefix("jni/")
+                }
+            }
+            into(outputDirectory)
+        }
+    }
+}
 
 plugins {
     id("ffmpegkmp.multiplatform-library")
@@ -287,7 +325,7 @@ tasks.register("buildJavaCppAndroidBindings") {
     dependsOn(buildJavaCppAndroidBindings)
 }
 
-tasks.register<Zip>("assembleJavaCppAndroidRuntime") {
+val assembleJavaCppAndroidRuntime = tasks.register<Zip>("assembleJavaCppAndroidRuntime") {
     group = "ffmpeg bindings"
     description = "Assembles an ignored local Android runtime AAR containing generated declarations and JNI libraries"
     dependsOn(buildJavaCppAndroidBindings)
@@ -316,6 +354,21 @@ tasks.register<Zip>("assembleJavaCppAndroidRuntime") {
     }
 }
 
+val stageAndroidJniLibraries = tasks.register<StageAndroidJniLibraries>("stageAndroidJniLibraries") {
+    dependsOn(assembleJavaCppAndroidRuntime)
+    runtimeAar.set(assembleJavaCppAndroidRuntime.flatMap { it.archiveFile })
+    outputDirectory.set(layout.buildDirectory.dir("generated/android-jni"))
+}
+
+extensions.configure<KotlinMultiplatformAndroidComponentsExtension> {
+    onVariants(selector().all()) { variant ->
+        variant.sources.jniLibs?.addGeneratedSourceDirectory(
+            stageAndroidJniLibraries,
+            StageAndroidJniLibraries::outputDirectory,
+        )
+    }
+}
+
 tasks.named<Test>("jvmTest") {
     dependsOn(buildJavaCppHostBindings)
     val profile = selectedNativeProfile.get()
@@ -338,7 +391,7 @@ kotlin {
     sourceSets {
         commonMain.dependencies {
             implementation(libs.kotlinx.coroutines.core)
-            implementation(libs.kotlinx.io.core)
+            api(libs.okio)
             implementation(libs.kotlinx.serialization.json)
         }
         jvmMain {
@@ -362,6 +415,7 @@ kotlin {
 
     targets.withType<KotlinNativeTarget>().configureEach {
         val nativeTargetName = name
+        val nativeTargetTaskSuffix = nativeTargetName.replaceFirstChar(Char::titlecase)
         compilations.getByName("main").cinterops.create("ffmpeg") {
             definitionFile.set(layout.projectDirectory.file("src/nativeInterop/cinterop/ffmpeg.def"))
             packageName("io.github.aftrolle.ffmpegkmp.bindings.cinterop")
@@ -379,6 +433,13 @@ kotlin {
             includeDirs.headerFilterOnly(bridgeHeaders)
             includeDirs.allHeaders(install.dir("include"))
             extraOpts("-libraryPath", install.dir("lib").asFile.absolutePath)
+        }
+        tasks.named("cinteropFfmpeg$nativeTargetTaskSuffix").configure {
+            dependsOn(
+                ":native-build:apple:buildFfmpeg" +
+                    selectedNativeProfileTaskSuffix.get() +
+                    nativeTargetTaskSuffix,
+            )
         }
     }
 }

@@ -15,6 +15,14 @@ int ffmpegkmp_ffmpeg_main_impl(int argc, char **argv);
 int ffmpegkmp_ffmpeg_entry(int argc, char **argv);
 void ffmpegkmp_ffmpeg_cancel(void);
 
+#if defined(__ANDROID__) && CONFIG_MEDIACODEC
+/* Replaces compat/android/binder.c. The real helper starts a binder thread pool
+ * for the standalone CLI; inside an app process Zygote has already started it
+ * and ABinderProcess_setThreadPoolMaxThreadCount aborts the process. MediaCodec
+ * works through the framework's existing binder threads, so a no-op is correct. */
+void android_binder_threadpool_init_if_required(void) {}
+#endif
+
 int ffmpegkmp_ffmpeg_entry(int argc, char **argv) {
     /* The CLI frees these arrays but assumes process exit and leaves their counts unchanged. */
     input_files = NULL;
@@ -31,6 +39,22 @@ int ffmpegkmp_ffmpeg_entry(int argc, char **argv) {
     ffmpeg_exited = 0;
     copy_ts_first_pts = AV_NOPTS_VALUE;
     atomic_store(&nb_output_dumped, 0);
+    /* ffmpeg_cleanup frees these arrays but leaves the counters behind, which is
+     * fine for a dying process. Reused in-process, stale counts make the next
+     * run's cleanup walk freshly reallocated arrays past their real size and
+     * free garbage pointers (double free / SIGABRT in fg_free). Reset all of
+     * the paired array+count globals, and the vstats handle fclose'd but never
+     * NULLed, before every run. */
+    input_files = NULL;
+    nb_input_files = 0;
+    output_files = NULL;
+    nb_output_files = 0;
+    filtergraphs = NULL;
+    nb_filtergraphs = 0;
+    decoders = NULL;
+    nb_decoders = 0;
+    vstats_file = NULL;
+    progress_avio = NULL;
     return ffmpegkmp_ffmpeg_main_impl(argc, argv);
 }
 

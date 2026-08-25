@@ -79,7 +79,7 @@ tasks.register<Exec>("linkFfmpegKmpWorker") {
             "-sINITIAL_MEMORY=67108864",
             "-sALLOW_MEMORY_GROWTH=1",
             "-sALLOW_TABLE_GROWTH=1",
-            "-sEXPORTED_FUNCTIONS=['_malloc','_free','_ffmpegkmp_context_create','_ffmpegkmp_context_destroy','_ffmpegkmp_execute','_ffmpegkmp_cancel']",
+            "-sEXPORTED_FUNCTIONS=['_malloc','_free','_ffmpegkmp_context_create','_ffmpegkmp_context_destroy','_ffmpegkmp_context_set_io_callback','_ffmpegkmp_execute','_ffmpegkmp_cancel']",
             "-sEXPORTED_RUNTIME_METHODS=['addFunction','removeFunction','setValue','stringToNewUTF8','FS','HEAPU8','PThread']",
             "-sASSERTIONS=1",
         ),

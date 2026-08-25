@@ -57,6 +57,10 @@ suspend fun transcode(input: String, output: String) {
 ```
 
 Native, Android, and desktop callers may pass normal filesystem paths directly.
-Browser callers use worker virtual paths and transfer `Source`/`Sink` mounts.
-Studio mounts FileKit bytes consistently so Android content URIs and browser
-files follow the same shared processing path.
+Mounted files use Okio `FileHandle` for random reads and writes; Okio
+`Source`/`Sink` values support non-seekable streams. Android additionally accepts
+integer or Java file descriptors, `ParcelFileDescriptor`, `AssetFileDescriptor`,
+content `Uri`, `InputStream`, and `OutputStream`. Browser mounts are transferred
+to the worker's random-access protocol registry. Studio mounts FileKit bytes
+consistently so Android content URIs and browser files follow the same shared
+processing path.

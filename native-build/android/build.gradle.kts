@@ -12,9 +12,12 @@ ffmpegNativeBuild {
 
         profiles.named("standard") {
             hardwareAcceleration.androidMediaCodec.set(true)
+            thirdPartyLibraries.add("libaom")
+            enableAvailableSystemFeatures.set(true)
         }
         profiles.named("full") {
             hardwareAcceleration.androidMediaCodec.set(true)
+            thirdPartyLibraries.add("libaom")
         }
     }
 }

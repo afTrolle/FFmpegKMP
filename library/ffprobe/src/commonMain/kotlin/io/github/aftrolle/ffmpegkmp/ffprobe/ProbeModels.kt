@@ -82,6 +82,9 @@ public data class ProbeStream(override val raw: JsonObject) : JsonBackedProbeVal
     public val colorSpace: String? get() = string("color_space")
     public val colorTransfer: String? get() = string("color_transfer")
     public val colorPrimaries: String? get() = string("color_primaries")
+
+    /** True for HDR transfer characteristics: PQ (smpte2084) or HLG (arib-std-b67). */
+    public val isHdrTransfer: Boolean get() = colorTransfer == "smpte2084" || colorTransfer == "arib-std-b67"
     public val chromaLocation: String? get() = string("chroma_location")
     public val fieldOrder: String? get() = string("field_order")
     public val frameRate: String? get() = string("r_frame_rate")

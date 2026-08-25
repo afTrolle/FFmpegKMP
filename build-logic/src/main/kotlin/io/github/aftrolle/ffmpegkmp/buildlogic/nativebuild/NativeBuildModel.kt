@@ -39,6 +39,9 @@ abstract class FfmpegBuildOptions {
     abstract val inputDevices: SetProperty<String>
     abstract val outputDevices: SetProperty<String>
     abstract val hardwareAccelerators: SetProperty<String>
+
+    /** External FFmpeg libraries (e.g. "libaom") built from sources pinned under third_party/. */
+    abstract val thirdPartyLibraries: SetProperty<String>
     abstract val extraConfigureArgs: ListProperty<String>
     abstract val extraCompilerArgs: ListProperty<String>
     abstract val extraLinkerArgs: ListProperty<String>
@@ -163,6 +166,7 @@ internal data class MutableResolvedOptions(
     val inputDevices: MutableSet<String> = linkedSetOf(),
     val outputDevices: MutableSet<String> = linkedSetOf(),
     val hardwareAccelerators: MutableSet<String> = linkedSetOf(),
+    val thirdPartyLibraries: MutableSet<String> = linkedSetOf(),
     val extraConfigureArgs: MutableList<String> = mutableListOf(),
     val extraCompilerArgs: MutableList<String> = mutableListOf(),
     val extraLinkerArgs: MutableList<String> = mutableListOf(),
@@ -191,6 +195,7 @@ internal fun MutableResolvedOptions.overlay(options: FfmpegBuildOptions) {
     options.inputDevices.orNull?.let(inputDevices::addAll)
     options.outputDevices.orNull?.let(outputDevices::addAll)
     options.hardwareAccelerators.orNull?.let(hardwareAccelerators::addAll)
+    options.thirdPartyLibraries.orNull?.let(thirdPartyLibraries::addAll)
     options.extraConfigureArgs.orNull?.let(extraConfigureArgs::addAll)
     options.extraCompilerArgs.orNull?.let(extraCompilerArgs::addAll)
     options.extraLinkerArgs.orNull?.let(extraLinkerArgs::addAll)

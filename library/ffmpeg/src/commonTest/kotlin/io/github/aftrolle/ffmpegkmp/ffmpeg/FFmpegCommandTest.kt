@@ -8,10 +8,10 @@ import kotlin.test.assertFails
 
 class FFmpegCommandTest {
     @Test
-    fun buildsOrderedCommand() {
+    fun buildsCommandForMountedVideo() {
         val command = FFmpegCommand {
             overwrite()
-            input("input clip.mp4")
+            input(BUNNY_PATH)
             videoCodec("h264")
             audioCodec("aac")
             map("0:v:0")
@@ -21,7 +21,7 @@ class FFmpegCommandTest {
 
         assertEquals(
             listOf(
-                "-y", "-i", "input clip.mp4", "-c:v", "h264", "-c:a", "aac",
+                "-y", "-i", BUNNY_PATH, "-c:v", "h264", "-c:a", "aac",
                 "-map", "0:v:0", "-metadata", "title=Example", "output.mp4",
             ),
             command.arguments,
@@ -42,5 +42,9 @@ class FFmpegCommandTest {
     @Test
     fun rejectsUnterminatedQuotes() {
         assertFails { CommandLineTokenizer.tokenize("-i 'broken") }
+    }
+
+    private companion object {
+        const val BUNNY_PATH = "big-buck-bunny-1s.mp4"
     }
 }

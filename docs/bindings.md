@@ -40,13 +40,18 @@ Every declared Apple target creates one `ffmpeg` cinterop using the matching
 all seven public APIs plus the project bridge. `ffmpeg.def` embeds the static
 archives into one klib and supplies inline wrappers for `AVERROR` and
 `AV_VERSION_INT`, which Kotlin/Native cannot import as function-like macros.
-Mounted `Source`/`Sink` data is staged through `kotlinx-io` in the system
-temporary directory and removed after native cleanup.
+Mounted Okio resources are exposed to FFmpeg through the `ffmpegkmp:` URL
+protocol. Its open/read/write/size/seek/close callbacks dispatch directly to an
+Okio `FileHandle`, `Source`, or `Sink`; Apple commands no longer create staging
+files. `FileHandle` mounts are seekable and use offset-based reads and writes,
+while stream mounts deliberately report themselves as non-seekable.
 
 ## Command bridge
 
 `native-build/bridge` defines a small C ABI for context lifetime, execution,
-events, and cancellation. The native build compiles it for each target and adds
+events, cancellation, and host I/O. The native build applies a source overlay
+that adds the `ffmpegkmp:` protocol without modifying the pinned FFmpeg
+submodule, compiles it for each target, and adds
 it to the install manifest. The bridge serializes embedded command entry, turns
 `exit()` into a return to the host, resets the wrapper-controlled tool state,
 routes `av_log` events, captures FFprobe output, and checks cancellation in the
@@ -59,13 +64,14 @@ returns `-ENOSYS`; Kotlin converts that condition to
 ## Web
 
 Kotlin/Wasm cannot consume cinterop klibs. `linkFfmpegKmpWorker` therefore links
-the Emscripten archives into an ES module. `ffmpegkmp-worker.mjs` mounts byte
-inputs, executes in a Web Worker, transfers events and outputs, and removes the
-session files afterward.
+the Emscripten archives into an ES module. `ffmpegkmp-worker.mjs` receives
+transferable buffers, exposes them through the same `ffmpegkmp:` protocol,
+executes in a Web Worker, and transfers events and writable buffers back.
 
 The Kotlin/Wasm actual starts the module worker, translates structured events,
-stages mounted byte inputs and outputs, and terminates the worker on session
-cancellation. Deployments may override the default adjacent asset names through
+and transfers mounted buffers to a worker-side `ffmpegkmp:` random-access
+registry. It does not create virtual filesystem staging files. It terminates the
+worker on session cancellation. Deployments may override the default adjacent asset names through
 `globalThis.FFMPEGKMP_WORKER_URL` and `globalThis.FFMPEGKMP_MODULE_URL`.
 Because the pinned `ffmpeg` scheduler requires pthreads, Web hosting must enable
 `SharedArrayBuffer` with COOP/COEP cross-origin-isolation headers; all command

@@ -6,7 +6,7 @@ import kotlin.test.assertEquals
 
 class FilterGraphTest {
     @Test
-    fun compilesTransformOverlayAndAlphaMask() {
+    fun buildsTransformOverlayAndAlphaMask() {
         val graph = FilterGraph {
             val base = scale(input(0), 1920, 1080, "base")
             val logo = scale(input(1), 320, -1, "logo")
@@ -25,7 +25,7 @@ class FilterGraphTest {
     }
 
     @Test
-    fun compilesLumaMaskAndAudioOperations() {
+    fun buildsLumaMaskAndAudioOperations() {
         val graph = FilterGraph {
             lumaMask(input(0), input(1), input(2), "masked")
             val trimmed = audioTrim(input(0, "a:0"), startSeconds = 1.5, endSeconds = 4.0, label = "trimmed")

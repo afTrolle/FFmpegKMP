@@ -7,8 +7,7 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 import kotlinx.coroutines.runBlocking
-import kotlinx.io.Buffer
-import kotlinx.io.write
+import okio.Buffer
 
 class DesktopNativeRuntimeTest {
     @Test

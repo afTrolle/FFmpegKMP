@@ -35,10 +35,41 @@ typedef void (*ffmpegkmp_event_callback)(
         const uint8_t *data,
         uint64_t size);
 
+typedef enum ffmpegkmp_io_operation {
+    FFMPEGKMP_IO_OPEN = 0,
+    FFMPEGKMP_IO_READ = 1,
+    FFMPEGKMP_IO_WRITE = 2,
+    FFMPEGKMP_IO_SIZE = 3,
+    FFMPEGKMP_IO_CLOSE = 4,
+} ffmpegkmp_io_operation;
+
+typedef enum ffmpegkmp_io_capability {
+    FFMPEGKMP_IO_CAP_READ = 1,
+    FFMPEGKMP_IO_CAP_WRITE = 2,
+    FFMPEGKMP_IO_CAP_SEEK = 4,
+} ffmpegkmp_io_capability;
+
+/**
+ * Host callback used by the ffmpegkmp: URL protocol. OPEN receives FFmpeg's
+ * AVIO access flags in `offset` and returns a capability mask; READ/WRITE return
+ * a byte count; SIZE returns the current size; CLOSE returns zero. Any negative
+ * value is reported to FFmpeg as an I/O failure.
+ */
+typedef int64_t (*ffmpegkmp_io_callback)(
+        void *opaque,
+        int64_t resource_id,
+        int operation,
+        int64_t offset,
+        uint8_t *data,
+        uint64_t size);
+
 FFMPEGKMP_EXPORT ffmpegkmp_context *ffmpegkmp_context_create(
         ffmpegkmp_event_callback callback,
         void *opaque);
 FFMPEGKMP_EXPORT void ffmpegkmp_context_destroy(ffmpegkmp_context *context);
+FFMPEGKMP_EXPORT void ffmpegkmp_context_set_io_callback(
+        ffmpegkmp_context *context,
+        ffmpegkmp_io_callback callback);
 FFMPEGKMP_EXPORT int ffmpegkmp_execute(
         ffmpegkmp_context *context,
         ffmpegkmp_command_kind kind,
@@ -56,6 +87,11 @@ FFMPEGKMP_EXPORT void ffmpegkmp_emit(
 
 /* Replaces fftools exit() calls so a command can never terminate its host. */
 FFMPEGKMP_EXPORT void ffmpegkmp_exit(int status);
+
+/* Directory for the bridge's scratch files (ffprobe stdout redirect). Hosts whose
+ * process has no usable cwd or TMPDIR (Android apps) must call this once before
+ * running ffprobe. Copies the string; pass NULL to reset to the defaults. */
+FFMPEGKMP_EXPORT void ffmpegkmp_set_temp_directory(const char *path);
 
 #ifdef __cplusplus
 }

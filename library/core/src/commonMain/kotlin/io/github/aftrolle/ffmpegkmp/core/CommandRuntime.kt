@@ -10,7 +10,11 @@ import io.github.aftrolle.ffmpegkmp.bindings.NativeCommandKind
 import io.github.aftrolle.ffmpegkmp.bindings.NativeExecutionBridge
 import io.github.aftrolle.ffmpegkmp.bindings.NativeExecutionEvent
 import io.github.aftrolle.ffmpegkmp.bindings.NativeExecutionRequest
-import io.github.aftrolle.ffmpegkmp.bindings.NativeMountedInput
+import io.github.aftrolle.ffmpegkmp.bindings.NativeFileResource
+import io.github.aftrolle.ffmpegkmp.bindings.NativeIoAccess
+import io.github.aftrolle.ffmpegkmp.bindings.NativeMountedIo
+import io.github.aftrolle.ffmpegkmp.bindings.NativeSinkResource
+import io.github.aftrolle.ffmpegkmp.bindings.NativeSourceResource
 import io.github.aftrolle.ffmpegkmp.bindings.createPlatformExecutionBridge
 import kotlin.concurrent.atomics.AtomicBoolean
 import kotlin.concurrent.atomics.AtomicReference
@@ -29,9 +33,9 @@ import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.launch
-import kotlinx.io.readByteArray
-import kotlinx.io.write
+import kotlinx.coroutines.withContext
 
 @InternalFFmpegKmpApi
 public enum class CommandKind { FFMPEG, FFPROBE }
@@ -69,10 +73,23 @@ public class CommandRuntimeClient private constructor(
         return session
     }
 
+    /**
+     * Runs the command and awaits its result. Cancelling the calling coroutine (including via
+     * `withTimeout`) also cancels the native run — otherwise an abandoned ffmpeg/ffprobe would
+     * keep the single-run bridge busy and block every later command in the process.
+     */
     public suspend fun execute(
         arguments: List<String>,
         io: CommandIo = CommandIo.Empty,
-    ): ExecutionResult = enqueue(arguments, io).await()
+    ): ExecutionResult {
+        val session = enqueue(arguments, io)
+        return try {
+            session.await()
+        } catch (cancellation: CancellationException) {
+            withContext(NonCancellable) { session.cancelAndJoin() }
+            throw cancellation
+        }
+    }
 
     override fun close() {
         val sessions = closeClient() ?: return
@@ -151,6 +168,13 @@ private class CommandExecutionSession(
     private val retainedLogs = mutableListOf<ExecutionEvent.Log>()
     private val capturedOutput = StringBuilder()
     private val capturedErrorOutput = StringBuilder()
+    private val progressParser = ProgressParser { progress ->
+        latestProgress = progress
+        mutableEvents.tryEmit(progress)
+    }
+
+    @kotlin.concurrent.Volatile
+    private var latestProgress: ExecutionEvent.Progress? = null
     private val cancelled = AtomicBoolean(false)
     private val closeRequested = AtomicBoolean(false)
     private val ioClosed = AtomicBoolean(false)
@@ -186,14 +210,14 @@ private class CommandExecutionSession(
             }
 
             mutableState.value = SessionState.RUNNING
-            val mountedInputs = io.inputs.map { input ->
-                NativeMountedInput(input.path, input.source.readByteArray())
-            }
-            val nativeResult = executeAndCaptureEvents(mountedInputs)
-            io.outputs.forEach { output ->
-                nativeResult.outputs[output.path]?.let { bytes ->
-                    output.sink.write(bytes)
-                    output.sink.flush()
+            val nativeResult = executeAndCaptureEvents()
+            io.mounts.forEach { mount ->
+                when (val resource = mount.resource) {
+                    is NativeFileResource -> if (resource.access != NativeIoAccess.READ) {
+                        resource.fileHandle.flush()
+                    }
+                    is NativeSinkResource -> resource.sink.flush()
+                    is NativeSourceResource -> Unit
                 }
             }
 
@@ -237,11 +261,10 @@ private class CommandExecutionSession(
             retainedLogs.toList(),
             duration,
             cancelled,
+            latestProgress,
         )
 
-    private suspend fun executeAndCaptureEvents(
-        mountedInputs: List<NativeMountedInput>,
-    ): io.github.aftrolle.ffmpegkmp.bindings.NativeExecutionResult = coroutineScope {
+    private suspend fun executeAndCaptureEvents(): io.github.aftrolle.ffmpegkmp.bindings.NativeExecutionResult = coroutineScope {
         val nativeEvents = Channel<NativeExecutionEvent>(Channel.UNLIMITED)
         val collector = launch {
             for (event in nativeEvents) acceptNativeEvent(event)
@@ -252,8 +275,7 @@ private class CommandExecutionSession(
                     id = id,
                     kind = if (kind == CommandKind.FFMPEG) NativeCommandKind.FFMPEG else NativeCommandKind.FFPROBE,
                     arguments = arguments,
-                    inputs = mountedInputs,
-                    outputPaths = io.outputs.map { it.path },
+                    mounts = io.mounts.map { NativeMountedIo(it.path, it.resource) },
                 ),
             ) { event -> nativeEvents.trySend(event) }
         } finally {
@@ -276,19 +298,31 @@ private class CommandExecutionSession(
                 // FFmpeg's default av_log callback writes diagnostics to stderr.
                 // Preserve that CLI behavior while also retaining structured logs.
                 capturedErrorOutput.append(publicEvent.message)
+                if (kind == CommandKind.FFMPEG) progressParser.accept(publicEvent.message)
             }
             is ExecutionEvent.Output -> when (publicEvent.stream) {
                 OutputStream.STDOUT -> capturedOutput.append(publicEvent.text)
-                OutputStream.STDERR -> capturedErrorOutput.append(publicEvent.text)
+                OutputStream.STDERR -> {
+                    capturedErrorOutput.append(publicEvent.text)
+                    if (kind == CommandKind.FFMPEG) progressParser.accept(publicEvent.text)
+                }
             }
+            is ExecutionEvent.Progress -> Unit
         }
         mutableEvents.tryEmit(publicEvent)
     }
 
     private fun closeIoOnce() {
         if (!ioClosed.compareAndSet(expectedValue = false, newValue = true)) return
-        io.inputs.forEach { runCatching { it.source.close() } }
-        io.outputs.forEach { runCatching { it.sink.close() } }
+        io.mounts.forEach { mount ->
+            runCatching {
+                when (val resource = mount.resource) {
+                    is NativeFileResource -> resource.fileHandle.close()
+                    is NativeSourceResource -> resource.source.close()
+                    is NativeSinkResource -> resource.sink.close()
+                }
+            }
+        }
     }
 
     private fun notifyTerminalOnce() {
