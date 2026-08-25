@@ -48,7 +48,7 @@ abstract class AppleXcframeworkTask : DefaultTask() {
         output.mkdirs()
         staging.mkdirs()
 
-        ffmpegLibraries.forEach { library ->
+        (ffmpegLibraries + "ffmpegkmp_bridge").forEach { library ->
             val watchFat = staging.resolve("watchos/lib$library.a")
             watchFat.parentFile.mkdirs()
             execOperations.exec {

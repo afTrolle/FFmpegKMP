@@ -105,6 +105,40 @@ Native artifacts are generated locally through target-specific pipelines. See
 the [native build documentation](docs/native-builds.md) for the intended build
 model and reproducibility requirements.
 
+## Use from another application
+
+Add the APIs you use from Maven Central to `commonMain`:
+
+```kotlin
+kotlin {
+    sourceSets.commonMain.dependencies {
+        implementation("io.github.aftrolle.ffmpegkmp:ffmpeg:<version>")
+        implementation("io.github.aftrolle.ffmpegkmp:ffprobe:<version>")
+        // Optional typed filter graph DSL:
+        implementation("io.github.aftrolle.ffmpegkmp:filters:<version>")
+    }
+}
+```
+
+The Maven modules contain Kotlin APIs and binding declarations only. Build the
+matching local runtime from the same Git tag, then add it to the final app:
+
+```shell
+git clone --recurse-submodules --branch <release-tag> https://github.com/afTrolle/FFmpegKMP.git
+cd FFmpegKMP
+./gradlew assembleAndroidSampleBinaries   # Android AAR with JNI/FFmpeg .so files
+./gradlew assembleDesktopSampleBinaries   # Current-host JNI + shared libraries
+./gradlew assembleIosSampleBinaries       # iOS device and simulator static archives
+./gradlew assembleWebSampleBinaries       # .mjs/.wasm runtime (requires Emscripten)
+```
+
+`./gradlew assembleSampleBinaries` runs all four on a macOS machine with the
+Android, Xcode, desktop, and Emscripten toolchains installed. Each sample build
+also invokes its own preparation task automatically. See
+[Using FFmpegKMP in an application](docs/consuming.md) for the generated paths
+and platform-specific integration steps. Generated native binaries remain
+ignored local outputs and are never part of a Maven publication.
+
 ## Delivery status
 
 - Native binary builds cover Android, Apple, JVM desktop, and Emscripten.
@@ -128,6 +162,7 @@ model and reproducibility requirements.
 
 - [Contributing](docs/contributing.md)
 - [Maven Central publishing](docs/publishing.md)
+- [Using FFmpegKMP in an application](docs/consuming.md)
 - [Architecture](docs/architecture.md)
 - [Native builds](docs/native-builds.md)
 - [Binding generation](docs/bindings.md)

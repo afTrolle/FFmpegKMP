@@ -10,6 +10,11 @@ These are declaration/API artifacts, not ready-to-run FFmpeg distributions.
 Consumers must build or otherwise provide a compatible native runtime under
 the applicable platform and licence rules.
 
+Only `:bindings` and the four projects under `:library` apply the publishing
+plugin. Native-build and sample projects are excluded. The
+`verifyMavenPublicationScope` task fails if that allow-list changes, and the
+archive scan also rejects sample package paths.
+
 ## Published coordinates
 
 Use the root publication from `commonMain`; Kotlin Gradle selects the matching
@@ -194,7 +199,8 @@ build directory:
 
 ```shell
 release_version='0.1.0'
-./gradlew publishAllPublicationsToReleaseCheckRepository \
+./gradlew verifyMavenPublicationScope \
+    publishAllPublicationsToReleaseCheckRepository \
     -Pffmpegkmp.version="$release_version" \
     --no-configuration-cache
 ```
@@ -205,9 +211,26 @@ Run the mandatory native-content scan:
 scripts/verify-no-native-binaries.sh build/release-check-repository
 ```
 
+To inspect artifact contents without loading a private signing key, stage an
+explicitly unsigned local audit repository instead:
+
+```shell
+./gradlew verifyMavenPublicationScope \
+    publishAllPublicationsToReleaseCheckRepository \
+    -Pffmpegkmp.version="$release_version" \
+    -Pffmpegkmp.unsignedPublicationAudit=true \
+    --no-configuration-cache
+scripts/verify-no-native-binaries.sh build/release-check-repository
+```
+
+That switch is rejected by Maven Central publication tasks. It is only for the
+local `releaseCheck` repository; real preflight and release builds remain
+signed.
+
 The check is deliberately performed against the Maven repository that would be
-uploaded, rather than against the source tree. It also opens nested JAR, AAR,
-KLIB, and ZIP files. Do not publish if this check fails.
+uploaded, rather than against the source tree. It verifies the artifact-ID
+allow-list and opens nested JAR, AAR, KLIB, and ZIP files to reject native
+content or sample application packages. Do not publish if this check fails.
 
 Optionally test dependency resolution from the staged repository in a small
 consumer project before releasing. Use this repository URL:

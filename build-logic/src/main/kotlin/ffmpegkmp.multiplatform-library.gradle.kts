@@ -26,6 +26,10 @@ val publicationName = when (project.name) {
     "ffprobe" -> "FFmpegKMP FFprobe"
     else -> "FFmpegKMP ${project.name.replaceFirstChar(Char::titlecase)}"
 }
+val unsignedPublicationAudit = providers
+    .gradleProperty("ffmpegkmp.unsignedPublicationAudit")
+    .map(String::toBoolean)
+    .orElse(false)
 
 extensions.configure<KotlinMultiplatformExtension> {
     android {
@@ -85,7 +89,9 @@ extensions.configure<KotlinMultiplatformExtension> {
 
 mavenPublishing {
     publishToMavenCentral()
-    signAllPublications()
+    if (!unsignedPublicationAudit.get()) {
+        signAllPublications()
+    }
     coordinates(project.group.toString(), project.name, project.version.toString())
 
     pom {
@@ -120,6 +126,17 @@ mavenPublishing {
             connection = "scm:git:https://github.com/afTrolle/FFmpegKMP.git"
             developerConnection = "scm:git:ssh://git@github.com/afTrolle/FFmpegKMP.git"
         }
+    }
+}
+
+tasks.matching { task ->
+    unsignedPublicationAudit.get() && task.name.contains("MavenCentral", ignoreCase = true)
+}.configureEach {
+    doFirst {
+        error(
+            "ffmpegkmp.unsignedPublicationAudit may only be used with the local " +
+                "releaseCheck repository; Maven Central publication must be signed.",
+        )
     }
 }
 

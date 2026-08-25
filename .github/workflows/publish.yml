@@ -69,7 +69,8 @@ jobs:
 
       - name: Stage signed publications locally
         run: >-
-          ./gradlew publishAllPublicationsToReleaseCheckRepository
+          ./gradlew verifyMavenPublicationScope
+          publishAllPublicationsToReleaseCheckRepository
           -Pffmpegkmp.version=${{ steps.version.outputs.value }}
           --no-configuration-cache
           --stacktrace

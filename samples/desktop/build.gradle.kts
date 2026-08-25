@@ -33,7 +33,6 @@ compose.desktop {
     }
 }
 
-val selectedNativeProfile = providers.gradleProperty("ffmpegkmp.profile").orElse("standard")
 val studioHost = providers.systemProperty("os.name").zip(providers.systemProperty("os.arch")) { os, arch ->
     val platform = when {
         os.contains("mac", ignoreCase = true) -> "macos"
@@ -49,18 +48,19 @@ val studioHost = providers.systemProperty("os.name").zip(providers.systemPropert
     "$platform-$architecture"
 }
 
+val prepareFFmpegKmpRuntime = tasks.register("prepareFFmpegKmpRuntime") {
+    group = "ffmpeg sample"
+    description = "Builds and stages the local FFmpeg/JNI runtime used by the desktop sample"
+    dependsOn(":bindings:stageJavaCppHostRuntime")
+}
+
 tasks.withType<JavaExec>().configureEach {
     if (name != "run" && name != "jvmRun") return@configureEach
-    dependsOn(":bindings:buildJavaCppHostBindings")
-    val families = listOf("Avutil", "Swresample", "Swscale", "Avcodec", "Avformat", "Avfilter", "Avdevice", "Bridge")
-    val jniPath = families.joinToString(File.pathSeparator) { family ->
-        rootProject.layout.projectDirectory
-            .dir("bindings/build/generated/javacpp-jni/${studioHost.get()}/$family")
-            .asFile.absolutePath
-    }
-    val nativePath = rootProject.layout.projectDirectory
-        .dir("native-build/jvm/out/${selectedNativeProfile.get()}/${studioHost.get()}/lib")
-        .asFile.absolutePath
+    dependsOn(prepareFFmpegKmpRuntime)
+    val runtime = rootProject.layout.projectDirectory
+        .dir("bindings/build/generated/host-runtime/${studioHost.get()}")
+    val jniPath = runtime.dir("jni").asFile.absolutePath
+    val nativePath = runtime.dir("lib").asFile.absolutePath
     jvmArgs(
         "-Dffmpegkmp.jni.path=$jniPath",
         "-Djava.library.path=$jniPath${File.pathSeparator}$nativePath",
@@ -76,9 +76,9 @@ tasks.withType<JavaExec>().configureEach {
 // IntelliJ can launch MainKt directly, bypassing the Compose `run` task.
 // Ensure that such a build still produces the local JNI runtime discovered by Main.kt.
 tasks.named("jvmMainClasses") {
-    dependsOn(":bindings:buildJavaCppHostBindings")
+    dependsOn(prepareFFmpegKmpRuntime)
 }
 
 tasks.named("jvmTest") {
-    dependsOn(":bindings:buildJavaCppHostBindings")
+    dependsOn(prepareFFmpegKmpRuntime)
 }

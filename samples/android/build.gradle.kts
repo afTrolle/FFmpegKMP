@@ -10,7 +10,7 @@ description = "Android launcher for the FFmpegKMP Studio sample"
 val selectedNativeProfile = providers.gradleProperty("ffmpegkmp.profile").orElse("standard")
 val localRuntimeAar = selectedNativeProfile.map { profile ->
     rootProject.layout.projectDirectory.file(
-        "bindings/build/generated/android-runtime/ffmpegkmp-bindings-$profile-local.aar",
+        "bindings/build/generated/android-runtime/ffmpegkmp-runtime-$profile-local.aar",
     )
 }
 val prepareFFmpegKmpRuntime = tasks.register<Sync>("prepareFFmpegKmpRuntime") {

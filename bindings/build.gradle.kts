@@ -250,6 +250,41 @@ tasks.register("buildJavaCppHostBindings") {
     dependsOn(buildJavaCppHostBindings)
 }
 
+val stageJavaCppHostRuntime = tasks.register<Sync>("stageJavaCppHostRuntime") {
+    group = "ffmpeg bindings"
+    description = "Stages the local FFmpeg and generated JNI runtime for the current JVM machine"
+    dependsOn(buildJavaCppHostBindings)
+
+    from(nativeJvmInstall.map { it.dir("lib") }) {
+        include("*.dylib", "*.so", "*.so.*", "*.dll")
+        into("lib")
+    }
+    javaCppFamilies.forEach { family ->
+        from(layout.buildDirectory.dir(hostMachine.map { "generated/javacpp-jni/$it/$family" })) {
+            include("*.dylib", "*.so", "*.so.*", "*.dll")
+            into("jni")
+        }
+    }
+    from(stageBindingNotices)
+    from(nativeJvmInstall.map { it.file("build-manifest.json") })
+    from(nativeJvmInstall.map { it.dir("share/licenses") }) {
+        into("licenses")
+    }
+    into(layout.buildDirectory.dir(hostMachine.map { "generated/host-runtime/$it" }))
+}
+
+tasks.register<Zip>("assembleJavaCppHostRuntime") {
+    group = "ffmpeg bindings"
+    description = "Packages the ignored local FFmpeg/JNI runtime for the current JVM machine"
+    dependsOn(stageJavaCppHostRuntime)
+    archiveFileName.set(hostMachine.map { "ffmpegkmp-runtime-$it-local.zip" })
+    destinationDirectory.set(layout.buildDirectory.dir("generated/host-runtime-archives"))
+    isReproducibleFileOrder = true
+    isPreserveFileTimestamps = false
+    outputs.cacheIf { false }
+    from(stageJavaCppHostRuntime)
+}
+
 val androidAbis = linkedMapOf(
     "armeabi-v7a" to Triple("android-arm", "armv7a-linux-androideabi", "ArmeabiV7a"),
     "arm64-v8a" to Triple("android-arm64", "aarch64-linux-android", "Arm64V8a"),
@@ -339,9 +374,9 @@ tasks.register("buildJavaCppAndroidBindings") {
 
 val assembleJavaCppAndroidRuntime = tasks.register<Zip>("assembleJavaCppAndroidRuntime") {
     group = "ffmpeg bindings"
-    description = "Assembles an ignored local Android runtime AAR containing generated declarations and JNI libraries"
+    description = "Assembles an ignored binary-only Android runtime AAR containing FFmpeg and JNI libraries"
     dependsOn(buildJavaCppAndroidBindings)
-    archiveFileName.set(selectedNativeProfile.map { "ffmpegkmp-bindings-$it-local.aar" })
+    archiveFileName.set(selectedNativeProfile.map { "ffmpegkmp-runtime-$it-local.aar" })
     destinationDirectory.set(layout.buildDirectory.dir("generated/android-runtime"))
     isReproducibleFileOrder = true
     isPreserveFileTimestamps = false
@@ -349,9 +384,6 @@ val assembleJavaCppAndroidRuntime = tasks.register<Zip>("assembleJavaCppAndroidR
 
     from(layout.projectDirectory.file("src/androidPackaging/AndroidManifest.xml"))
     from(stageBindingNotices)
-    from(javaCppDeclarationsJar.flatMap { it.archiveFile }) {
-        rename { "classes.jar" }
-    }
     androidAbis.forEach { (abi, _) ->
         from(selectedNativeProfile.map {
             rootProject.layout.projectDirectory.dir("native-build/android/out/$it/$abi/lib")
@@ -367,6 +399,33 @@ val assembleJavaCppAndroidRuntime = tasks.register<Zip>("assembleJavaCppAndroidR
             }
         }
     }
+}
+
+val stageWasmRuntime = tasks.register<Sync>("stageWasmRuntime") {
+    group = "ffmpeg bindings"
+    description = "Stages the ignored local FFmpeg WebAssembly runtime and worker"
+    dependsOn(":native-build:wasm:linkFfmpegKmpWorker")
+    from(selectedNativeProfile.map { profile ->
+        rootProject.layout.projectDirectory.dir("native-build/wasm/build/worker/$profile")
+    }) {
+        include("ffmpegkmp.mjs", "ffmpegkmp.wasm")
+    }
+    from(layout.projectDirectory.dir("src/wasmJsMain/resources")) {
+        include("ffmpegkmp-worker.mjs")
+    }
+    into(layout.buildDirectory.dir(selectedNativeProfile.map { "generated/wasm-runtime/$it" }))
+}
+
+tasks.register<Zip>("assembleWasmRuntime") {
+    group = "ffmpeg bindings"
+    description = "Packages the ignored local FFmpeg WebAssembly runtime and worker"
+    dependsOn(stageWasmRuntime)
+    archiveFileName.set(selectedNativeProfile.map { "ffmpegkmp-wasm-runtime-$it-local.zip" })
+    destinationDirectory.set(layout.buildDirectory.dir("generated/wasm-runtime-archives"))
+    isReproducibleFileOrder = true
+    isPreserveFileTimestamps = false
+    outputs.cacheIf { false }
+    from(stageWasmRuntime)
 }
 
 tasks.withType<Zip>().matching { it.name == "bundleAndroidMainAar" }.configureEach {
@@ -419,6 +478,7 @@ kotlin {
     targets.withType<KotlinNativeTarget>().configureEach {
         val nativeTargetName = name
         val nativeTargetTaskSuffix = nativeTargetName.replaceFirstChar(Char::titlecase)
+        val nativeProfileTaskSuffix = selectedNativeProfileTaskSuffix.get()
         compilations.getByName("main").cinterops.create("ffmpeg") {
             definitionFile.set(layout.projectDirectory.file("src/nativeInterop/cinterop/ffmpeg.def"))
             packageName("io.github.aftrolle.ffmpegkmp.bindings.cinterop")
@@ -435,12 +495,9 @@ kotlin {
             includeDirs.headerFilterOnly(projectHeaders)
             includeDirs.headerFilterOnly(bridgeHeaders)
             includeDirs.allHeaders(install.dir("include"))
-            extraOpts("-libraryPath", install.dir("lib").asFile.absolutePath)
         }
         tasks.named("cinteropFfmpeg$nativeTargetTaskSuffix").configure {
-            dependsOn(selectedNativeProfileTaskSuffix.map {
-                ":native-build:apple:buildFfmpeg$it$nativeTargetTaskSuffix"
-            })
+            dependsOn(":native-build:apple:buildFfmpeg$nativeProfileTaskSuffix$nativeTargetTaskSuffix")
         }
     }
 }

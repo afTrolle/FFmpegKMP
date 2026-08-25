@@ -18,6 +18,22 @@ git submodule update --init --recursive
 ./gradlew assembleNativeBinaries
 ```
 
+To build the exact runtime outputs consumed by one sample, use the root sample
+lifecycle tasks. The aggregate requires all platform toolchains and therefore
+normally runs on macOS:
+
+```shell
+./gradlew assembleAndroidSampleBinaries
+./gradlew assembleDesktopSampleBinaries
+./gradlew assembleIosSampleBinaries
+./gradlew assembleWebSampleBinaries
+./gradlew assembleSampleBinaries
+```
+
+The platform sample tasks stage runtime files under ignored `build/`
+directories and are wired into the corresponding sample build or launch task.
+None is a Maven publication input.
+
 The root task selects a profile with `-Pffmpegkmp.profile=min`, `standard`, or
 `full`. A family can be built independently:
 
@@ -142,7 +158,9 @@ libraries under `native-build/apple/out/<profile>/<kotlin-target>/`.
 iOS, macOS, and tvOS. Those integrations are disabled on watchOS. The assembled
 XCFrameworks are under
 `native-build/apple/out/<profile>/xcframework/lib<name>.xcframework`, with
-per-target manifests and licence files alongside them.
+per-target manifests and licence files alongside them. The package contains the
+seven FFmpeg XCFrameworks plus `libffmpegkmp_bridge.xcframework`, which the final
+application must link for command execution.
 
 ### JVM desktop
 
@@ -242,5 +260,8 @@ hash the bridge header and archive alongside the seven FFmpeg libraries.
 Kotlin/Native consumes them with one umbrella cinterop; JavaCPP consumes the
 matching JVM/Android headers and libraries. Generated declarations, JNI code,
 klibs, and WebAssembly modules remain ignored local outputs.
+
+The app-facing staging and packaging tasks are documented in [Using FFmpegKMP
+in an application](consuming.md).
 
 [Back to the project README](../README.md)
