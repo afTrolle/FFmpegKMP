@@ -104,7 +104,7 @@ val generateJavaCppBindings = javaCppFamilies.map { family ->
         group = "ffmpeg bindings"
         description = "Parses pinned ${family.lowercase()} headers into local Java declarations"
         dependsOn(compileJavaCppPresets)
-        dependsOn(buildHostFfmpeg)
+        dependsOn(buildHostFfmpeg.get())
         classpath = javaCppGenerator
         mainClass.set("org.bytedeco.javacpp.tools.Builder")
 
@@ -321,7 +321,7 @@ val buildJavaCppAndroidBindings = androidAbis.flatMap { (abi, configuration) ->
             dependsOn(verifyJavaCppBindings)
             dependsOn(selectedNativeProfileTaskSuffix.map {
                 ":native-build:android:buildFfmpeg$it$taskSuffix"
-            })
+            }.get())
             classpath = javaCppGenerator + files(
                 verifyJavaCppBindings.map { it.destinationDirectory },
                 compileJavaCppPresets.map { it.destinationDirectory },

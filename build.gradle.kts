@@ -49,7 +49,7 @@ tasks.register("assembleNativeBinaries") {
             ":native-build:jvm:assembleFfmpeg$suffix",
             ":native-build:wasm:assembleFfmpeg$suffix",
         )
-    })
+    }.get())
 }
 
 val sampleRuntimeTasks = mapOf(
