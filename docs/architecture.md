@@ -18,7 +18,7 @@ bindings and locally generated native artifacts.
 ┌───────────────────────────────┴───────────────────────────────┐
 │                    Single :bindings module                    │
 │                                                               │
-│  Apple cinterop      shared JVM/Android JNI       Wasm interop │
+│ Apple cinterop   shared JVM/Android JNI   JS/Wasm web adapters │
 └───────────────────────────────┬───────────────────────────────┘
                                 ▼
 ┌──────────────────────────────────────────────────────────────┐
@@ -46,20 +46,30 @@ is intentional: FFmpeg's command tools and logging retain process-global state.
 Sessions use `StateFlow` and `Flow`, own transferred I/O, and treat nonzero tool
 return codes as results. Bridge loading and serialization errors are exceptions.
 
+The process-wide FIFO accepts at most 64 waiting commands; further submissions
+fail their session explicitly. Each client accepts `CommandRuntimeLimits` for
+bounding the native-event handoff, captured stdout/stderr, and structured logs.
+Active event collectors apply backpressure to accepted native log/output events;
+progress reports parsed from one native callback are coalesced to the latest
+report. If the non-suspending native callback outruns its bounded handoff,
+execution fails explicitly. `ExecutionResult.captureStatus` reports any stdout,
+stderr, or log data omitted from the retained result after a configured limit is
+reached.
+
 ## Bindings
 
 The single [`:bindings` module](../bindings/README.md) stages FFmpeg headers once
 as the common input to each generator. Apple targets use Kotlin/Native cinterop,
-JVM and Android share one generated JNI bridge, and browser builds use Wasm
-interop.
+JVM and Android share one generated JNI bridge, and Kotlin/JS and Kotlin/Wasm
+browser builds share a worker-protocol bridge with small interop adapters.
 
 Keeping binding generation behind common Kotlin interfaces minimizes handwritten
 native mappings and aligns every backend with the same pinned FFmpeg revision.
 
 Apple uses one umbrella interop so an `AV*` declaration has exactly one Kotlin
 identity. JVM and Android use per-library JavaCPP presets within the same module.
-Browser Wasm uses an Emscripten ES module in a dedicated worker and never tries
-to consume a Kotlin/Native klib.
+Both browser targets use the same Emscripten ES module in a dedicated worker
+and never try to consume a Kotlin/Native klib.
 
 ## Native builds
 

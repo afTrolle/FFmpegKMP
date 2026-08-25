@@ -3,8 +3,8 @@
 **FFmpegKMP** is a Kotlin Multiplatform wrapper around FFmpeg and
 FFprobe.
 Its goal is to expose one Kotlin-first API for media processing and inspection
-across Apple platforms, Android, JVM desktop, and the browser through
-WebAssembly.
+across Apple platforms, Android, JVM desktop, and the browser through Kotlin/JS
+or Kotlin/Wasm backed by the same WebAssembly runtime.
 
 ## Product vision
 
@@ -63,6 +63,12 @@ On Android, overloads accept file descriptors, `ParcelFileDescriptor`,
 descriptors use random access and pipe-backed descriptors automatically fall
 back to stream semantics.
 
+Long-running commands use bounded queues and retained-result capture. Pass a
+`CommandRuntimeLimits` to `FFmpegClient` or `FFprobeClient` to tune the native
+event handoff and stdout, stderr, and log limits. Live event collectors apply
+backpressure; `ExecutionResult.captureStatus` reports retained output that was
+truncated by those limits.
+
 The module layers, binding backends, and native build flow are described in the
 [architecture documentation](docs/architecture.md).
 
@@ -73,11 +79,11 @@ The module layers, binding backends, and native build flow are described in the
 | Apple | iOS, macOS, tvOS, and watchOS devices and simulators | Kotlin/Native cinterop |
 | Android | Android | Generated JNI bindings |
 | Desktop | JVM on supported desktop hosts | Generated JNI bindings |
-| Web | Kotlin/Wasm in the browser | Emscripten and Wasm interop |
+| Web | Kotlin/JS and Kotlin/Wasm in the browser | Shared worker protocol over an Emscripten Wasm runtime |
 
-The `ffmpegkmp.multiplatform-library` convention currently declares Android, JVM,
-browser Wasm, and the supported Kotlin/Native Apple architectures in one shared
-target policy.
+The `ffmpegkmp.multiplatform-library` convention currently declares Android,
+JVM, browser Kotlin/JS, browser Kotlin/Wasm, and the supported Kotlin/Native
+Apple architectures in one shared target policy.
 
 ## Repository layout
 
@@ -162,9 +168,10 @@ ignored local outputs and are never part of a Maven publication.
   without the reviewed `fftools` entry objects.
 - JVM and Android share one JavaCPP execution actual. All eight binding families
   cross-compile for Android's four ABIs and assemble into an ignored local
-  runtime AAR. The browser Kotlin actual drives the Emscripten module in a Web
-  Worker with mounted byte I/O and structured events. Emscripten link/runtime
-  verification still requires an installed `emconfigure` and `emcc` toolchain.
+  runtime AAR. The browser Kotlin/JS and Kotlin/Wasm actuals share a browser
+  bridge and drive the same Emscripten module in a Web Worker with mounted byte
+  I/O and structured events. Emscripten link/runtime verification still
+  requires an installed `emconfigure` and `emcc` toolchain.
 
 ## Documentation
 

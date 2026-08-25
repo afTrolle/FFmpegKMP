@@ -69,6 +69,10 @@ extensions.configure<KotlinMultiplatformExtension> {
 
     jvm()
 
+    js {
+        browser()
+    }
+
     wasmJs {
         browser()
     }

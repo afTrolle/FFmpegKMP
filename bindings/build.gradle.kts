@@ -413,7 +413,7 @@ val stageWasmRuntime = tasks.register<Sync>("stageWasmRuntime") {
     }) {
         include("ffmpegkmp.mjs", "ffmpegkmp.wasm")
     }
-    from(layout.projectDirectory.dir("src/wasmJsMain/resources")) {
+    from(layout.projectDirectory.dir("src/webMain/resources")) {
         include("ffmpegkmp-worker.mjs")
     }
     into(layout.buildDirectory.dir(selectedNativeProfile.map { "generated/wasm-runtime/$it" }))

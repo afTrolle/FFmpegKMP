@@ -45,7 +45,6 @@ internal object ExportCommandFactory {
             audioCodec("aac")
             option("-b:a", "192k")
             option("-threads", "1")
-            option("-movflags", "+faststart")
             output(outputPath, format = "mp4")
         }
 

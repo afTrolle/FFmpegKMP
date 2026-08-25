@@ -3,7 +3,7 @@
 ## FFmpegKMP Studio
 
 Studio is a Compose Multiplatform multi-clip montage editor shared by Android,
-iOS, JVM desktop, and browser Wasm. It demonstrates:
+iOS, JVM desktop, browser Kotlin/JS, and browser Kotlin/Wasm. It demonstrates:
 
 - FileKit multi-video import and platform-native save/download;
 - typed FFprobe stream inspection;
@@ -28,6 +28,7 @@ Open `ios/FFmpegKMPStudio.xcodeproj` for iOS. Its build phase invokes the
 Kotlin framework embed task. For the browser, activate Emscripten first and run:
 
 ```shell
+./gradlew :samples:web:jsBrowserDevelopmentRun
 ./gradlew :samples:web:wasmJsBrowserDevelopmentRun
 ```
 

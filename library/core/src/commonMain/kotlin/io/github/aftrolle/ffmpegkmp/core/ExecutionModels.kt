@@ -30,6 +30,36 @@ public enum class OutputStream {
     STDERR,
 }
 
+/**
+ * Memory limits applied to one queued or running command.
+ *
+ * Accepted native log/output events are not truncated for active collectors: collectors apply
+ * backpressure. Progress reports parsed from one native callback are coalesced to the latest
+ * report. These limits bound the native-to-Kotlin handoff and the data retained in the final
+ * [ExecutionResult].
+ */
+public data class CommandRuntimeLimits(
+    val maxPendingNativeEvents: Int = 1_024,
+    val maxCapturedOutputCharacters: Int = 16 * 1_024 * 1_024,
+    val maxCapturedErrorOutputCharacters: Int = 4 * 1_024 * 1_024,
+    val maxRetainedLogEvents: Int = 2_048,
+    val maxRetainedLogCharacters: Int = 1 * 1_024 * 1_024,
+) {
+    init {
+        require(maxPendingNativeEvents > 0) { "maxPendingNativeEvents must be positive" }
+        require(maxCapturedOutputCharacters >= 0) { "maxCapturedOutputCharacters must not be negative" }
+        require(maxCapturedErrorOutputCharacters >= 0) {
+            "maxCapturedErrorOutputCharacters must not be negative"
+        }
+        require(maxRetainedLogEvents >= 0) { "maxRetainedLogEvents must not be negative" }
+        require(maxRetainedLogCharacters >= 0) { "maxRetainedLogCharacters must not be negative" }
+    }
+
+    public companion object {
+        public val Default: CommandRuntimeLimits = CommandRuntimeLimits()
+    }
+}
+
 public sealed interface ExecutionEvent {
     public data class Log(
         val level: LogLevel,
@@ -57,6 +87,18 @@ public sealed interface ExecutionEvent {
     ) : ExecutionEvent
 }
 
+/** Describes data omitted from the retained result after a configured capture limit was reached. */
+public data class ExecutionCaptureStatus(
+    val outputTruncated: Boolean = false,
+    val errorOutputTruncated: Boolean = false,
+    val logsTruncated: Boolean = false,
+    val omittedLogEvents: Long = 0,
+    val omittedLogCharacters: Long = 0,
+) {
+    public val truncated: Boolean
+        get() = outputTruncated || errorOutputTruncated || logsTruncated
+}
+
 public data class ExecutionResult(
     val returnCode: Int,
     val output: String,
@@ -70,6 +112,8 @@ public data class ExecutionResult(
      * single video frame (broken hardware encoders); check `finalProgress?.frame` to detect it.
      */
     val finalProgress: ExecutionEvent.Progress? = null,
+    /** Set when stdout, stderr, or structured logs exceeded the configured retained-result limits. */
+    val captureStatus: ExecutionCaptureStatus = ExecutionCaptureStatus(),
 ) {
     public val isSuccess: Boolean get() = !cancelled && returnCode == 0
 }

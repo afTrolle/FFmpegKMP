@@ -19,6 +19,11 @@ kotlin {
 
     jvm()
 
+    js {
+        binaries.executable()
+        browser()
+    }
+
     wasmJs {
         binaries.executable()
         browser()

@@ -22,6 +22,15 @@ val stageFFmpegKmpWasmRuntime = tasks.register<Sync>("stageFFmpegKmpWasmRuntime"
 }
 
 kotlin {
+    js {
+        outputModuleName = "ffmpegkmp-studio"
+        browser {
+            commonWebpackConfig {
+                outputFileName = "ffmpegkmp-studio.js"
+            }
+        }
+        binaries.executable()
+    }
     wasmJs {
         outputModuleName = "ffmpegkmp-studio"
         browser {
@@ -31,11 +40,11 @@ kotlin {
         }
         binaries.executable()
     }
-    sourceSets.wasmJsMain.dependencies {
+    sourceSets.webMain.dependencies {
         implementation(project(":samples:studio"))
         implementation(libs.compose.ui)
     }
-    sourceSets.wasmJsMain {
+    sourceSets.webMain {
         resources.srcDir(stageFFmpegKmpWasmRuntime)
     }
 }

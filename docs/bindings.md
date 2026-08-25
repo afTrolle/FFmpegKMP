@@ -67,15 +67,23 @@ returns `-ENOSYS`; Kotlin converts that condition to
 
 ## Web
 
-Kotlin/Wasm cannot consume cinterop klibs. `linkFfmpegKmpWorker` therefore links
-the Emscripten archives into an ES module. `ffmpegkmp-worker.mjs` receives
+Browser Kotlin targets cannot consume the native cinterop klibs.
+`linkFfmpegKmpWorker` therefore links the Emscripten archives into an ES module.
+`ffmpegkmp-worker.mjs` receives
 transferable buffers, exposes them through the same `ffmpegkmp:` protocol,
-executes in a Web Worker, and transfers events and writable buffers back.
+executes in a Web Worker, emits event text directly, and transfers writable
+buffers back with their logical lengths.
 
-The Kotlin/Wasm actual starts the module worker, translates structured events,
-and transfers mounted buffers to a worker-side `ffmpegkmp:` random-access
-registry. It does not create virtual filesystem staging files. It terminates the
-worker on session cancellation. Deployments may override the default adjacent asset names through
+Kotlin/JS and Kotlin/Wasm share metadata serialization, mounted-I/O, event,
+result, and coroutine lifecycle code. File contents never enter JSON: small
+target-specific adapters transfer typed arrays alongside the metadata using
+each compiler's JavaScript interop model. Kotlin/JS transfers the temporary
+array backing storage directly; Kotlin/Wasm performs one required copy between
+Kotlin memory and a JavaScript typed array at each edge. The worker uses received
+arrays directly and transfers output capacity buffers without first compacting
+them. The bridge exposes those buffers through a worker-side `ffmpegkmp:`
+random-access registry; it does not create virtual filesystem staging files,
+and it terminates the worker on session cancellation. Deployments may override the default adjacent asset names through
 `globalThis.FFMPEGKMP_WORKER_URL` and `globalThis.FFMPEGKMP_MODULE_URL`.
 Because the pinned `ffmpeg` scheduler requires pthreads, Web hosting must enable
 `SharedArrayBuffer` with COOP/COEP cross-origin-isolation headers; all command

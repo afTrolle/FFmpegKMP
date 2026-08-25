@@ -37,10 +37,10 @@ val stageCoreWasmTestRuntime = tasks.register<Sync>("stageCoreWasmTestRuntime") 
     }) {
         include("ffmpegkmp.mjs", "ffmpegkmp.wasm")
     }
-    from(rootProject.layout.projectDirectory.dir("bindings/src/wasmJsMain/resources")) {
+    from(rootProject.layout.projectDirectory.dir("bindings/src/webMain/resources")) {
         include("ffmpegkmp-worker.mjs")
     }
-    from(layout.projectDirectory.dir("src/wasmJsTest/runtime"))
+    from(layout.projectDirectory.dir("src/webTest/runtime"))
     into(layout.buildDirectory.dir("generated/core-wasm-test-runtime"))
 }
 
@@ -79,7 +79,7 @@ kotlin {
         commonTest.dependencies {
             implementation(libs.kotlinx.coroutines.test)
         }
-        wasmJsTest {
+        webTest {
             resources.srcDir(stageCoreWasmTestRuntime)
         }
     }

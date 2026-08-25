@@ -7,14 +7,17 @@ import io.github.aftrolle.ffmpegkmp.core.CommandIo
 import io.github.aftrolle.ffmpegkmp.core.CommandKind
 import io.github.aftrolle.ffmpegkmp.core.CommandLineTokenizer
 import io.github.aftrolle.ffmpegkmp.core.CommandRuntimeClient
+import io.github.aftrolle.ffmpegkmp.core.CommandRuntimeLimits
 import io.github.aftrolle.ffmpegkmp.core.ExecutionResult
 import io.github.aftrolle.ffmpegkmp.core.ExecutionSession
 
 public typealias FFmpegResult = ExecutionResult
 public typealias FFmpegSession = ExecutionSession<FFmpegResult>
 
-public class FFmpegClient : AutoCloseable {
-    private val runtime = lazy { CommandRuntimeClient(CommandKind.FFMPEG) }
+public class FFmpegClient(
+    private val runtimeLimits: CommandRuntimeLimits = CommandRuntimeLimits.Default,
+) : AutoCloseable {
+    private val runtime = lazy { CommandRuntimeClient(CommandKind.FFMPEG, runtimeLimits) }
 
     public suspend fun execute(
         arguments: List<String>,

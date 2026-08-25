@@ -126,7 +126,7 @@ Its Xcode build phase invokes that task automatically and links the archives at
 the final app boundary. The Kotlin/Native KLIB from Maven remains
 declaration-only.
 
-## Browser WebAssembly
+## Browser Kotlin/JS and Kotlin/Wasm
 
 Activate Emscripten, then build the runtime bundle:
 
@@ -136,7 +136,9 @@ Activate Emscripten, then build the runtime bundle:
 
 Copy `ffmpegkmp.mjs`, `ffmpegkmp.wasm`, and `ffmpegkmp-worker.mjs` from
 `bindings/build/generated/wasm-runtime/standard/` into your web application's
-resources. The web sample wires that directory through a Gradle `Sync` task.
+resources. Both Kotlin/JS and Kotlin/Wasm applications use these same runtime
+files. The web sample wires that directory through a Gradle `Sync` task and
+provides launchers for both targets.
 
 FFmpeg uses pthreads in this build. Serve the application with
 `Cross-Origin-Opener-Policy: same-origin` and

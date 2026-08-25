@@ -15,7 +15,7 @@ val stageFFprobeWasmTestRuntime = tasks.register<Sync>("stageFFprobeWasmTestRunt
     }) {
         include("ffmpegkmp.mjs", "ffmpegkmp.wasm")
     }
-    from(rootProject.layout.projectDirectory.dir("bindings/src/wasmJsMain/resources")) {
+    from(rootProject.layout.projectDirectory.dir("bindings/src/webMain/resources")) {
         include("ffmpegkmp-worker.mjs")
     }
     into(layout.buildDirectory.dir("generated/ffprobe-wasm-test-runtime"))
@@ -28,10 +28,11 @@ kotlin {
             api(libs.kotlinx.serialization.json)
             implementation(libs.okio)
         }
-        wasmJsTest.dependencies {
+        webTest.dependencies {
+            implementation(project(":library:ffmpeg"))
             implementation(libs.kotlinx.coroutines.test)
         }
-        wasmJsTest {
+        webTest {
             resources.srcDir(stageFFprobeWasmTestRuntime)
         }
     }

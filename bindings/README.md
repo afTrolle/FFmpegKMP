@@ -9,7 +9,7 @@ The module contains three backend lanes:
 - Kotlin/Native cinterop for Apple targets;
 - one shared JNI C++/Java binding implementation generated locally for both JVM
   and Android targets;
-- Kotlin/Wasm interop for browser builds.
+- shared browser bridge logic with Kotlin/JS and Kotlin/Wasm worker adapters.
 
 JVM and Android remain separate Kotlin publication targets, but they consume
 the same generated JNI API and native bridge. Kotlin does not support a shared

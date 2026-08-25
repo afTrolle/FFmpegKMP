@@ -45,11 +45,19 @@ public enum class CommandKind { FFMPEG, FFPROBE }
 public class CommandRuntimeClient private constructor(
     private val kind: CommandKind,
     private val bridge: NativeExecutionBridge,
+    private val limits: CommandRuntimeLimits,
     @Suppress("UNUSED_PARAMETER") constructorMarker: Unit,
 ) : AutoCloseable {
-    public constructor(kind: CommandKind) : this(kind, createPlatformExecutionBridge(), Unit)
+    public constructor(
+        kind: CommandKind,
+        limits: CommandRuntimeLimits = CommandRuntimeLimits.Default,
+    ) : this(kind, createPlatformExecutionBridge(), limits, Unit)
 
-    internal constructor(kind: CommandKind, bridge: NativeExecutionBridge) : this(kind, bridge, Unit)
+    internal constructor(
+        kind: CommandKind,
+        bridge: NativeExecutionBridge,
+        limits: CommandRuntimeLimits = CommandRuntimeLimits.Default,
+    ) : this(kind, bridge, limits, Unit)
 
     private val clientState = AtomicReference(ClientState())
     private val bridgeClosed = AtomicBoolean(false)
@@ -66,6 +74,7 @@ public class CommandRuntimeClient private constructor(
             io = io,
             kind = kind,
             bridge = bridge,
+            limits = limits,
             onTerminal = ::removeSession,
         )
         check(addSession(session)) { "The command client is closed" }
@@ -138,7 +147,7 @@ private data class ClientState(
 
 private object GlobalExecutionScheduler {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
-    private val queue = Channel<CommandExecutionSession>(Channel.UNLIMITED)
+    private val queue = Channel<CommandExecutionSession>(GLOBAL_EXECUTION_QUEUE_CAPACITY)
 
     init {
         scope.launch {
@@ -148,10 +157,17 @@ private object GlobalExecutionScheduler {
 
     fun submit(session: CommandExecutionSession) {
         if (!queue.trySend(session).isSuccess) {
-            session.fail(NativeExecutionException("The global FFmpeg execution queue is unavailable"))
+            session.fail(
+                NativeExecutionException(
+                    "The global FFmpeg execution queue is full " +
+                        "($GLOBAL_EXECUTION_QUEUE_CAPACITY waiting commands)",
+                ),
+            )
         }
     }
 }
+
+internal const val GLOBAL_EXECUTION_QUEUE_CAPACITY: Int = 64
 
 @OptIn(ExperimentalAtomicApi::class)
 private class CommandExecutionSession(
@@ -160,17 +176,24 @@ private class CommandExecutionSession(
     private val io: CommandIo,
     private val kind: CommandKind,
     private val bridge: NativeExecutionBridge,
+    private val limits: CommandRuntimeLimits,
     private val onTerminal: (CommandExecutionSession) -> Unit,
 ) : ExecutionSession<ExecutionResult> {
     private val mutableState = MutableStateFlow(SessionState.QUEUED)
-    private val mutableEvents = MutableSharedFlow<ExecutionEvent>(extraBufferCapacity = 64)
+    private val mutableEvents = MutableSharedFlow<ExecutionEvent>()
     private val completion = CompletableDeferred<ExecutionResult>()
-    private val retainedLogs = mutableListOf<ExecutionEvent.Log>()
-    private val capturedOutput = StringBuilder()
-    private val capturedErrorOutput = StringBuilder()
+    private val retainedLogs = BoundedLogCapture(
+        maxEvents = limits.maxRetainedLogEvents,
+        maxCharacters = limits.maxRetainedLogCharacters,
+    )
+    private val capturedOutput = BoundedTextCapture(limits.maxCapturedOutputCharacters)
+    private val capturedErrorOutput = BoundedTextCapture(limits.maxCapturedErrorOutputCharacters)
+    private var pendingProgress: ExecutionEvent.Progress? = null
     private val progressParser = ProgressParser { progress ->
         latestProgress = progress
-        mutableEvents.tryEmit(progress)
+        // FFmpeg may combine several status lines in one native callback. Retain and publish the
+        // most recent report from that callback instead of growing another intermediate queue.
+        pendingProgress = progress
     }
 
     @kotlin.concurrent.Volatile
@@ -262,14 +285,23 @@ private class CommandExecutionSession(
             duration,
             cancelled,
             latestProgress,
+            ExecutionCaptureStatus(
+                outputTruncated = capturedOutput.truncated,
+                errorOutputTruncated = capturedErrorOutput.truncated,
+                logsTruncated = retainedLogs.truncated,
+                omittedLogEvents = retainedLogs.omittedEvents,
+                omittedLogCharacters = retainedLogs.omittedCharacters,
+            ),
         )
 
     private suspend fun executeAndCaptureEvents(): io.github.aftrolle.ffmpegkmp.bindings.NativeExecutionResult = coroutineScope {
-        val nativeEvents = Channel<NativeExecutionEvent>(Channel.UNLIMITED)
+        val nativeEvents = Channel<NativeExecutionEvent>(limits.maxPendingNativeEvents)
+        val acceptingEvents = AtomicBoolean(true)
+        val overflow = AtomicReference<NativeExecutionException?>(null)
         val collector = launch {
             for (event in nativeEvents) acceptNativeEvent(event)
         }
-        try {
+        val nativeResult = try {
             bridge.execute(
                 NativeExecutionRequest(
                     id = id,
@@ -277,14 +309,28 @@ private class CommandExecutionSession(
                     arguments = arguments,
                     mounts = io.mounts.map { NativeMountedIo(it.path, it.resource) },
                 ),
-            ) { event -> nativeEvents.trySend(event) }
+            ) { event ->
+                if (acceptingEvents.load() && !nativeEvents.trySend(event).isSuccess) {
+                    overflow.compareAndSet(
+                        expectedValue = null,
+                        newValue = NativeExecutionException(
+                            "Native event buffer exceeded ${limits.maxPendingNativeEvents} events; " +
+                                "increase CommandRuntimeLimits.maxPendingNativeEvents or consume " +
+                                "ExecutionSession.events faster",
+                        ),
+                    )
+                }
+            }
         } finally {
+            acceptingEvents.store(false)
             nativeEvents.close()
             collector.join()
         }
+        overflow.load()?.let { throw it }
+        nativeResult
     }
 
-    private fun acceptNativeEvent(event: NativeExecutionEvent) {
+    private suspend fun acceptNativeEvent(event: NativeExecutionEvent) {
         val publicEvent = when (event) {
             is NativeExecutionEvent.Log -> ExecutionEvent.Log(event.level.toLogLevel(), event.message)
             is NativeExecutionEvent.Output -> ExecutionEvent.Output(
@@ -294,7 +340,7 @@ private class CommandExecutionSession(
         }
         when (publicEvent) {
             is ExecutionEvent.Log -> {
-                retainedLogs += publicEvent
+                retainedLogs.add(publicEvent)
                 // FFmpeg's default av_log callback writes diagnostics to stderr.
                 // Preserve that CLI behavior while also retaining structured logs.
                 capturedErrorOutput.append(publicEvent.message)
@@ -309,7 +355,11 @@ private class CommandExecutionSession(
             }
             is ExecutionEvent.Progress -> Unit
         }
-        mutableEvents.tryEmit(publicEvent)
+        mutableEvents.emit(publicEvent)
+        pendingProgress?.let { progress ->
+            pendingProgress = null
+            mutableEvents.emit(progress)
+        }
     }
 
     private fun closeIoOnce() {
@@ -328,6 +378,54 @@ private class CommandExecutionSession(
     private fun notifyTerminalOnce() {
         if (terminalNotified.compareAndSet(expectedValue = false, newValue = true)) onTerminal(this)
     }
+}
+
+private class BoundedTextCapture(private val maxCharacters: Int) {
+    private val value = StringBuilder(minOf(maxCharacters, 8_192))
+    var truncated: Boolean = false
+        private set
+
+    fun append(text: String) {
+        val remaining = maxCharacters - value.length
+        if (remaining > 0) value.append(text.take(remaining))
+        if (text.length > remaining.coerceAtLeast(0)) truncated = true
+    }
+
+    override fun toString(): String = value.toString()
+}
+
+private class BoundedLogCapture(
+    private val maxEvents: Int,
+    private val maxCharacters: Int,
+) {
+    private val values = mutableListOf<ExecutionEvent.Log>()
+    private var retainedCharacters = 0
+    var truncated: Boolean = false
+        private set
+    var omittedEvents: Long = 0
+        private set
+    var omittedCharacters: Long = 0
+        private set
+
+    fun add(log: ExecutionEvent.Log) {
+        val remainingCharacters = maxCharacters - retainedCharacters
+        if (values.size >= maxEvents || remainingCharacters <= 0) {
+            truncated = true
+            omittedEvents++
+            omittedCharacters += log.message.length.toLong()
+            return
+        }
+
+        val retainedMessage = log.message.take(remainingCharacters)
+        values += if (retainedMessage.length == log.message.length) log else log.copy(message = retainedMessage)
+        retainedCharacters += retainedMessage.length
+        if (retainedMessage.length != log.message.length) {
+            truncated = true
+            omittedCharacters += (log.message.length - retainedMessage.length).toLong()
+        }
+    }
+
+    fun toList(): List<ExecutionEvent.Log> = values.toList()
 }
 
 private fun Int.toLogLevel(): LogLevel = when {

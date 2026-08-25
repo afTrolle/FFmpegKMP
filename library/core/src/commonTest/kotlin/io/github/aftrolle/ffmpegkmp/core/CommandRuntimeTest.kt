@@ -16,6 +16,7 @@ import kotlin.test.Test
 import kotlin.test.assertContentEquals
 import kotlin.test.assertContains
 import kotlin.test.assertEquals
+import kotlin.test.assertIs
 import kotlin.test.assertTrue
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
@@ -167,6 +168,65 @@ class CommandRuntimeTest {
         assertContains(result.errorOutput, "Unknown option '-bad'.")
         assertContains(result.errorOutput, "Conversion failed.")
         assertEquals(LogLevel.ERROR, result.logs.single().level)
+        client.close()
+    }
+
+    @Test
+    fun boundsRetainedResultDataAndReportsTruncation() = runTest {
+        val bridge = FakeBridge { _, emit ->
+            emit(NativeExecutionEvent.Output(NativeExecutionEvent.Stream.STDOUT, "output"))
+            emit(NativeExecutionEvent.Log(32, "first-log"))
+            emit(NativeExecutionEvent.Log(32, "second-log"))
+            emit(NativeExecutionEvent.Output(NativeExecutionEvent.Stream.STDERR, "stderr"))
+            NativeExecutionResult(0)
+        }
+        val limits = CommandRuntimeLimits(
+            maxCapturedOutputCharacters = 4,
+            maxCapturedErrorOutputCharacters = 5,
+            maxRetainedLogEvents = 1,
+            maxRetainedLogCharacters = 3,
+        )
+        val client = CommandRuntimeClient(CommandKind.FFMPEG, bridge, limits)
+
+        val result = client.execute(listOf("bounded-capture"))
+
+        assertEquals("outp", result.output)
+        assertEquals("first", result.errorOutput)
+        assertEquals("fir", result.logs.single().message)
+        assertTrue(result.captureStatus.outputTruncated)
+        assertTrue(result.captureStatus.errorOutputTruncated)
+        assertTrue(result.captureStatus.logsTruncated)
+        assertEquals(1, result.captureStatus.omittedLogEvents)
+        assertEquals(16, result.captureStatus.omittedLogCharacters)
+        client.close()
+    }
+
+    @Test
+    fun rejectsCommandsBeyondTheGlobalQueueLimit() = runTest {
+        val firstStarted = CompletableDeferred<Unit>()
+        val releaseFirst = CompletableDeferred<Unit>()
+        val bridge = FakeBridge { request, _ ->
+            if (request.arguments.single() == "blocker") {
+                firstStarted.complete(Unit)
+                releaseFirst.await()
+            }
+            NativeExecutionResult(0)
+        }
+        val client = CommandRuntimeClient(CommandKind.FFMPEG, bridge)
+        val blocker = client.enqueue(listOf("blocker"))
+        firstStarted.await()
+        val accepted = List(GLOBAL_EXECUTION_QUEUE_CAPACITY) { index ->
+            client.enqueue(listOf("queued-$index"))
+        }
+        val rejected = client.enqueue(listOf("overflow"))
+
+        val failure = runCatching { rejected.await() }.exceptionOrNull()
+        assertIs<NativeExecutionException>(failure)
+        assertContains(failure.message.orEmpty(), "queue is full")
+
+        releaseFirst.complete(Unit)
+        blocker.await()
+        accepted.forEach { it.await() }
         client.close()
     }
 }

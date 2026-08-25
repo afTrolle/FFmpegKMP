@@ -23,10 +23,13 @@ internal class ProgressParser(private val emit: (ExecutionEvent.Progress) -> Uni
         buffer.append(text)
         while (true) {
             val newline = buffer.indexOfFirst { it == '\n' || it == '\r' }
-            if (newline < 0) return
+            if (newline < 0) break
             val line = buffer.substring(0, newline)
             buffer.deleteRange(0, newline + 1)
             acceptLine(line)
+        }
+        if (buffer.length > MAX_PENDING_LINE_CHARACTERS) {
+            buffer.deleteRange(0, buffer.length - MAX_PENDING_LINE_CHARACTERS)
         }
     }
 
@@ -103,6 +106,7 @@ internal class ProgressParser(private val emit: (ExecutionEvent.Progress) -> Uni
     }
 
     private companion object {
+        const val MAX_PENDING_LINE_CHARACTERS = 64 * 1_024
         val statsField = Regex("""(\w+)=\s*([^\s]+)""")
         val clock = Regex("""(-?\d+):(\d{2}):(\d{2}(?:\.\d+)?)""")
         val size = Regex("""([\d.]+)\s*([A-Za-z]*)B?""")

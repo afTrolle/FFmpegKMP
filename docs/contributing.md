@@ -1,8 +1,9 @@
 # Contributing
 
-FFmpegKMP is still in its early implementation stages. The native FFmpeg build
-pipelines are available, while generated bindings and the public runtime remain
-future work.
+FFmpegKMP includes native FFmpeg build pipelines, generated JavaCPP and
+Kotlin/Native bindings, browser worker bindings, and the public multiplatform
+runtime. Development work should preserve the boundary between declaration-only
+Maven artifacts and locally built native runtimes.
 
 ## Development checkout
 
@@ -36,21 +37,18 @@ host with a tvOS simulator runtime, opt into execution with:
 
 ## Dependency integrity
 
-Gradle dependencies are locked per module and verified against SHA-256
-metadata. Kotlin/Wasm package-manager state is also committed when the Kotlin
-plugin generates it.
+Gradle dependency versions are centralized in `gradle/libs.versions.toml`, and
+the wrapper version is pinned by the checked-in wrapper files. Kotlin/JS and
+Kotlin/Wasm package-manager state is committed in `kotlin-js-store/yarn.lock`.
+Gradle dependency locking and checksum verification metadata are not currently
+enabled, so do not describe the repository as using them.
 
-After an intentional dependency update, regenerate the lock and verification
-state with:
-
-```shell
-./gradlew build --write-locks --write-verification-metadata sha256
-```
-
-Review the changed coordinates and independently confirm new checksums before
-committing them. Checksum generation records the artifacts currently returned
-by the configured repositories; it does not prove that those artifacts are
-trustworthy.
+After an intentional dependency update, review the changed coordinates, refresh
+the Kotlin package-manager lock when applicable, and run `./gradlew allTests`.
+If Gradle dependency verification is introduced later, independently confirm
+new checksums before committing them: generated checksums only record the
+artifacts returned by the configured repositories and do not prove that those
+artifacts are trustworthy.
 
 ## Android namespaces
 
