@@ -15,14 +15,6 @@ int ffmpegkmp_ffmpeg_main_impl(int argc, char **argv);
 int ffmpegkmp_ffmpeg_entry(int argc, char **argv);
 void ffmpegkmp_ffmpeg_cancel(void);
 
-#if defined(__ANDROID__) && CONFIG_MEDIACODEC
-/* Replaces compat/android/binder.c. The real helper starts a binder thread pool
- * for the standalone CLI; inside an app process Zygote has already started it
- * and ABinderProcess_setThreadPoolMaxThreadCount aborts the process. MediaCodec
- * works through the framework's existing binder threads, so a no-op is correct. */
-void android_binder_threadpool_init_if_required(void) {}
-#endif
-
 int ffmpegkmp_ffmpeg_entry(int argc, char **argv) {
     /* The CLI frees these arrays but assumes process exit and leaves their counts unchanged. */
     input_files = NULL;
