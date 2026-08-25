@@ -25,8 +25,11 @@ umbrella header. See [binding generation](../docs/bindings.md).
 
 ## Generation and distribution policy
 
-Bindings are generated only in the user's local build environment. Generated
-outputs are not release artifacts; see the authoritative
+Bindings are generated in the build environment. Maven releases include the
+generated Java declarations needed by JVM and Android consumers and the
+declaration-only Kotlin/Native cinterop klibs. Generated JNI libraries, FFmpeg
+libraries, Apple frameworks, executables, and Wasm modules are local runtime
+outputs and are never Maven release artifacts; see the authoritative
 [licensing and distribution policy](../docs/licensing.md).
 
 Binding generators for this module must:
@@ -35,7 +38,8 @@ Binding generators for this module must:
   and accessors necessary for interoperability;
 - not copy FFmpeg comments, documentation, inline implementations, or macro
   bodies into generated Kotlin, Java, C++, or WebAssembly binding sources;
-- keep generated output inside ignored build directories; and
+- keep generated intermediates inside ignored build directories;
+- publish declarations only through the LGPL-licensed `bindings` artifact; and
 - retain enough provenance to identify the exact FFmpeg revision and headers
   used for generation.
 
