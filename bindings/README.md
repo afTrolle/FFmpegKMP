@@ -32,6 +32,19 @@ libraries, Apple frameworks, executables, and Wasm modules are local runtime
 outputs and are never Maven release artifacts; see the authoritative
 [licensing and distribution policy](../docs/licensing.md).
 
+App-facing local runtime tasks are:
+
+```shell
+./gradlew :bindings:assembleJavaCppAndroidRuntime
+./gradlew :bindings:assembleJavaCppHostRuntime
+./gradlew :bindings:assembleWasmRuntime
+./gradlew :native-build:apple:packageFfmpegStandardXcframeworks
+```
+
+The Android AAR is binary-only so it can be used alongside the declaration
+classes from Maven without duplicate classes. See [Using FFmpegKMP in an
+application](../docs/consuming.md) for platform integration.
+
 Binding generators for this module must:
 
 - emit only the names, signatures, numerical constants, data-structure layouts,

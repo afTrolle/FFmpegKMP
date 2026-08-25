@@ -104,7 +104,7 @@
 			outputPaths = ();
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
-			shellScript = "cd \"$SRCROOT/../..\"\n./gradlew :samples:studio:embedAndSignAppleFrameworkForXcode\n";
+			shellScript = "cd \"$SRCROOT/../..\"\n./gradlew :samples:ios:prepareFFmpegKmpRuntime :samples:studio:embedAndSignAppleFrameworkForXcode\n";
 		};
 /* End PBXShellScriptBuildPhase section */
 
@@ -129,13 +129,15 @@
 				DEVELOPMENT_TEAM = "";
 				"EXCLUDED_ARCHS[sdk=iphonesimulator*]" = x86_64;
 				FRAMEWORK_SEARCH_PATHS = ("$(inherited)", "$(SRCROOT)/../studio/build/xcode-frameworks/$(CONFIGURATION)/$(SDK_NAME)");
+				"LIBRARY_SEARCH_PATHS[sdk=iphoneos*]" = ("$(inherited)", "$(SRCROOT)/build/generated/ffmpegkmp-runtime/iphoneos");
+				"LIBRARY_SEARCH_PATHS[sdk=iphonesimulator*]" = ("$(inherited)", "$(SRCROOT)/build/generated/ffmpegkmp-runtime/iphonesimulator");
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_CFBundleDisplayName = "FFmpegKMP Studio";
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				LD_RUNPATH_SEARCH_PATHS = ("$(inherited)", "@executable_path/Frameworks");
 				MARKETING_VERSION = 0.1.0;
-				OTHER_LDFLAGS = ("$(inherited)", "-framework", FFmpegKMPStudio, "-framework", AudioToolbox, "-framework", VideoToolbox, "-framework", CoreMedia, "-framework", CoreVideo, "-framework", CoreAudio, "-framework", CoreServices);
+				OTHER_LDFLAGS = ("$(inherited)", "-framework", FFmpegKMPStudio, "-lffmpegkmp_bridge", "-lavdevice", "-lavfilter", "-lavformat", "-lavcodec", "-lswresample", "-lswscale", "-lavutil", "-lz", "-lbz2", "-liconv", "-pthread", "-framework", AudioToolbox, "-framework", VideoToolbox, "-framework", CoreFoundation, "-framework", CoreMedia, "-framework", CoreVideo, "-framework", CoreAudio, "-framework", CoreServices);
 				PRODUCT_BUNDLE_IDENTIFIER = io.github.aftrolle.ffmpegkmp.studio;
 				PRODUCT_MODULE_NAME = FFmpegKMPStudioApp;
 				PRODUCT_NAME = "$(TARGET_NAME)";
@@ -154,13 +156,15 @@
 				DEVELOPMENT_TEAM = "";
 				"EXCLUDED_ARCHS[sdk=iphonesimulator*]" = x86_64;
 				FRAMEWORK_SEARCH_PATHS = ("$(inherited)", "$(SRCROOT)/../studio/build/xcode-frameworks/$(CONFIGURATION)/$(SDK_NAME)");
+				"LIBRARY_SEARCH_PATHS[sdk=iphoneos*]" = ("$(inherited)", "$(SRCROOT)/build/generated/ffmpegkmp-runtime/iphoneos");
+				"LIBRARY_SEARCH_PATHS[sdk=iphonesimulator*]" = ("$(inherited)", "$(SRCROOT)/build/generated/ffmpegkmp-runtime/iphonesimulator");
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_CFBundleDisplayName = "FFmpegKMP Studio";
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				LD_RUNPATH_SEARCH_PATHS = ("$(inherited)", "@executable_path/Frameworks");
 				MARKETING_VERSION = 0.1.0;
-				OTHER_LDFLAGS = ("$(inherited)", "-framework", FFmpegKMPStudio, "-framework", AudioToolbox, "-framework", VideoToolbox, "-framework", CoreMedia, "-framework", CoreVideo, "-framework", CoreAudio, "-framework", CoreServices);
+				OTHER_LDFLAGS = ("$(inherited)", "-framework", FFmpegKMPStudio, "-lffmpegkmp_bridge", "-lavdevice", "-lavfilter", "-lavformat", "-lavcodec", "-lswresample", "-lswscale", "-lavutil", "-lz", "-lbz2", "-liconv", "-pthread", "-framework", AudioToolbox, "-framework", VideoToolbox, "-framework", CoreFoundation, "-framework", CoreMedia, "-framework", CoreVideo, "-framework", CoreAudio, "-framework", CoreServices);
 				PRODUCT_BUNDLE_IDENTIFIER = io.github.aftrolle.ffmpegkmp.studio;
 				PRODUCT_MODULE_NAME = FFmpegKMPStudioApp;
 				PRODUCT_NAME = "$(TARGET_NAME)";

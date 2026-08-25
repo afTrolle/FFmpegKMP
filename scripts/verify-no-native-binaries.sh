@@ -9,6 +9,9 @@ if [[ ! -d "$repository" ]]; then
 fi
 
 forbidden='(^|/)(ffmpeg|ffprobe)(\.exe)?$|\.so(\.[0-9]+)*$|\.dylib$|\.dll$|\.a$|\.o$|\.wasm$|(^|/)[^/]+\.(framework|xcframework)(/|$)'
+sample_code='(^|/)io/github/aftrolle/ffmpegkmp/samples(/|$)'
+group_directory="$repository/io/github/aftrolle/ffmpegkmp"
+allowed_artifacts='^(bindings|core|ffmpeg|ffprobe|filters)(-[A-Za-z0-9_.-]+)?$'
 scan_tmp="$(mktemp -d)"
 trap 'rm -rf "$scan_tmp"' EXIT
 archive_index=0
@@ -37,6 +40,15 @@ scan_archive() {
     found=1
   fi
 
+  matches="$(printf '%s\n' "$entries" | grep -Eai "$sample_code" || true)"
+  if [[ -n "$matches" ]]; then
+    echo "Sample application code in $display_name:" >&2
+    while IFS= read -r match; do
+      printf '  %s\n' "$match" >&2
+    done <<< "$matches"
+    found=1
+  fi
+
   archive_index=$((archive_index + 1))
   extracted="$scan_tmp/$archive_index"
   mkdir -p "$extracted"
@@ -55,6 +67,19 @@ while IFS= read -r -d '' published_file; do
   fi
 done < <(find "$repository" -type f -print0)
 
+if [[ ! -d "$group_directory" ]]; then
+  echo "Expected Maven group directory does not exist: $group_directory" >&2
+  found=1
+else
+  while IFS= read -r -d '' artifact_directory; do
+    artifact="${artifact_directory##*/}"
+    if [[ ! "$artifact" =~ $allowed_artifacts ]]; then
+      echo "Unexpected Maven artifact outside bindings/library scope: $artifact" >&2
+      found=1
+    fi
+  done < <(find "$group_directory" -mindepth 1 -maxdepth 1 -type d -print0)
+fi
+
 while IFS= read -r -d '' archive; do
   scan_archive "$archive" "${archive#"$repository"/}"
 done < <(find "$repository" -type f \( -name '*.jar' -o -name '*.aar' -o -name '*.klib' -o -name '*.zip' \) -print0)
@@ -64,4 +89,4 @@ if [[ "$found" -ne 0 ]]; then
   exit 1
 fi
 
-echo "Publication verification passed: no native FFmpeg/runtime binaries were found."
+echo "Publication verification passed: only library/bindings declarations were found, with no native runtimes or sample code."
