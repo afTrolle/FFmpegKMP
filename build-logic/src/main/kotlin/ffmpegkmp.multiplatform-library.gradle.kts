@@ -1,6 +1,7 @@
 @file:OptIn(ExperimentalWasmDsl::class)
 
 import org.gradle.api.artifacts.VersionCatalogsExtension
+import org.gradle.api.publish.PublishingExtension
 import org.jetbrains.kotlin.gradle.ExperimentalWasmDsl
 import org.jetbrains.kotlin.gradle.dsl.KotlinMultiplatformExtension
 
@@ -119,5 +120,12 @@ mavenPublishing {
             connection = "scm:git:https://github.com/afTrolle/FFmpegKMP.git"
             developerConnection = "scm:git:ssh://git@github.com/afTrolle/FFmpegKMP.git"
         }
+    }
+}
+
+extensions.configure<PublishingExtension> {
+    repositories.maven {
+        name = "releaseCheck"
+        url = rootProject.layout.buildDirectory.dir("release-check-repository").get().asFile.toURI()
     }
 }

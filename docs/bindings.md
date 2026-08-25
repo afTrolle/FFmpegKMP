@@ -6,7 +6,7 @@ of the build or bindings.
 
 ## JVM and Android
 
-JavaCPP 1.5.13 preset classes live under `bindings/src/javacpp`. They parse the
+JavaCPP 1.5.14 preset classes live under `bindings/src/javacpp`. They parse the
 headers installed by the selected native profile, not Bytedeco binary bundles.
 The presets inherit in FFmpeg dependency order and carry the pinned-version
 `InfoMap` rules for C enum typedefs, opaque declarations, attributes, and
@@ -21,9 +21,12 @@ function-like channel-layout macros.
 ./gradlew :bindings:assembleJavaCppAndroidRuntime
 ```
 
-Generated comments and header documentation are removed after parsing. Output
-stays under `bindings/build`, is excluded from caches and publications, and is
-validated together so cross-library types cannot silently diverge.
+Generated comments and header documentation are removed after parsing and an
+LGPL/provenance header is added. Intermediates stay under `bindings/build` and
+are excluded from caches. The declaration classes and corresponding generated
+sources are included in JVM and Android publications; JNI shims and FFmpeg
+runtime libraries are excluded. All declaration families are validated together
+so cross-library types cannot silently diverge.
 
 The JVM execution adapter loads the locally generated shims from
 `-Dffmpegkmp.jni.path=<path-list>`; the binding test task configures this path
@@ -35,11 +38,12 @@ libraries. It remains an ignored local build input and is never published.
 
 ## Apple
 
-Every declared Apple target creates one `ffmpeg` cinterop using the matching
-`native-build/apple/out/<profile>/<target>` tree. The umbrella header includes
-all seven public APIs plus the project bridge. `ffmpeg.def` embeds the static
-archives into one klib and supplies inline wrappers for `AVERROR` and
-`AV_VERSION_INT`, which Kotlin/Native cannot import as function-like macros.
+Every declared Apple target creates one declaration-only `ffmpeg` cinterop using
+the matching `native-build/apple/out/<profile>/<target>` headers. The umbrella
+header includes all seven public APIs plus the project bridge. `ffmpeg.def`
+supplies inline wrappers for `AVERROR` and `AV_VERSION_INT`, which Kotlin/Native
+cannot import as function-like macros. Static FFmpeg archives are deliberately
+not embedded in the published klib.
 Mounted Okio resources are exposed to FFmpeg through the `ffmpegkmp:` URL
 protocol. Its open/read/write/size/seek/close callbacks dispatch directly to an
 Okio `FileHandle`, `Source`, or `Sink`; Apple commands no longer create staging
