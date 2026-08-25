@@ -2,6 +2,7 @@ package io.github.aftrolle.ffmpegkmp.buildlogic.nativebuild
 
 import org.gradle.api.Project
 import org.gradle.api.Task
+import org.gradle.api.artifacts.VersionCatalogsExtension
 import org.gradle.api.provider.Provider
 import org.gradle.api.tasks.Delete
 import org.gradle.api.tasks.TaskProvider
@@ -36,11 +37,11 @@ object NativeBuildRegistration {
     }
 
     private fun registerAndroid(project: Project, extension: FfmpegNativeBuildExtension) {
-        extension.android.apiLevel.convention(24)
-        extension.android.ndkVersion.convention("30.0.15729638")
+        extension.android.apiLevel.convention(project.catalogVersion("android-minSdk").toInt())
+        extension.android.ndkVersion.convention(project.catalogVersion("android-ndk"))
         extension.android.abis.convention(setOf("armeabi-v7a", "arm64-v8a", "x86", "x86_64"))
         extension.android.ndkDirectory.convention(resolveNdkDirectory(project, extension.android.ndkVersion))
-        val version = ffmpegVersion(project, extension)
+        val version = ffmpegVersion(extension)
         val profileAssemblies = mutableMapOf<String, TaskProvider<*>>()
 
         val aomRequired = extension.profiles.any { profile ->
@@ -119,18 +120,20 @@ object NativeBuildRegistration {
                 description = "Packages the FFmpeg ${profile.name} Android AAR"
                 dependsOn(buildTasks.values)
                 installDirectories.from(buildTasks.values.map { it.flatMap(FfmpegBuildTask::installDirectory) })
-                abiDirectories.set(buildTasks.mapValues { (_, task) ->
-                    task.flatMap(FfmpegBuildTask::installDirectory).get().asFile.absolutePath
+                abiDirectories.set(project.provider {
+                    buildTasks.mapValues { (_, task) ->
+                        task.flatMap(FfmpegBuildTask::installDirectory).get().asFile.absolutePath
+                    }
                 })
                 profileName.set(profile.name)
                 ffmpegVersion.set(version)
                 apiLevel.set(extension.android.apiLevel)
                 ndkMajor.set(extension.android.ndkVersion.map { it.substringBefore('.').toInt() })
-                outputAar.set(
+                outputAar.set(version.map { ffmpegVersion ->
                     project.layout.projectDirectory.file(
-                        "out/${profile.name}/ffmpeg-android-n$version-${profile.name}${licence.suffix}.aar",
-                    ),
-                )
+                        "out/${profile.name}/ffmpeg-android-n$ffmpegVersion-${profile.name}${licence.suffix}.aar",
+                    )
+                })
             }
             profileAssemblies[profile.name] = project.tasks.register("assembleFfmpeg$profileSuffix") {
                 group = "ffmpeg native build"
@@ -142,10 +145,10 @@ object NativeBuildRegistration {
     }
 
     private fun registerApple(project: Project, extension: FfmpegNativeBuildExtension) {
-        extension.apple.iosDeploymentTarget.convention("15.0")
-        extension.apple.macosDeploymentTarget.convention("11.0")
-        extension.apple.tvosDeploymentTarget.convention("15.0")
-        extension.apple.watchosDeploymentTarget.convention("8.0")
+        extension.apple.iosDeploymentTarget.convention(project.catalogVersion("apple-iosDeployment"))
+        extension.apple.macosDeploymentTarget.convention(project.catalogVersion("apple-macosDeployment"))
+        extension.apple.tvosDeploymentTarget.convention(project.catalogVersion("apple-tvosDeployment"))
+        extension.apple.watchosDeploymentTarget.convention(project.catalogVersion("apple-watchosDeployment"))
         if (!System.getProperty("os.name").contains("mac", ignoreCase = true)) {
             registerUnavailableApple(project, extension)
             return
@@ -180,8 +183,10 @@ object NativeBuildRegistration {
                 description = "Creates FFmpeg ${profile.name} Apple XCFrameworks"
                 dependsOn(buildTasks.values)
                 installDirectories.from(buildTasks.values.map { it.flatMap(FfmpegBuildTask::installDirectory) })
-                targetDirectories.set(buildTasks.mapValues { (_, task) ->
-                    task.flatMap(FfmpegBuildTask::installDirectory).get().asFile.absolutePath
+                targetDirectories.set(project.provider {
+                    buildTasks.mapValues { (_, task) ->
+                        task.flatMap(FfmpegBuildTask::installDirectory).get().asFile.absolutePath
+                    }
                 })
                 profileName.set(profile.name)
                 outputDirectory.set(project.layout.projectDirectory.dir("out/${profile.name}/xcframework"))
@@ -233,7 +238,7 @@ object NativeBuildRegistration {
 
     private fun registerJvm(project: Project, extension: FfmpegNativeBuildExtension) {
         extension.jvm.machines.convention(setOf("current"))
-        extension.jvm.macosDeploymentTarget.convention("11.0")
+        extension.jvm.macosDeploymentTarget.convention(project.catalogVersion("apple-macosDeployment"))
         val host = hostTarget(extension.jvm.macosDeploymentTarget.get())
         val machines = requestedJvmMachines(extension, host)
         val profileAssemblies = mutableMapOf<String, TaskProvider<*>>()
@@ -329,7 +334,7 @@ object NativeBuildRegistration {
         target: String,
         kind: String,
     ) {
-        sourceDirectory.set(project.layout.dir(project.provider { File(extension.sourceDirectory.get()) }))
+        sourceDirectory.set(extension.sourceDirectory)
         bridgeSourceDirectory.set(project.rootProject.layout.projectDirectory.dir("native-build/bridge"))
         workDirectory.set(project.layout.projectDirectory.dir("work/$profile/$target"))
         installDirectory.set(project.layout.projectDirectory.dir("out/$profile/$target"))
@@ -472,21 +477,28 @@ object NativeBuildRegistration {
         }
     }
 
-    private fun ffmpegVersion(project: Project, extension: FfmpegNativeBuildExtension): String {
-        val release = File(extension.sourceDirectory.get(), "RELEASE")
-        return release.takeIf(File::isFile)?.readText()?.trim()?.removePrefix("n") ?: "unknown"
-    }
+    private fun ffmpegVersion(extension: FfmpegNativeBuildExtension): Provider<String> =
+        extension.sourceDirectory.file("RELEASE").map { release ->
+            release.asFile.takeIf(File::isFile)?.readText()?.trim()?.removePrefix("n") ?: "unknown"
+        }
+
+    private fun Project.catalogVersion(alias: String): String =
+        extensions.getByType(VersionCatalogsExtension::class.java)
+            .named("libs")
+            .findVersion(alias)
+            .orElseThrow { IllegalArgumentException("Missing version catalog entry: $alias") }
+            .requiredVersion
 
     private fun appleTargets(extension: FfmpegNativeBuildExtension): List<AppleTargetSpec> = listOf(
-        AppleTargetSpec("iosArm64", "aarch64", "iphoneos", "arm64-apple-ios${extension.apple.iosDeploymentTarget.get()}"),
-        AppleTargetSpec("iosSimulatorArm64", "aarch64", "iphonesimulator", "arm64-apple-ios${extension.apple.iosDeploymentTarget.get()}-simulator"),
-        AppleTargetSpec("macosArm64", "aarch64", "macosx", "arm64-apple-macos${extension.apple.macosDeploymentTarget.get()}"),
-        AppleTargetSpec("tvosArm64", "aarch64", "appletvos", "arm64-apple-tvos${extension.apple.tvosDeploymentTarget.get()}"),
-        AppleTargetSpec("tvosSimulatorArm64", "aarch64", "appletvsimulator", "arm64-apple-tvos${extension.apple.tvosDeploymentTarget.get()}-simulator"),
-        AppleTargetSpec("watchosArm32", "arm", "watchos", "armv7k-apple-watchos${extension.apple.watchosDeploymentTarget.get()}"),
-        AppleTargetSpec("watchosArm64", "aarch64", "watchos", "arm64_32-apple-watchos${extension.apple.watchosDeploymentTarget.get()}"),
-        AppleTargetSpec("watchosDeviceArm64", "aarch64", "watchos", "arm64-apple-watchos${extension.apple.watchosDeploymentTarget.get()}"),
-        AppleTargetSpec("watchosSimulatorArm64", "aarch64", "watchsimulator", "arm64-apple-watchos${extension.apple.watchosDeploymentTarget.get()}-simulator"),
+        AppleTargetSpec("iosArm64", "aarch64", "iphoneos", extension.apple.iosDeploymentTarget.map { "arm64-apple-ios$it" }, extension.apple.iosDeploymentTarget),
+        AppleTargetSpec("iosSimulatorArm64", "aarch64", "iphonesimulator", extension.apple.iosDeploymentTarget.map { "arm64-apple-ios$it-simulator" }, extension.apple.iosDeploymentTarget),
+        AppleTargetSpec("macosArm64", "aarch64", "macosx", extension.apple.macosDeploymentTarget.map { "arm64-apple-macos$it" }, extension.apple.macosDeploymentTarget),
+        AppleTargetSpec("tvosArm64", "aarch64", "appletvos", extension.apple.tvosDeploymentTarget.map { "arm64-apple-tvos$it" }, extension.apple.tvosDeploymentTarget),
+        AppleTargetSpec("tvosSimulatorArm64", "aarch64", "appletvsimulator", extension.apple.tvosDeploymentTarget.map { "arm64-apple-tvos$it-simulator" }, extension.apple.tvosDeploymentTarget),
+        AppleTargetSpec("watchosArm32", "arm", "watchos", extension.apple.watchosDeploymentTarget.map { "armv7k-apple-watchos$it" }, extension.apple.watchosDeploymentTarget),
+        AppleTargetSpec("watchosArm64", "aarch64", "watchos", extension.apple.watchosDeploymentTarget.map { "arm64_32-apple-watchos$it" }, extension.apple.watchosDeploymentTarget),
+        AppleTargetSpec("watchosDeviceArm64", "aarch64", "watchos", extension.apple.watchosDeploymentTarget.map { "arm64-apple-watchos$it" }, extension.apple.watchosDeploymentTarget),
+        AppleTargetSpec("watchosSimulatorArm64", "aarch64", "watchsimulator", extension.apple.watchosDeploymentTarget.map { "arm64-apple-watchos$it-simulator" }, extension.apple.watchosDeploymentTarget),
     )
 
     private fun hostTarget(macosDeploymentTarget: String): JvmMachineSpec {
@@ -557,10 +569,9 @@ object NativeBuildRegistration {
         val name: String,
         val architecture: String,
         val sdk: String,
-        val triple: String,
-    ) {
-        val deployment: String = triple.substringAfterLast("os").substringBefore('-')
-    }
+        val triple: Provider<String>,
+        val deployment: Provider<String>,
+    )
     private data class JvmMachineSpec(
         val name: String,
         val os: String,

@@ -36,7 +36,7 @@ kotlin {
     }
     sourceSets.wasmJsMain.dependencies {
         implementation(project(":samples:studio"))
-        implementation(compose.ui)
+        implementation(libs.compose.ui)
     }
     sourceSets.wasmJsMain {
         resources.srcDir(stageFFmpegKmpWasmRuntime)

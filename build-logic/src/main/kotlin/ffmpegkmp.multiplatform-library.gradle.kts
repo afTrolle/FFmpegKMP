@@ -32,6 +32,8 @@ extensions.configure<KotlinMultiplatformExtension> {
         compileSdk = androidCompileSdk
         minSdk = androidMinSdk
 
+        withHostTest {}
+
         withDeviceTestBuilder {
             sourceSetTreeName = "test"
         }.configure {

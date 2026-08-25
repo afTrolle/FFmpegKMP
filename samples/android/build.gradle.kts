@@ -36,7 +36,7 @@ android {
     }
 
     sourceSets.named("main") {
-        jniLibs.srcDir(layout.buildDirectory.dir("generated/ffmpegkmp-jni").get().asFile)
+        jniLibs.directories.add("build/generated/ffmpegkmp-jni")
     }
 }
 
@@ -46,6 +46,6 @@ tasks.matching { it.name.startsWith("merge") && it.name.endsWith("JniLibFolders"
 
 dependencies {
     implementation(project(":samples:studio"))
-    implementation("androidx.activity:activity-compose:1.13.0")
+    implementation(libs.androidx.activity.compose)
     implementation(libs.filekit.dialogs.compose)
 }

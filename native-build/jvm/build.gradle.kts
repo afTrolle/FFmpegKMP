@@ -6,7 +6,6 @@ description = "Reproducible FFmpeg builds for JVM desktop hosts"
 
 ffmpegNativeBuild {
     jvm {
-        macosDeploymentTarget.set("11.0")
         machines.addAll(
             "current",
             "macos-arm64",

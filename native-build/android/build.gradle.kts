@@ -6,8 +6,6 @@ description = "Reproducible FFmpeg builds using the Android NDK"
 
 ffmpegNativeBuild {
     android {
-        apiLevel.set(24)
-        ndkVersion.set("30.0.15729638")
         abis.addAll("armeabi-v7a", "arm64-v8a", "x86", "x86_64")
 
         profiles.named("standard") {
