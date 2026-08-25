@@ -25,6 +25,8 @@ node_modules/
 # Reproducible native-build intermediates and artifacts
 /native-build/**/work/
 /native-build/**/out/
+/native-build/**/header-work/
+/native-build/**/headers/
 /native-build/**/toolchains/
 
 ### Gradle ###

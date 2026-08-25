@@ -161,8 +161,24 @@ object NativeBuildRegistration {
             val buildTasks = linkedMapOf<String, TaskProvider<FfmpegBuildTask>>()
             appleTargets(extension).forEach { spec ->
                 val resolved = resolve(extension, profile.name, extension.apple, spec.name)
+                val targetSuffix = targetTaskSuffix(spec.name)
+                project.tasks.register(
+                    "prepareFfmpeg${profileSuffix}${targetSuffix}Headers",
+                    FfmpegBuildTask::class.java,
+                ) {
+                    group = "ffmpeg native build"
+                    description = "Configures FFmpeg ${profile.name} headers for ${spec.name} bindings"
+                    applyCommonTaskInputs(project, extension, resolved, profile.name, spec.name, "apple")
+                    workDirectory.set(project.layout.projectDirectory.dir("header-work/${profile.name}/${spec.name}"))
+                    installDirectory.set(project.layout.projectDirectory.dir("headers/${profile.name}/${spec.name}"))
+                    buildRuntime.set(false)
+                    architecture.set(spec.architecture)
+                    targetTriple.set(spec.triple)
+                    sdkName.set(spec.sdk)
+                    deploymentTarget.set(spec.deployment)
+                }
                 val task = project.tasks.register(
-                    "buildFfmpeg${profileSuffix}${targetTaskSuffix(spec.name)}",
+                    "buildFfmpeg${profileSuffix}${targetSuffix}",
                     FfmpegBuildTask::class.java,
                 ) {
                     group = "ffmpeg native build"
@@ -208,6 +224,15 @@ object NativeBuildRegistration {
             val profileSuffix = profileTaskSuffix(profile.name)
             appleTargets(extension).forEach { spec ->
                 project.tasks.register(
+                    "prepareFfmpeg${profileSuffix}${targetTaskSuffix(spec.name)}Headers",
+                    UnavailableFfmpegTargetTask::class.java,
+                ) {
+                    group = "ffmpeg native build"
+                    description = "Reports why FFmpeg ${profile.name} headers cannot be prepared for ${spec.name} on this host"
+                    machine.set(spec.name)
+                    this.reason.set(reason)
+                }
+                project.tasks.register(
                     "buildFfmpeg${profileSuffix}${targetTaskSuffix(spec.name)}",
                     UnavailableFfmpegTargetTask::class.java,
                 ) {
@@ -246,10 +271,23 @@ object NativeBuildRegistration {
             val profileSuffix = profileTaskSuffix(profile.name)
             val buildTasks = mutableListOf<TaskProvider<out Task>>()
             machines.forEach { machine ->
-                val taskName = "buildFfmpeg${profileSuffix}${targetTaskSuffix(machine.name)}"
+                val targetSuffix = targetTaskSuffix(machine.name)
+                val taskName = "buildFfmpeg${profileSuffix}${targetSuffix}"
+                val headerTaskName = "prepareFfmpeg${profileSuffix}${targetSuffix}Headers"
                 val unavailable = unavailableJvmReason(machine, host)
                 val task = if (unavailable == null) {
                     val resolved = resolve(extension, profile.name, extension.jvm, machine.name)
+                    project.tasks.register(headerTaskName, FfmpegBuildTask::class.java) {
+                        group = "ffmpeg native build"
+                        description = "Configures FFmpeg ${profile.name} headers for ${machine.name} bindings"
+                        applyCommonTaskInputs(project, extension, resolved, profile.name, machine.name, "jvm")
+                        workDirectory.set(project.layout.projectDirectory.dir("header-work/${profile.name}/${machine.name}"))
+                        installDirectory.set(project.layout.projectDirectory.dir("headers/${profile.name}/${machine.name}"))
+                        buildRuntime.set(false)
+                        architecture.set(machine.architecture)
+                        targetTriple.set(machine.targetTriple)
+                        deploymentTarget.set(machine.deploymentTarget)
+                    }
                     project.tasks.register(taskName, FfmpegBuildTask::class.java) {
                         group = "ffmpeg native build"
                         description = "Builds FFmpeg ${profile.name} shared libraries for ${machine.name}"
@@ -259,6 +297,12 @@ object NativeBuildRegistration {
                         deploymentTarget.set(machine.deploymentTarget)
                     }
                 } else {
+                    project.tasks.register(headerTaskName, UnavailableFfmpegTargetTask::class.java) {
+                        group = "ffmpeg native build"
+                        description = "Reports why FFmpeg ${profile.name} headers cannot be prepared for ${machine.name} on this host"
+                        this.machine.set(machine.name)
+                        reason.set(unavailable)
+                    }
                     project.tasks.register(taskName, UnavailableFfmpegTargetTask::class.java) {
                         group = "ffmpeg native build"
                         description = "Reports why FFmpeg ${profile.name} cannot be built for ${machine.name} on this host"
@@ -322,7 +366,12 @@ object NativeBuildRegistration {
             })
         }
         project.tasks.named("clean", Delete::class.java).configure {
-            delete(project.layout.projectDirectory.dir("work"), project.layout.projectDirectory.dir("out"))
+            delete(
+                project.layout.projectDirectory.dir("work"),
+                project.layout.projectDirectory.dir("out"),
+                project.layout.projectDirectory.dir("header-work"),
+                project.layout.projectDirectory.dir("headers"),
+            )
         }
     }
 

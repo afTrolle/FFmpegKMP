@@ -59,6 +59,7 @@ abstract class FfmpegBuildTask : DefaultTask() {
     @get:Input abstract val androidNdkDirectory: Property<String>
     @get:Input abstract val emscriptenDirectory: Property<String>
     @get:Input abstract val jobs: Property<Int>
+    @get:Input abstract val buildRuntime: Property<Boolean>
 
     @get:Input abstract val buildPrograms: Property<Boolean>
     @get:Input abstract val buildDocumentation: Property<Boolean>
@@ -95,6 +96,7 @@ abstract class FfmpegBuildTask : DefaultTask() {
         androidApiLevel.convention(24)
         androidNdkDirectory.convention("")
         emscriptenDirectory.convention("")
+        buildRuntime.convention(true)
         encoders.convention(emptySet())
         decoders.convention(emptySet())
         muxers.convention(emptySet())
@@ -193,22 +195,33 @@ abstract class FfmpegBuildTask : DefaultTask() {
         }
         logger.lifecycle(output.toString(Charsets.UTF_8).lineSequence().take(30).joinToString("\n"))
 
-        execOperations.exec {
-            workingDir(work)
-            commandLine(makeCommand("-j${jobs.get()}"))
-            configureBuildEnvironment()
-        }
-        execOperations.exec {
-            workingDir(work)
-            commandLine(makeCommand("install-libs", "install-headers"))
-            configureBuildEnvironment()
-        }
+        if (buildRuntime.get()) {
+            execOperations.exec {
+                workingDir(work)
+                commandLine(
+                    makeCommand(
+                        "-j${jobs.get()}",
+                        "install-libs",
+                        "install-headers",
+                        "ffmpegkmp-fftools-objects",
+                    ),
+                )
+                configureBuildEnvironment()
+            }
 
-        buildBridge(work, install)
+            buildBridge(work, install)
 
-        verifyInstalledArtifacts(install)
-        copyLicences(source, install)
-        writeMetadata(source, install, arguments, assessment)
+            verifyInstalledArtifacts(install)
+            copyLicences(source, install)
+            writeMetadata(source, install, arguments, assessment)
+        } else {
+            execOperations.exec {
+                workingDir(work)
+                commandLine(makeCommand("-j${jobs.get()}", "install-headers"))
+                configureBuildEnvironment()
+            }
+            verifyInstalledHeaders(install)
+        }
     }
 
     private fun prepareSourceWithIoProtocol(source: File, work: File): File {
@@ -247,6 +260,17 @@ abstract class FfmpegBuildTask : DefaultTask() {
 
         val makefile = prepared.resolve("libavformat/Makefile")
         makefile.appendText("\nOBJS-\$(CONFIG_FFMPEGKMP_PROTOCOL) += ffmpegkmp_protocol.o\n")
+
+        // The bridge includes the two CLI main sources through controlled entry
+        // wrappers. Build only their supporting objects here: the standalone
+        // ffmpeg/ffprobe main objects and executable link steps are not used.
+        prepared.resolve("fftools/Makefile").appendText(
+            """
+
+            .PHONY: ffmpegkmp-fftools-objects
+            ffmpegkmp-fftools-objects: ${'$'}(sort ${'$'}(filter-out fftools/ffmpeg.o fftools/ffprobe.o,${'$'}(filter fftools/%.o,${'$'}(OBJS-ffmpeg) ${'$'}(OBJS-ffprobe))))
+            """.trimIndent() + "\n",
+        )
         return prepared
     }
 
@@ -558,10 +582,7 @@ abstract class FfmpegBuildTask : DefaultTask() {
     }
 
     private fun verifyInstalledArtifacts(install: File) {
-        val include = install.resolve("include")
-        require(include.isDirectory && include.walkTopDown().any { it.isFile && it.extension == "h" }) {
-            "FFmpeg did not install public headers for ${targetName.get()}"
-        }
+        verifyInstalledHeaders(install)
         val extension = when (targetKind.get()) {
             "android" -> "so"
             "apple" -> "a"
@@ -584,6 +605,19 @@ abstract class FfmpegBuildTask : DefaultTask() {
         }
         require(install.resolve("lib/libffmpegkmp_bridge.a").isFile) {
             "FFmpegKMP did not install its command bridge for ${targetName.get()}"
+        }
+    }
+
+    private fun verifyInstalledHeaders(install: File) {
+        val requiredHeaders = listOf(
+            "libavcodec/avcodec.h",
+            "libavformat/avformat.h",
+            "libavutil/avconfig.h",
+            "libavutil/avutil.h",
+        )
+        val missing = requiredHeaders.filterNot { install.resolve("include/$it").isFile }
+        require(missing.isEmpty()) {
+            "FFmpeg did not install expected headers for ${targetName.get()}: ${missing.joinToString()}"
         }
     }
 

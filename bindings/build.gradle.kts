@@ -35,11 +35,11 @@ val hostArchitecture = providers.systemProperty("os.arch").map { architecture ->
     }
 }
 val hostMachine = hostOperatingSystem.zip(hostArchitecture) { os, architecture -> "$os-$architecture" }
-val buildHostFfmpeg = selectedNativeProfileTaskSuffix.zip(hostMachine) { profileSuffix, machine ->
+val prepareHostFfmpegHeaders = selectedNativeProfileTaskSuffix.zip(hostMachine) { profileSuffix, machine ->
     val machineSuffix = machine.split('-', '_').joinToString("") { part ->
         part.replaceFirstChar(Char::titlecase)
     }
-    ":native-build:jvm:buildFfmpeg$profileSuffix$machineSuffix"
+    ":native-build:jvm:prepareFfmpeg${profileSuffix}${machineSuffix}Headers"
 }
 val javaCppGenerator = configurations.create("javaCppGenerator")
 val androidApiLevel = libs.versions.android.minSdk
@@ -48,6 +48,9 @@ val jvmBytecodeTarget = libs.versions.jvm.bytecode.map(String::toInt)
 val bridgeSourceDirectory = rootProject.layout.projectDirectory.dir("native-build/bridge")
 val nativeJvmInstall = selectedNativeProfile.zip(hostMachine) { profile, machine ->
     rootProject.layout.projectDirectory.dir("native-build/jvm/out/$profile/$machine")
+}
+val nativeJvmHeaders = selectedNativeProfile.zip(hostMachine) { profile, machine ->
+    rootProject.layout.projectDirectory.dir("native-build/jvm/headers/$profile/$machine")
 }
 
 val stageBindingNotices = tasks.register<Sync>("stageBindingNotices") {
@@ -104,15 +107,15 @@ val generateJavaCppBindings = javaCppFamilies.map { family ->
         group = "ffmpeg bindings"
         description = "Parses pinned ${family.lowercase()} headers into local Java declarations"
         dependsOn(compileJavaCppPresets)
-        dependsOn(buildHostFfmpeg.get())
+        dependsOn(prepareHostFfmpegHeaders.get())
         classpath = javaCppGenerator
         mainClass.set("org.bytedeco.javacpp.tools.Builder")
 
-        val install = nativeJvmInstall
+        val headers = nativeJvmHeaders
         val projectHeaders = layout.projectDirectory.dir("src/main/headers")
         val generated = layout.buildDirectory.dir("generated/javacpp/$family")
         val presetClasses = compileJavaCppPresets.flatMap { it.destinationDirectory }
-        inputs.dir(install.map { it.dir("include") })
+        inputs.dir(headers.map { it.dir("include") })
         inputs.dir(projectHeaders)
         inputs.dir(bridgeSourceDirectory)
         inputs.files(compileJavaCppPresets.map { it.outputs.files })
@@ -124,7 +127,7 @@ val generateJavaCppBindings = javaCppFamilies.map { family ->
             "-d", generated.get().asFile.absolutePath,
             "-nogenerate",
             "-Dplatform.includepath=${listOf(
-                install.get().dir("include").asFile.absolutePath,
+                headers.get().dir("include").asFile.absolutePath,
                 projectHeaders.asFile.absolutePath,
                 bridgeSourceDirectory.asFile.absolutePath,
             ).joinToString(File.pathSeparator)}",
@@ -485,20 +488,20 @@ kotlin {
             packageName("io.github.aftrolle.ffmpegkmp.bindings.cinterop")
 
             val profile = selectedNativeProfile.get()
-            val install = rootProject.layout.projectDirectory.dir("native-build/apple/out/$profile/$nativeTargetName")
+            val headers = rootProject.layout.projectDirectory.dir("native-build/apple/headers/$profile/$nativeTargetName")
             val projectHeaders = layout.projectDirectory.dir("src/main/headers")
             val bridgeHeaders = rootProject.layout.projectDirectory.dir("native-build/bridge")
             compilerOpts(
                 "-I${projectHeaders.asFile.absolutePath}",
                 "-I${bridgeHeaders.asFile.absolutePath}",
-                "-I${install.dir("include").asFile.absolutePath}",
+                "-I${headers.dir("include").asFile.absolutePath}",
             )
             includeDirs.headerFilterOnly(projectHeaders)
             includeDirs.headerFilterOnly(bridgeHeaders)
-            includeDirs.allHeaders(install.dir("include"))
+            includeDirs.allHeaders(headers.dir("include"))
         }
         tasks.named("cinteropFfmpeg$nativeTargetTaskSuffix").configure {
-            dependsOn(":native-build:apple:buildFfmpeg$nativeProfileTaskSuffix$nativeTargetTaskSuffix")
+            dependsOn(":native-build:apple:prepareFfmpeg${nativeProfileTaskSuffix}${nativeTargetTaskSuffix}Headers")
         }
     }
 }
@@ -507,6 +510,6 @@ tasks.matching { it.name == "compileKotlinJvm" }.configureEach {
     dependsOn(verifyJavaCppBindings)
 }
 
-// Kotlin/Native cinterop, the shared JVM/Android JNI generator, and Wasm
-// generation will all consume prepareFfmpegHeaders as their common input. The
-// resulting declarations are generated locally and remain LGPL-2.1-or-later.
+// Kotlin/Native cinterop and JavaCPP declaration generation consume configured
+// header-only native tasks. Full FFmpeg runtimes remain local build/test inputs
+// and are never required to assemble a Maven publication.

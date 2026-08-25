@@ -119,7 +119,8 @@ under **Settings → Environments**. Add these as environment secrets:
 
 The workflow in `.github/workflows/publish.yml` runs on a published GitHub
 Release and requires the `maven-central` environment. It checks out the release
-tag and submodules, verifies the version, stages and signs every KMP
+tag and submodules, verifies the version and public signing-key distribution,
+stages and signs every KMP
 publication, scans every archive for native content, and then calls
 `publishAndReleaseToMavenCentral`. Configure required reviewers on the
 environment when a manual approval gate is desired before its publishing
