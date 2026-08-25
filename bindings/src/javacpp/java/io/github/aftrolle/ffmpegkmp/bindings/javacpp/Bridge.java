@@ -11,14 +11,14 @@ import org.bytedeco.javacpp.tools.InfoMapper;
         value = {
                 @Platform(
                         cinclude = "<ffmpegkmp_bridge.h>",
-                        link = {"ffmpegkmp_bridge", "avdevice", "avfilter", "avformat", "avcodec", "swscale", "swresample", "avutil"}
+                        link = {"ffmpegkmp_bridge#", "avdevice", "avfilter", "avformat", "avcodec", "swscale", "swresample", "avutil"}
                 ),
                 // Platform-specific link lists replace the default one, so repeat it in full.
                 // The static bridge archive embeds fftools, which reference zlib when the
                 // Android profile enables it; libz ships in every Android sysroot.
                 @Platform(
                         value = "android",
-                        link = {"ffmpegkmp_bridge", "avdevice", "avfilter", "avformat", "avcodec", "swscale", "swresample", "avutil", "z"}
+                        link = {"ffmpegkmp_bridge#", "avdevice", "avfilter", "avformat", "avcodec", "swscale", "swresample", "avutil", "z"}
                 ),
         },
         target = "io.github.aftrolle.ffmpegkmp.bindings.generated.bridge",

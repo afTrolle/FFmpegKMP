@@ -438,8 +438,14 @@ abstract class FfmpegBuildTask : DefaultTask() {
             "--disable-os2threads",
             "--disable-runtime-cpudetect",
         )
-        arguments += "--extra-cflags=${(listOf("-pthread") + extraCompilerArgs.get()).joinToString(" ")}"
-        arguments += "--extra-ldflags=${(listOf("-pthread") + extraLinkerArgs.get()).joinToString(" ")}"
+        val systemFeatureFlags = if (enableAvailableSystemFeatures.get()) {
+            arguments += "--enable-zlib"
+            listOf("-sUSE_ZLIB=1")
+        } else {
+            emptyList()
+        }
+        arguments += "--extra-cflags=${(listOf("-pthread") + systemFeatureFlags + extraCompilerArgs.get()).joinToString(" ")}"
+        arguments += "--extra-ldflags=${(listOf("-pthread") + systemFeatureFlags + extraLinkerArgs.get()).joinToString(" ")}"
     }
 
     private fun makeCommand(vararg arguments: String): List<String> =
@@ -459,9 +465,9 @@ abstract class FfmpegBuildTask : DefaultTask() {
             .map(File::getAbsolutePath)
             .toMutableList()
         // compat/android/binder.o is deliberately NOT linked: it starts a binder thread
-        // pool for the standalone CLI, and libbinder aborts the whole process when the
-        // pool is already running — always the case inside an app. ffmpeg_entry.c
-        // provides a no-op android_binder_threadpool_init_if_required instead.
+        // pool for the standalone CLI, and setting its maximum thread count aborts when
+        // the pool is already running inside an app. ffmpegkmp_bridge.c provides an
+        // app-safe android_binder_threadpool_init_if_required implementation instead.
         execOperations.exec {
             workingDir(work)
             commandLine(
