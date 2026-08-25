@@ -3,6 +3,7 @@ package io.github.aftrolle.ffmpegkmp.buildlogic.nativebuild
 import org.gradle.api.Action
 import org.gradle.api.Named
 import org.gradle.api.NamedDomainObjectContainer
+import org.gradle.api.file.DirectoryProperty
 import org.gradle.api.model.ObjectFactory
 import org.gradle.api.provider.ListProperty
 import org.gradle.api.provider.Property
@@ -124,7 +125,7 @@ abstract class WasmBuildOptions : FfmpegPlatformOptions() {
 
 abstract class FfmpegNativeBuildExtension @Inject constructor(objects: ObjectFactory) {
     abstract val defaultProfile: Property<String>
-    abstract val sourceDirectory: Property<String>
+    abstract val sourceDirectory: DirectoryProperty
     abstract val jobs: Property<Int>
 
     val common: FfmpegBuildOptions = objects.newInstance(FfmpegBuildOptions::class.java)

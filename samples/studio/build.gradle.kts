@@ -1,6 +1,7 @@
 @file:OptIn(org.jetbrains.kotlin.gradle.ExperimentalWasmDsl::class)
 
 plugins {
+    id("ffmpegkmp.project")
     id("org.jetbrains.kotlin.multiplatform")
     id("com.android.kotlin.multiplatform.library")
     alias(libs.plugins.jetbrains.compose)
@@ -42,10 +43,10 @@ kotlin {
             implementation(libs.filekit.dialogs.compose)
             implementation(libs.kotlinx.coroutines.core)
             implementation(libs.okio)
-            implementation(compose.runtime)
-            implementation(compose.foundation)
-            implementation(compose.material3)
-            implementation(compose.ui)
+            implementation(libs.compose.runtime)
+            implementation(libs.compose.foundation)
+            implementation(libs.compose.material3)
+            implementation(libs.compose.ui)
         }
         commonTest.dependencies {
             implementation(kotlin("test"))
