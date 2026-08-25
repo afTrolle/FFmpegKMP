@@ -466,11 +466,11 @@ kotlin {
             kotlin.srcDir("src/jvmAndroidMain/kotlin")
         }
         jvmMain.dependencies {
-            implementation(libs.javacpp)
+            api(libs.javacpp)
             implementation(javaCppDeclarations)
         }
         androidMain.dependencies {
-            implementation(libs.javacpp)
+            api(libs.javacpp)
             implementation(javaCppDeclarations)
         }
     }

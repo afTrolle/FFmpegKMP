@@ -13,6 +13,7 @@ concurrency:
 
 jobs:
   publish:
+    environment: maven-central
     runs-on: macos-15
     timeout-minutes: 120
     env:
@@ -35,7 +36,9 @@ jobs:
         with:
           distribution: temurin
           java-version: 21
-          cache: gradle
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v6
 
       - name: Validate release tag
         id: version

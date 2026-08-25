@@ -103,9 +103,11 @@ sources and Javadoc artifacts, and the required project, licence, developer,
 and SCM POM metadata. Maven Central's complete validation rules are listed in
 its [publishing requirements](https://central.sonatype.org/publish/requirements/).
 
-## 4. Configure GitHub Actions secrets
+## 4. Configure the GitHub publishing environment
 
-In **GitHub repository → Settings → Secrets and variables → Actions**, create:
+Create or open the repository's
+[`maven-central` environment](https://github.com/afTrolle/FFmpegKMP/settings/environments/20561370049/edit)
+under **Settings → Environments**. Add these as environment secrets:
 
 | Secret | Value |
 | --- | --- |
@@ -116,14 +118,12 @@ In **GitHub repository → Settings → Secrets and variables → Actions**, cre
 | `SIGNING_KEY_ID` | Optional last eight characters of the signing key ID |
 
 The workflow in `.github/workflows/publish.yml` runs on a published GitHub
-Release. It checks out the release tag and submodules, verifies the version,
-stages and signs every KMP publication, scans every archive for native content,
-and then calls `publishAndReleaseToMavenCentral`.
-
-Use a protected GitHub environment if the repository needs a manual approval
-gate before secrets are exposed. If an environment is added, set
-`environment: maven-central` on the workflow's `publish` job and store the same
-secrets on that environment.
+Release and requires the `maven-central` environment. It checks out the release
+tag and submodules, verifies the version, stages and signs every KMP
+publication, scans every archive for native content, and then calls
+`publishAndReleaseToMavenCentral`. Configure required reviewers on the
+environment when a manual approval gate is desired before its publishing
+secrets are exposed.
 
 ## 5. Understand automatic versions
 
