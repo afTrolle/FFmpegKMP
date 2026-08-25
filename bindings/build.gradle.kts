@@ -1,50 +1,12 @@
 // SPDX-License-Identifier: LGPL-2.1-or-later
 
 import org.gradle.api.tasks.Sync
-import com.android.build.api.variant.KotlinMultiplatformAndroidComponentsExtension
-import org.gradle.api.DefaultTask
-import org.gradle.api.file.ArchiveOperations
-import org.gradle.api.file.DirectoryProperty
-import org.gradle.api.file.FileSystemOperations
-import org.gradle.api.file.RegularFileProperty
 import org.gradle.jvm.tasks.Jar
 import org.gradle.api.tasks.bundling.Zip
-import org.gradle.api.tasks.InputFile
-import org.gradle.api.tasks.OutputDirectory
-import org.gradle.api.tasks.TaskAction
 import org.gradle.api.tasks.testing.Test
 import org.gradle.api.tasks.compile.JavaCompile
 import org.jetbrains.kotlin.gradle.plugin.mpp.KotlinNativeTarget
-import javax.inject.Inject
 import java.util.Properties
-
-abstract class StageAndroidJniLibraries : DefaultTask() {
-    @get:InputFile
-    abstract val runtimeAar: RegularFileProperty
-
-    @get:OutputDirectory
-    abstract val outputDirectory: DirectoryProperty
-
-    @get:Inject
-    abstract val archives: ArchiveOperations
-
-    @get:Inject
-    abstract val fileSystem: FileSystemOperations
-
-    @TaskAction
-    fun stage() {
-        fileSystem.sync {
-            from(archives.zipTree(runtimeAar)) {
-                include("jni/**")
-                includeEmptyDirs = false
-                eachFile {
-                    path = path.removePrefix("jni/")
-                }
-            }
-            into(outputDirectory)
-        }
-    }
-}
 
 plugins {
     id("ffmpegkmp.multiplatform-library")
@@ -79,7 +41,26 @@ val buildHostFfmpeg = selectedNativeProfileTaskSuffix.zip(hostMachine) { profile
     }
     ":native-build:jvm:buildFfmpeg$profileSuffix$machineSuffix"
 }
-val javaCppGenerator by configurations.creating
+val javaCppGenerator = configurations.create("javaCppGenerator")
+val androidApiLevel = libs.versions.android.minSdk
+val androidNdkVersion = libs.versions.android.ndk
+val jvmBytecodeTarget = libs.versions.jvm.bytecode.map(String::toInt)
+val bridgeSourceDirectory = rootProject.layout.projectDirectory.dir("native-build/bridge")
+val nativeJvmInstall = selectedNativeProfile.zip(hostMachine) { profile, machine ->
+    rootProject.layout.projectDirectory.dir("native-build/jvm/out/$profile/$machine")
+}
+
+val stageBindingNotices = tasks.register<Sync>("stageBindingNotices") {
+    from(layout.projectDirectory.file("LICENSE")) {
+        into("META-INF")
+        rename { "LICENSE-FFmpegKMP-bindings.txt" }
+    }
+    from(rootProject.layout.projectDirectory.file("THIRD_PARTY_NOTICES.md")) {
+        into("META-INF")
+        rename { "NOTICE-FFmpegKMP.txt" }
+    }
+    into(layout.buildDirectory.dir("generated/binding-notices"))
+}
 
 dependencies {
     javaCppGenerator(libs.javacpp)
@@ -110,7 +91,7 @@ val compileJavaCppPresets = tasks.register<JavaCompile>("compileJavaCppPresets")
     source(layout.projectDirectory.dir("src/javacpp/java"))
     classpath = javaCppGenerator
     destinationDirectory.set(layout.buildDirectory.dir("javacpp/preset-classes"))
-    options.release.set(11)
+    options.release.set(jvmBytecodeTarget)
 }
 
 val javaCppFamilies = listOf(
@@ -123,31 +104,29 @@ val generateJavaCppBindings = javaCppFamilies.map { family ->
         group = "ffmpeg bindings"
         description = "Parses pinned ${family.lowercase()} headers into local Java declarations"
         dependsOn(compileJavaCppPresets)
-        dependsOn(buildHostFfmpeg.get())
+        dependsOn(buildHostFfmpeg)
         classpath = javaCppGenerator
         mainClass.set("org.bytedeco.javacpp.tools.Builder")
 
-        val profile = selectedNativeProfile.get()
-        val install = rootProject.layout.projectDirectory.dir(
-            "native-build/jvm/out/$profile/${hostMachine.get()}",
-        )
+        val install = nativeJvmInstall
         val projectHeaders = layout.projectDirectory.dir("src/main/headers")
         val generated = layout.buildDirectory.dir("generated/javacpp/$family")
-        inputs.dir(install.dir("include"))
+        val presetClasses = compileJavaCppPresets.flatMap { it.destinationDirectory }
+        inputs.dir(install.map { it.dir("include") })
         inputs.dir(projectHeaders)
-        inputs.dir(rootProject.layout.projectDirectory.dir("native-build/bridge"))
+        inputs.dir(bridgeSourceDirectory)
         inputs.files(compileJavaCppPresets.map { it.outputs.files })
         outputs.dir(generated)
         outputs.cacheIf { false }
 
         args(
-            "-classpath", compileJavaCppPresets.get().destinationDirectory.get().asFile.absolutePath,
+            "-classpath", presetClasses.get().asFile.absolutePath,
             "-d", generated.get().asFile.absolutePath,
             "-nogenerate",
             "-Dplatform.includepath=${listOf(
-                install.dir("include").asFile.absolutePath,
+                install.get().dir("include").asFile.absolutePath,
                 projectHeaders.asFile.absolutePath,
-                rootProject.layout.projectDirectory.dir("native-build/bridge").asFile.absolutePath,
+                bridgeSourceDirectory.asFile.absolutePath,
             ).joinToString(File.pathSeparator)}",
             "io.github.aftrolle.ffmpegkmp.bindings.javacpp.$family",
         )
@@ -155,7 +134,9 @@ val generateJavaCppBindings = javaCppFamilies.map { family ->
             generated.get().asFileTree.matching { include("**/*.java") }.forEach { source ->
                 val withoutBlockComments = source.readText().replace(Regex("(?s)/\\*.*?\\*/"), "")
                 source.writeText(
-                    withoutBlockComments
+                    "// SPDX-License-Identifier: LGPL-2.1-or-later\n" +
+                        "// Generated by JavaCPP from FFmpeg headers; see the artifact licence and notices.\n\n" +
+                        withoutBlockComments
                         .lineSequence()
                         .filterNot { it.trimStart().startsWith("//") }
                         .joinToString("\n", postfix = "\n"),
@@ -178,7 +159,7 @@ val verifyJavaCppBindings = tasks.register<JavaCompile>("verifyJavaCppBindings")
     source(javaCppFamilies.map { layout.buildDirectory.dir("generated/javacpp/$it") })
     classpath = javaCppGenerator + files(compileJavaCppPresets.map { it.destinationDirectory })
     destinationDirectory.set(layout.buildDirectory.dir("javacpp/verified-classes"))
-    options.release.set(11)
+    options.release.set(jvmBytecodeTarget)
     outputs.cacheIf { false }
 }
 
@@ -194,6 +175,33 @@ val javaCppDeclarationsJar = tasks.register<Jar>("javaCppDeclarationsJar") {
 val javaCppDeclarations = files(javaCppDeclarationsJar.flatMap { it.archiveFile })
     .builtBy(javaCppDeclarationsJar)
 
+tasks.withType<Jar>().matching { it.name != "javaCppDeclarationsJar" }.configureEach {
+    from(layout.projectDirectory.file("LICENSE")) {
+        into("META-INF")
+        rename { "LICENSE-FFmpegKMP-bindings.txt" }
+    }
+    from(rootProject.layout.projectDirectory.file("THIRD_PARTY_NOTICES.md")) {
+        into("META-INF")
+        rename { "NOTICE-FFmpegKMP.txt" }
+    }
+}
+
+tasks.named<Jar>("jvmJar") {
+    dependsOn(javaCppDeclarationsJar)
+    duplicatesStrategy = DuplicatesStrategy.EXCLUDE
+    from(javaCppDeclarationsJar.flatMap { it.archiveFile }.map(::zipTree)) {
+        exclude("META-INF/MANIFEST.MF")
+    }
+}
+
+tasks.withType<Jar>().matching {
+    it.name == "jvmSourcesJar" || it.name == "androidSourcesJar"
+}.configureEach {
+    dependsOn(generateJavaCppBindings)
+    from(javaCppFamilies.map { layout.buildDirectory.dir("generated/javacpp/$it") })
+    from(layout.projectDirectory.dir("src/javacpp/java"))
+}
+
 val buildJavaCppHostBindings = javaCppFamilies.map { family ->
     tasks.register<JavaExec>("buildJavaCppHost$family") {
         group = "ffmpeg bindings"
@@ -205,32 +213,32 @@ val buildJavaCppHostBindings = javaCppFamilies.map { family ->
         )
         mainClass.set("org.bytedeco.javacpp.tools.Builder")
 
-        val profile = selectedNativeProfile.get()
-        val install = rootProject.layout.projectDirectory.dir(
-            "native-build/jvm/out/$profile/${hostMachine.get()}",
-        )
+        val install = nativeJvmInstall
         val projectHeaders = layout.projectDirectory.dir("src/main/headers")
-        val output = layout.buildDirectory.dir("generated/javacpp-jni/${hostMachine.get()}/$family")
-        val generatedClasses = verifyJavaCppBindings.get().destinationDirectory.get().asFile
-        val presetClasses = compileJavaCppPresets.get().destinationDirectory.get().asFile
-        inputs.dir(install.dir("include"))
-        inputs.dir(install.dir("lib"))
+        val output = layout.buildDirectory.dir(hostMachine.map { "generated/javacpp-jni/$it/$family" })
+        val generatedClasses = verifyJavaCppBindings.flatMap { it.destinationDirectory }
+        val presetClasses = compileJavaCppPresets.flatMap { it.destinationDirectory }
+        inputs.dir(install.map { it.dir("include") })
+        inputs.dir(install.map { it.dir("lib") })
         inputs.dir(projectHeaders)
-        inputs.dir(rootProject.layout.projectDirectory.dir("native-build/bridge"))
+        inputs.dir(bridgeSourceDirectory)
         inputs.files(verifyJavaCppBindings.map { it.outputs.files })
         outputs.dir(output)
         outputs.cacheIf { false }
 
         args(
-            "-classpath", listOf(generatedClasses, presetClasses).joinToString(File.pathSeparator),
+            "-classpath", listOf(
+                generatedClasses.get().asFile,
+                presetClasses.get().asFile,
+            ).joinToString(File.pathSeparator),
             "-d", output.get().asFile.absolutePath,
             "-nodelete",
             "-Dplatform.includepath=${listOf(
-                install.dir("include").asFile.absolutePath,
+                install.get().dir("include").asFile.absolutePath,
                 projectHeaders.asFile.absolutePath,
-                rootProject.layout.projectDirectory.dir("native-build/bridge").asFile.absolutePath,
+                bridgeSourceDirectory.asFile.absolutePath,
             ).joinToString(File.pathSeparator)}",
-            "-Dplatform.linkpath=${install.dir("lib").asFile.absolutePath}",
+            "-Dplatform.linkpath=${install.get().dir("lib").asFile.absolutePath}",
             "io.github.aftrolle.ffmpegkmp.bindings.generated.${family.lowercase()}.**",
         )
     }
@@ -242,11 +250,46 @@ tasks.register("buildJavaCppHostBindings") {
     dependsOn(buildJavaCppHostBindings)
 }
 
+val stageJavaCppHostRuntime = tasks.register<Sync>("stageJavaCppHostRuntime") {
+    group = "ffmpeg bindings"
+    description = "Stages the local FFmpeg and generated JNI runtime for the current JVM machine"
+    dependsOn(buildJavaCppHostBindings)
+
+    from(nativeJvmInstall.map { it.dir("lib") }) {
+        include("*.dylib", "*.so", "*.so.*", "*.dll")
+        into("lib")
+    }
+    javaCppFamilies.forEach { family ->
+        from(layout.buildDirectory.dir(hostMachine.map { "generated/javacpp-jni/$it/$family" })) {
+            include("*.dylib", "*.so", "*.so.*", "*.dll")
+            into("jni")
+        }
+    }
+    from(stageBindingNotices)
+    from(nativeJvmInstall.map { it.file("build-manifest.json") })
+    from(nativeJvmInstall.map { it.dir("share/licenses") }) {
+        into("licenses")
+    }
+    into(layout.buildDirectory.dir(hostMachine.map { "generated/host-runtime/$it" }))
+}
+
+tasks.register<Zip>("assembleJavaCppHostRuntime") {
+    group = "ffmpeg bindings"
+    description = "Packages the ignored local FFmpeg/JNI runtime for the current JVM machine"
+    dependsOn(stageJavaCppHostRuntime)
+    archiveFileName.set(hostMachine.map { "ffmpegkmp-runtime-$it-local.zip" })
+    destinationDirectory.set(layout.buildDirectory.dir("generated/host-runtime-archives"))
+    isReproducibleFileOrder = true
+    isPreserveFileTimestamps = false
+    outputs.cacheIf { false }
+    from(stageJavaCppHostRuntime)
+}
+
 val androidAbis = linkedMapOf(
-    "armeabi-v7a" to Triple("android-arm", "armv7a-linux-androideabi24-clang++", "ArmeabiV7a"),
-    "arm64-v8a" to Triple("android-arm64", "aarch64-linux-android24-clang++", "Arm64V8a"),
-    "x86" to Triple("android-x86", "i686-linux-android24-clang++", "X86"),
-    "x86_64" to Triple("android-x86_64", "x86_64-linux-android24-clang++", "X8664"),
+    "armeabi-v7a" to Triple("android-arm", "armv7a-linux-androideabi", "ArmeabiV7a"),
+    "arm64-v8a" to Triple("android-arm64", "aarch64-linux-android", "Arm64V8a"),
+    "x86" to Triple("android-x86", "i686-linux-android", "X86"),
+    "x86_64" to Triple("android-x86_64", "x86_64-linux-android", "X8664"),
 )
 val androidSdkDirectory = providers.gradleProperty("ffmpegkmp.android.sdkDir").orElse(
     providers.environmentVariable("ANDROID_SDK_ROOT").orElse(
@@ -259,7 +302,7 @@ val androidSdkDirectory = providers.gradleProperty("ffmpegkmp.android.sdkDir").o
         },
     ),
 )
-val androidNdkDirectory = androidSdkDirectory.map { "$it/ndk/30.0.15729638" }
+val androidNdkDirectory = androidSdkDirectory.zip(androidNdkVersion) { sdk, ndk -> "$sdk/ndk/$ndk" }
 val androidNdkHost = hostOperatingSystem.map { os ->
     when (os) {
         "macos" -> "darwin-x86_64"
@@ -276,43 +319,47 @@ val buildJavaCppAndroidBindings = androidAbis.flatMap { (abi, configuration) ->
             group = "ffmpeg bindings"
             description = "Builds the ${family.lowercase()} JavaCPP JNI library for Android $abi"
             dependsOn(verifyJavaCppBindings)
-            dependsOn(":native-build:android:buildFfmpeg${selectedNativeProfileTaskSuffix.get()}$taskSuffix")
+            dependsOn(selectedNativeProfileTaskSuffix.map {
+                ":native-build:android:buildFfmpeg$it$taskSuffix"
+            })
             classpath = javaCppGenerator + files(
                 verifyJavaCppBindings.map { it.destinationDirectory },
                 compileJavaCppPresets.map { it.destinationDirectory },
             )
             mainClass.set("org.bytedeco.javacpp.tools.Builder")
 
-            val profile = selectedNativeProfile.get()
-            val install = rootProject.layout.projectDirectory.dir("native-build/android/out/$profile/$abi")
+            val install = selectedNativeProfile.map {
+                rootProject.layout.projectDirectory.dir("native-build/android/out/$it/$abi")
+            }
             val projectHeaders = layout.projectDirectory.dir("src/main/headers")
             val output = layout.buildDirectory.dir("generated/javacpp-jni/android/$abi/$family")
-            val ndk = androidNdkDirectory.get()
-            val ndkHost = androidNdkHost.get()
-            inputs.dir(install.dir("include"))
-            inputs.dir(install.dir("lib"))
+            val generatedClasses = verifyJavaCppBindings.flatMap { it.destinationDirectory }
+            val presetClasses = compileJavaCppPresets.flatMap { it.destinationDirectory }
+            inputs.dir(install.map { it.dir("include") })
+            inputs.dir(install.map { it.dir("lib") })
             inputs.dir(projectHeaders)
-            inputs.dir(rootProject.layout.projectDirectory.dir("native-build/bridge"))
+            inputs.dir(bridgeSourceDirectory)
             inputs.files(verifyJavaCppBindings.map { it.outputs.files })
             outputs.dir(output)
             outputs.cacheIf { false }
 
             args(
                 "-classpath", listOf(
-                    verifyJavaCppBindings.get().destinationDirectory.get().asFile,
-                    compileJavaCppPresets.get().destinationDirectory.get().asFile,
+                    generatedClasses.get().asFile,
+                    presetClasses.get().asFile,
                 ).joinToString(File.pathSeparator),
                 "-d", output.get().asFile.absolutePath,
                 "-nodelete",
                 "-properties", platform,
-                "-Dplatform.root=$ndk/",
-                "-Dplatform.compiler=toolchains/llvm/prebuilt/$ndkHost/bin/$compiler",
+                "-Dplatform.root=${androidNdkDirectory.get()}/",
+                "-Dplatform.compiler=toolchains/llvm/prebuilt/${androidNdkHost.get()}/bin/" +
+                    "$compiler${androidApiLevel.get()}-clang++",
                 "-Dplatform.includepath=${listOf(
-                    install.dir("include").asFile.absolutePath,
+                    install.get().dir("include").asFile.absolutePath,
                     projectHeaders.asFile.absolutePath,
-                    rootProject.layout.projectDirectory.dir("native-build/bridge").asFile.absolutePath,
+                    bridgeSourceDirectory.asFile.absolutePath,
                 ).joinToString(File.pathSeparator)}",
-                "-Dplatform.linkpath=${install.dir("lib").asFile.absolutePath}",
+                "-Dplatform.linkpath=${install.get().dir("lib").asFile.absolutePath}",
                 "io.github.aftrolle.ffmpegkmp.bindings.generated.${family.lowercase()}.**",
             )
         }
@@ -327,20 +374,20 @@ tasks.register("buildJavaCppAndroidBindings") {
 
 val assembleJavaCppAndroidRuntime = tasks.register<Zip>("assembleJavaCppAndroidRuntime") {
     group = "ffmpeg bindings"
-    description = "Assembles an ignored local Android runtime AAR containing generated declarations and JNI libraries"
+    description = "Assembles an ignored binary-only Android runtime AAR containing FFmpeg and JNI libraries"
     dependsOn(buildJavaCppAndroidBindings)
-    archiveFileName.set("ffmpegkmp-bindings-${selectedNativeProfile.get()}-local.aar")
+    archiveFileName.set(selectedNativeProfile.map { "ffmpegkmp-runtime-$it-local.aar" })
     destinationDirectory.set(layout.buildDirectory.dir("generated/android-runtime"))
     isReproducibleFileOrder = true
     isPreserveFileTimestamps = false
     outputs.cacheIf { false }
 
     from(layout.projectDirectory.file("src/androidPackaging/AndroidManifest.xml"))
-    from(javaCppDeclarationsJar.flatMap { it.archiveFile }) {
-        rename { "classes.jar" }
-    }
+    from(stageBindingNotices)
     androidAbis.forEach { (abi, _) ->
-        from(rootProject.layout.projectDirectory.dir("native-build/android/out/${selectedNativeProfile.get()}/$abi/lib")) {
+        from(selectedNativeProfile.map {
+            rootProject.layout.projectDirectory.dir("native-build/android/out/$it/$abi/lib")
+        }) {
             include("libavcodec.so", "libavdevice.so", "libavfilter.so", "libavformat.so")
             include("libavutil.so", "libswresample.so", "libswscale.so")
             into("jni/$abi")
@@ -354,37 +401,53 @@ val assembleJavaCppAndroidRuntime = tasks.register<Zip>("assembleJavaCppAndroidR
     }
 }
 
-val stageAndroidJniLibraries = tasks.register<StageAndroidJniLibraries>("stageAndroidJniLibraries") {
-    dependsOn(assembleJavaCppAndroidRuntime)
-    runtimeAar.set(assembleJavaCppAndroidRuntime.flatMap { it.archiveFile })
-    outputDirectory.set(layout.buildDirectory.dir("generated/android-jni"))
+val stageWasmRuntime = tasks.register<Sync>("stageWasmRuntime") {
+    group = "ffmpeg bindings"
+    description = "Stages the ignored local FFmpeg WebAssembly runtime and worker"
+    dependsOn(":native-build:wasm:linkFfmpegKmpWorker")
+    from(selectedNativeProfile.map { profile ->
+        rootProject.layout.projectDirectory.dir("native-build/wasm/build/worker/$profile")
+    }) {
+        include("ffmpegkmp.mjs", "ffmpegkmp.wasm")
+    }
+    from(layout.projectDirectory.dir("src/wasmJsMain/resources")) {
+        include("ffmpegkmp-worker.mjs")
+    }
+    into(layout.buildDirectory.dir(selectedNativeProfile.map { "generated/wasm-runtime/$it" }))
 }
 
-extensions.configure<KotlinMultiplatformAndroidComponentsExtension> {
-    onVariants(selector().all()) { variant ->
-        variant.sources.jniLibs?.addGeneratedSourceDirectory(
-            stageAndroidJniLibraries,
-            StageAndroidJniLibraries::outputDirectory,
-        )
-    }
+tasks.register<Zip>("assembleWasmRuntime") {
+    group = "ffmpeg bindings"
+    description = "Packages the ignored local FFmpeg WebAssembly runtime and worker"
+    dependsOn(stageWasmRuntime)
+    archiveFileName.set(selectedNativeProfile.map { "ffmpegkmp-wasm-runtime-$it-local.zip" })
+    destinationDirectory.set(layout.buildDirectory.dir("generated/wasm-runtime-archives"))
+    isReproducibleFileOrder = true
+    isPreserveFileTimestamps = false
+    outputs.cacheIf { false }
+    from(stageWasmRuntime)
+}
+
+tasks.withType<Zip>().matching { it.name == "bundleAndroidMainAar" }.configureEach {
+    from(stageBindingNotices)
 }
 
 tasks.named<Test>("jvmTest") {
     dependsOn(buildJavaCppHostBindings)
-    val profile = selectedNativeProfile.get()
-    val install = rootProject.layout.projectDirectory.dir(
-        "native-build/jvm/out/$profile/${hostMachine.get()}",
-    )
-    val jniPath = javaCppFamilies.joinToString(File.pathSeparator) { family ->
-        layout.buildDirectory.dir("generated/javacpp-jni/${hostMachine.get()}/$family")
-            .get().asFile.absolutePath
+    val nativeLibraryPath = nativeJvmInstall.get().dir("lib").asFile.absolutePath
+    val jniPath = layout.buildDirectory.get().let { buildDirectory ->
+        val machine = hostMachine.get()
+        javaCppFamilies.joinToString(File.pathSeparator) { family ->
+            buildDirectory.dir("generated/javacpp-jni/$machine/$family").asFile.absolutePath
+        }
     }
     systemProperty("ffmpegkmp.jni.path", jniPath)
-    systemProperty("java.library.path", "$jniPath${File.pathSeparator}${install.dir("lib").asFile.absolutePath}")
-    when (hostOperatingSystem.get()) {
-        "macos" -> environment("DYLD_LIBRARY_PATH", install.dir("lib").asFile.absolutePath)
-        "linux" -> environment("LD_LIBRARY_PATH", install.dir("lib").asFile.absolutePath)
-    }
+    systemProperty(
+        "java.library.path",
+        "$jniPath${File.pathSeparator}$nativeLibraryPath",
+    )
+    environment("DYLD_LIBRARY_PATH", nativeLibraryPath)
+    environment("LD_LIBRARY_PATH", nativeLibraryPath)
 }
 
 kotlin {
@@ -404,11 +467,11 @@ kotlin {
             kotlin.srcDir("src/jvmAndroidMain/kotlin")
         }
         jvmMain.dependencies {
-            implementation(libs.javacpp)
+            api(libs.javacpp)
             implementation(javaCppDeclarations)
         }
         androidMain.dependencies {
-            implementation(libs.javacpp)
+            api(libs.javacpp)
             implementation(javaCppDeclarations)
         }
     }
@@ -416,6 +479,7 @@ kotlin {
     targets.withType<KotlinNativeTarget>().configureEach {
         val nativeTargetName = name
         val nativeTargetTaskSuffix = nativeTargetName.replaceFirstChar(Char::titlecase)
+        val nativeProfileTaskSuffix = selectedNativeProfileTaskSuffix.get()
         compilations.getByName("main").cinterops.create("ffmpeg") {
             definitionFile.set(layout.projectDirectory.file("src/nativeInterop/cinterop/ffmpeg.def"))
             packageName("io.github.aftrolle.ffmpegkmp.bindings.cinterop")
@@ -432,14 +496,9 @@ kotlin {
             includeDirs.headerFilterOnly(projectHeaders)
             includeDirs.headerFilterOnly(bridgeHeaders)
             includeDirs.allHeaders(install.dir("include"))
-            extraOpts("-libraryPath", install.dir("lib").asFile.absolutePath)
         }
         tasks.named("cinteropFfmpeg$nativeTargetTaskSuffix").configure {
-            dependsOn(
-                ":native-build:apple:buildFfmpeg" +
-                    selectedNativeProfileTaskSuffix.get() +
-                    nativeTargetTaskSuffix,
-            )
+            dependsOn(":native-build:apple:buildFfmpeg$nativeProfileTaskSuffix$nativeTargetTaskSuffix")
         }
     }
 }

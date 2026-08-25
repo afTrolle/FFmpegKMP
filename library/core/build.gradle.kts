@@ -63,6 +63,12 @@ tasks.named<Test>("jvmTest") {
     }
 }
 
+tasks.withType<Test>().matching { it.name == "testAndroidHostTest" }.configureEach {
+    // Android host tests run on the build machine and cannot load the Android
+    // runtime .so files. Device tests retain the compiled-runtime coverage.
+    exclude("**/CompiledRuntimeIntegrationTest.class")
+}
+
 kotlin {
     sourceSets {
         commonMain.dependencies {

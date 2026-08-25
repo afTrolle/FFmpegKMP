@@ -10,7 +10,7 @@ description = "Android launcher for the FFmpegKMP Studio sample"
 val selectedNativeProfile = providers.gradleProperty("ffmpegkmp.profile").orElse("standard")
 val localRuntimeAar = selectedNativeProfile.map { profile ->
     rootProject.layout.projectDirectory.file(
-        "bindings/build/generated/android-runtime/ffmpegkmp-bindings-$profile-local.aar",
+        "bindings/build/generated/android-runtime/ffmpegkmp-runtime-$profile-local.aar",
     )
 }
 val prepareFFmpegKmpRuntime = tasks.register<Sync>("prepareFFmpegKmpRuntime") {
@@ -36,7 +36,7 @@ android {
     }
 
     sourceSets.named("main") {
-        jniLibs.srcDir(layout.buildDirectory.dir("generated/ffmpegkmp-jni").get().asFile)
+        jniLibs.directories.add("build/generated/ffmpegkmp-jni")
     }
 }
 
@@ -46,6 +46,6 @@ tasks.matching { it.name.startsWith("merge") && it.name.endsWith("JniLibFolders"
 
 dependencies {
     implementation(project(":samples:studio"))
-    implementation("androidx.activity:activity-compose:1.13.0")
+    implementation(libs.androidx.activity.compose)
     implementation(libs.filekit.dialogs.compose)
 }

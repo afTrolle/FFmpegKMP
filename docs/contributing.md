@@ -25,6 +25,15 @@ configured Android NDK, Apple builds require Xcode, JVM builds require the host
 C toolchain, and browser builds require an activated Emscripten SDK. See the
 native build documentation for versions, overrides, and target-specific setup.
 
+Run the portable test matrix with `./gradlew allTests`. This always compiles and
+links the tvOS simulator test executables, but does not launch them because a
+tvOS SDK installation does not necessarily include a runnable simulator. On a
+host with a tvOS simulator runtime, opt into execution with:
+
+```shell
+./gradlew allTests -Pffmpegkmp.runTvosSimulatorTests=true
+```
+
 ## Dependency integrity
 
 Gradle dependencies are locked per module and verified against SHA-256

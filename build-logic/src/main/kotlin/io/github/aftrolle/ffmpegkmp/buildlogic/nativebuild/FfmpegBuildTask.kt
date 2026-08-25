@@ -14,6 +14,7 @@ import org.gradle.api.tasks.PathSensitive
 import org.gradle.api.tasks.PathSensitivity
 import org.gradle.api.tasks.TaskAction
 import org.gradle.process.ExecOperations
+import org.gradle.process.ExecSpec
 import java.io.ByteArrayOutputStream
 import java.io.File
 import javax.inject.Inject
@@ -182,7 +183,7 @@ abstract class FfmpegBuildTask : DefaultTask() {
             commandLine(configureCommand)
             standardOutput = output
             errorOutput = output
-            environment(reproducibleEnvironment())
+            configureBuildEnvironment()
             isIgnoreExitValue = true
         }
         configureLog.writeBytes(output.toByteArray())
@@ -195,12 +196,12 @@ abstract class FfmpegBuildTask : DefaultTask() {
         execOperations.exec {
             workingDir(work)
             commandLine(makeCommand("-j${jobs.get()}"))
-            environment(reproducibleEnvironment())
+            configureBuildEnvironment()
         }
         execOperations.exec {
             workingDir(work)
             commandLine(makeCommand("install-libs", "install-headers"))
-            environment(reproducibleEnvironment())
+            configureBuildEnvironment()
         }
 
         buildBridge(work, install)
@@ -480,8 +481,30 @@ abstract class FfmpegBuildTask : DefaultTask() {
                     "ffmpegkmp-bridge",
                 ),
             )
-            environment(reproducibleEnvironment())
+            configureBuildEnvironment()
         }
+    }
+
+    private fun ExecSpec.configureBuildEnvironment() {
+        environment(reproducibleEnvironment())
+        if (targetKind.get() != "apple") return
+
+        // Xcode exports target SDK settings into shell-script build phases.
+        // FFmpeg's host tools must still be macOS executables that can run
+        // during the cross-build; explicit --cc/--sysroot flags configure the
+        // actual Apple target compilers independently.
+        listOf(
+            "SDKROOT",
+            "DYLD_ROOT_PATH",
+            "IPHONEOS_DEPLOYMENT_TARGET",
+            "MACOSX_DEPLOYMENT_TARGET",
+            "TVOS_DEPLOYMENT_TARGET",
+            "WATCHOS_DEPLOYMENT_TARGET",
+            "PLATFORM_NAME",
+            "EFFECTIVE_PLATFORM_NAME",
+            "ARCHS",
+            "CURRENT_ARCH",
+        ).forEach(environment::remove)
     }
 
     private fun emscriptenTool(name: String): String {

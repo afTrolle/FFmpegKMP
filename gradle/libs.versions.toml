@@ -1,16 +1,25 @@
 [versions]
-agp = "9.3.1"
+agp = "9.3.2"
 android-compileSdk = "37"
 android-minSdk = "24"
+android-ndk = "30.0.15729638"
+jvm-toolchain = "21"
+jvm-bytecode = "11"
+apple-iosDeployment = "15.0"
+apple-macosDeployment = "12.0"
+apple-tvosDeployment = "15.0"
+apple-watchosDeployment = "8.0"
 kotlin = "2.4.10"
 coroutines = "1.11.0"
-okio = "3.17.0"
+okio = "3.18.1"
 serialization = "1.11.0"
 javacpp = "1.5.14"
 androidx-test-runner = "1.7.0"
-compose = "1.12.0-rc01"
+compose = "1.12.0"
+compose-material3 = "1.9.0"
 filekit = "0.15.0"
 maven-publish = "0.37.0"
+androidx-activity = "1.13.0"
 
 [libraries]
 android-gradle-plugin = { module = "com.android.tools.build:gradle", version.ref = "agp" }
@@ -25,6 +34,11 @@ androidx-test-runner = { module = "androidx.test:runner", version.ref = "android
 filekit-core = { module = "io.github.vinceglb:filekit-core", version.ref = "filekit" }
 filekit-dialogs-compose = { module = "io.github.vinceglb:filekit-dialogs-compose", version.ref = "filekit" }
 maven-publish-gradle-plugin = { module = "com.vanniktech:gradle-maven-publish-plugin", version.ref = "maven-publish" }
+androidx-activity-compose = { module = "androidx.activity:activity-compose", version.ref = "androidx-activity" }
+compose-runtime = { module = "org.jetbrains.compose.runtime:runtime", version.ref = "compose" }
+compose-foundation = { module = "org.jetbrains.compose.foundation:foundation", version.ref = "compose" }
+compose-ui = { module = "org.jetbrains.compose.ui:ui", version.ref = "compose" }
+compose-material3 = { module = "org.jetbrains.compose.material3:material3", version.ref = "compose-material3" }
 
 [plugins]
 android-kotlin-multiplatform-library = { id = "com.android.kotlin.multiplatform.library", version.ref = "agp" }

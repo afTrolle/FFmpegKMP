@@ -4,7 +4,7 @@ plugins {
 
 ffmpegNativeBuild {
     defaultProfile.set("standard")
-    sourceDirectory.set(rootProject.layout.projectDirectory.dir("ffmpeg").asFile.absolutePath)
+    sourceDirectory.set(rootProject.layout.projectDirectory.dir("ffmpeg"))
     jobs.set(providers.gradleProperty("ffmpegkmp.jobs").map(String::toInt).orElse(Runtime.getRuntime().availableProcessors()))
 
     common {

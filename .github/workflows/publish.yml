@@ -1,0 +1,89 @@
+name: Publish to Maven Central
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: maven-central-${{ github.event.release.tag_name }}
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    environment: maven-central
+    runs-on: macos-15
+    timeout-minutes: 120
+    env:
+      ORG_GRADLE_PROJECT_mavenCentralUsername: ${{ secrets.MAVEN_CENTRAL_USERNAME }}
+      ORG_GRADLE_PROJECT_mavenCentralPassword: ${{ secrets.MAVEN_CENTRAL_PASSWORD }}
+      ORG_GRADLE_PROJECT_signingInMemoryKey: ${{ secrets.SIGNING_KEY }}
+      ORG_GRADLE_PROJECT_signingInMemoryKeyId: ${{ secrets.SIGNING_KEY_ID }}
+      ORG_GRADLE_PROJECT_signingInMemoryKeyPassword: ${{ secrets.SIGNING_KEY_PASSWORD }}
+
+    steps:
+      - name: Check out the released tag
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.release.tag_name }}
+          fetch-depth: 0
+          submodules: recursive
+
+      - name: Set up Java
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: 21
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v6
+
+      - name: Validate release tag
+        id: version
+        shell: bash
+        env:
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+        run: |
+          tag="$RELEASE_TAG"
+          if [[ ! "$tag" =~ ^v?[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z][0-9A-Za-z.-]*)?$ ]]; then
+            echo "Release tag must look like v1.2.3 or 1.2.3 (optional prerelease suffix)." >&2
+            exit 1
+          fi
+          version="${tag#v}"
+          if [[ "$version" == *-SNAPSHOT ]]; then
+            echo "Maven Central releases cannot use a SNAPSHOT version." >&2
+            exit 1
+          fi
+          echo "value=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Verify derived Gradle version
+        shell: bash
+        env:
+          EXPECTED_VERSION: ${{ steps.version.outputs.value }}
+        run: |
+          expected="$EXPECTED_VERSION"
+          actual="$(./gradlew -q printVersion --no-configuration-cache)"
+          test "$actual" = "$expected" || {
+            echo "Tag version $expected does not match Gradle version $actual." >&2
+            exit 1
+          }
+
+      - name: Stage signed publications locally
+        run: >-
+          ./gradlew verifyMavenPublicationScope
+          publishAllPublicationsToReleaseCheckRepository
+          -Pffmpegkmp.version=${{ steps.version.outputs.value }}
+          --no-configuration-cache
+          --stacktrace
+
+      - name: Reject native binaries in Maven artifacts
+        run: scripts/verify-no-native-binaries.sh build/release-check-repository
+
+      - name: Publish and release on Maven Central
+        run: >-
+          ./gradlew publishAndReleaseToMavenCentral
+          -Pffmpegkmp.version=${{ steps.version.outputs.value }}
+          --no-configuration-cache
+          --stacktrace

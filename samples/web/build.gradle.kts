@@ -12,15 +12,12 @@ description = "WebAssembly launcher for the FFmpegKMP Studio sample"
 
 val selectedNativeProfile = providers.gradleProperty("ffmpegkmp.profile").orElse("standard")
 val stageFFmpegKmpWasmRuntime = tasks.register<Sync>("stageFFmpegKmpWasmRuntime") {
-    dependsOn(":native-build:wasm:linkFfmpegKmpWorker")
+    group = "ffmpeg sample"
+    description = "Builds and stages the local FFmpeg WebAssembly runtime used by the web sample"
+    dependsOn(":bindings:stageWasmRuntime")
     from(selectedNativeProfile.map { profile ->
-        rootProject.layout.projectDirectory.dir("native-build/wasm/build/worker/$profile")
-    }) {
-        include("ffmpegkmp.mjs", "ffmpegkmp.wasm")
-    }
-    from(rootProject.layout.projectDirectory.dir("bindings/src/wasmJsMain/resources")) {
-        include("ffmpegkmp-worker.mjs")
-    }
+        rootProject.layout.projectDirectory.dir("bindings/build/generated/wasm-runtime/$profile")
+    })
     into(layout.buildDirectory.dir("generated/ffmpegkmp-wasm-runtime"))
 }
 
@@ -36,7 +33,7 @@ kotlin {
     }
     sourceSets.wasmJsMain.dependencies {
         implementation(project(":samples:studio"))
-        implementation(compose.ui)
+        implementation(libs.compose.ui)
     }
     sourceSets.wasmJsMain {
         resources.srcDir(stageFFmpegKmpWasmRuntime)

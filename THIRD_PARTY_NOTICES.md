@@ -87,6 +87,19 @@ The public mounted-I/O API and platform adapters use Okio:
 
 Okio remains separately copyrighted by Square, Inc. and its contributors.
 
+## JavaCPP
+
+JavaCPP generates and supports the JVM and Android declaration layer:
+
+- Project: <https://github.com/bytedeco/javacpp>
+- Licence choice used by FFmpegKMP: Apache License 2.0
+
+The JavaCPP runtime is referenced as a normal Maven dependency and is not
+shaded into FFmpegKMP. JavaCPP is also offered upstream under GPLv2-or-later
+with the Classpath exception. Generated FFmpeg declarations are distributed
+under the separate `bindings` module policy above; JavaCPP does not relicense
+the FFmpeg headers parsed by the generator.
+
 ## Downstream distribution responsibility
 
 The [licensing and distribution policy](docs/licensing.md) describes the

@@ -105,12 +105,54 @@ Native artifacts are generated locally through target-specific pipelines. See
 the [native build documentation](docs/native-builds.md) for the intended build
 model and reproducibility requirements.
 
+## Use from another application
+
+Add the APIs you use from Maven Central to `commonMain`:
+
+```kotlin
+kotlin {
+    sourceSets.commonMain.dependencies {
+        implementation("io.github.aftrolle.ffmpegkmp:ffmpeg:<version>")
+        implementation("io.github.aftrolle.ffmpegkmp:ffprobe:<version>")
+        // Optional typed filter graph DSL:
+        implementation("io.github.aftrolle.ffmpegkmp:filters:<version>")
+    }
+}
+```
+
+The Maven modules contain Kotlin APIs and binding declarations only. Build the
+matching local runtime from the same Git tag, then add it to the final app:
+
+The high-level modules bring in `core` and `bindings` transitively. Add
+`io.github.aftrolle.ffmpegkmp:bindings:<version>` directly only when using its
+low-level API. On JVM and Android, the binding artifact exposes JavaCPP as a
+transitive API dependency because its generated public declarations use
+JavaCPP types. FFmpeg and JNI binaries are still supplied only by the separate
+local runtime.
+
+```shell
+git clone --recurse-submodules --branch <release-tag> https://github.com/afTrolle/FFmpegKMP.git
+cd FFmpegKMP
+./gradlew assembleAndroidSampleBinaries   # Android AAR with JNI/FFmpeg .so files
+./gradlew assembleDesktopSampleBinaries   # Current-host JNI + shared libraries
+./gradlew assembleIosSampleBinaries       # iOS device and simulator static archives
+./gradlew assembleWebSampleBinaries       # .mjs/.wasm runtime (requires Emscripten)
+```
+
+`./gradlew assembleSampleBinaries` runs all four on a macOS machine with the
+Android, Xcode, desktop, and Emscripten toolchains installed. Each sample build
+also invokes its own preparation task automatically. See
+[Using FFmpegKMP in an application](docs/consuming.md) for the generated paths
+and platform-specific integration steps. Generated native binaries remain
+ignored local outputs and are never part of a Maven publication.
+
 ## Delivery status
 
 - Native binary builds cover Android, Apple, JVM desktop, and Emscripten.
-- JavaCPP 1.5.13 generates and verifies the seven declaration families and the
-  project bridge locally. The JVM adapter and repeated-command smoke test use
-  those generated JNI libraries; Apple uses one umbrella cinterop klib.
+- JavaCPP 1.5.14 generates and verifies eight declaration families: the seven
+  FFmpeg libraries and the project bridge. The JVM adapter and repeated-command
+  smoke test use those generated JNI libraries; Apple uses one umbrella
+  cinterop klib.
 - `core`, `ffmpeg`, `ffprobe`, and `filters` contain the session API, scheduler,
   command/tokenizer DSL, typed JSON model, and filter AST.
 - FFmpegKMP Studio exercises the public API with FileKit import, FFprobe media
@@ -128,6 +170,7 @@ model and reproducibility requirements.
 
 - [Contributing](docs/contributing.md)
 - [Maven Central publishing](docs/publishing.md)
+- [Using FFmpegKMP in an application](docs/consuming.md)
 - [Architecture](docs/architecture.md)
 - [Native builds](docs/native-builds.md)
 - [Binding generation](docs/bindings.md)
