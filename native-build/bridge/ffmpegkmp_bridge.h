@@ -4,6 +4,7 @@
 
 #include <stddef.h>
 #include <stdint.h>
+#include "ffplaykmp_player.h"
 
 #if defined(_WIN32)
 #define FFMPEGKMP_EXPORT __declspec(dllexport)

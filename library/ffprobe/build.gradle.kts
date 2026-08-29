@@ -2,6 +2,7 @@ import org.gradle.api.tasks.Sync
 
 plugins {
     id("ffmpegkmp.multiplatform-library")
+    id("ffmpegkmp.shared-media-test-fixtures")
     alias(libs.plugins.kotlin.serialization)
 }
 

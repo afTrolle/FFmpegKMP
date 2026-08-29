@@ -70,7 +70,7 @@ class ExportCommandFactoryTest {
         speed: Double,
     ) = TimelineClip(
         id = id,
-        file = PlatformFile("/tmp/$name"),
+        file = testPlatformFile(name),
         displayName = name,
         sizeBytes = null,
         mediaInfo = ClipMediaInfo(duration, 1920, 1080, "h264", "30/1", hasAudio, if (hasAudio) "aac" else null),
@@ -80,3 +80,5 @@ class ExportCommandFactoryTest {
         speed = speed,
     )
 }
+
+internal expect fun testPlatformFile(name: String): PlatformFile

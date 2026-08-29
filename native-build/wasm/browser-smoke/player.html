@@ -1,0 +1,86 @@
+<!doctype html>
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>FFmpegKMP Wasm player smoke test</title>
+</head>
+<body>
+  <h1>FFmpegKMP Wasm player smoke test</h1>
+  <p id="status">loading fixture</p>
+  <canvas id="frame"></canvas>
+  <pre id="snapshot"></pre>
+  <script type="module">
+    const status = document.querySelector('#status');
+    const snapshotNode = document.querySelector('#snapshot');
+    const canvas = document.querySelector('#frame');
+    const fixtureResponse = await fetch(
+      '/library/core/src/commonTest/resources/hardware-h264.mp4',
+    );
+    const fixture = new Uint8Array(await fixtureResponse.arrayBuffer());
+    const worker = new Worker(
+      '/bindings/src/webMain/resources/ffmpegkmp-worker.mjs',
+      { type: 'module' },
+    );
+    const moduleUrl = '/native-build/wasm/build/worker/standard/ffmpegkmp.mjs';
+    let sawPlaying = false;
+    let prepared = false;
+    let outputAttached = false;
+
+    worker.onmessage = ({ data }) => {
+      if (data.type === 'player-ready') {
+        worker.postMessage({
+          type: 'player-prepare',
+          input: 'fixture.mp4',
+          requireSecurePath: false,
+          mounts: [{ path: 'fixture.mp4', bytes: fixture }],
+          moduleUrl,
+        }, [fixture.buffer]);
+      } else if (data.type === 'player-snapshot') {
+        const snapshot = JSON.parse(data.snapshot);
+        snapshotNode.textContent = JSON.stringify(snapshot, null, 2);
+        sawPlaying ||= snapshot.state === 4;
+        if (!prepared && snapshot.state === 2) {
+          prepared = true;
+          worker.postMessage({ type: 'player-set-output', flags: 3, moduleUrl });
+        } else if (!outputAttached && snapshot.state === 3 && snapshot.outputFlags) {
+          outputAttached = true;
+          worker.postMessage({ type: 'player-play', moduleUrl });
+        }
+      } else if (data.type === 'player-frame') {
+        canvas.width = data.width;
+        canvas.height = data.height;
+        const context = canvas.getContext('2d');
+        context.putImageData(
+          new ImageData(new Uint8ClampedArray(data.bytes.buffer), data.width, data.height),
+          0,
+          0,
+        );
+        status.textContent = sawPlaying
+          ? 'PASS: FFplay scheduled and rendered a browser frame'
+          : 'FAIL: a frame arrived before the playing state';
+        worker.postMessage({ type: 'player-close', moduleUrl });
+      } else if (data.type === 'player-video-frame') {
+        canvas.width = data.width;
+        canvas.height = data.height;
+        const context = canvas.getContext('2d');
+        context.drawImage(data.frame, 0, 0, data.width, data.height);
+        data.frame.close();
+        status.textContent = sawPlaying
+          ? 'PASS: WebCodecs decoded and rendered a VideoFrame'
+          : 'FAIL: a VideoFrame arrived before the playing state';
+        worker.postMessage({ type: 'player-close', moduleUrl });
+      } else if (data.type === 'player-failure') {
+        status.textContent = `FAIL: ${data.message}`;
+        worker.terminate();
+      }
+    };
+    worker.onerror = event => {
+      status.textContent = `FAIL: ${event.message}`;
+      worker.terminate();
+    };
+    worker.postMessage({ type: 'player-init', decoderPreference: 0, moduleUrl });
+  </script>
+</body>
+</html>

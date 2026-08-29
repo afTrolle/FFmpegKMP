@@ -65,4 +65,18 @@ See the [architecture](architecture.md), [native build](native-builds.md), and
 [licensing](licensing.md) documentation for the constraints that apply to new
 modules and build tasks.
 
+## Shared media test fixtures
+
+Modules that exercise the repository's media samples opt in with the
+`ffmpegkmp.shared-media-test-fixtures` convention plugin. Keep this concern out
+of the base multiplatform convention: a new module should apply the fixture
+plugin explicitly instead of adding project-name or project-path checks to
+shared build logic.
+
+Every published multiplatform library also exposes `commonTestAllTargets` from
+the base convention. It runs common tests on Android host, JVM, browser, iOS
+simulator, and macOS targets, then compiles test variants for device-only and
+non-runnable Apple targets. Use this task as the cross-platform gate for shared
+behavior.
+
 [Back to the project README](../README.md)

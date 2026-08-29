@@ -68,7 +68,7 @@ overrides live in each child module. Resolution order is:
 5. target overrides; and
 6. raw `extraConfigureArgs`, which FFmpeg receives last.
 
-The built-in profiles are deliberately dependency-free:
+The built-in profiles do not download optional codec libraries:
 
 - `min` keeps FFmpeg's built-in LGPL components but disables network, devices,
   JNI hardware integration, and SDK hardware APIs;
@@ -89,6 +89,14 @@ grant, LGPL-compatible). This adds two host requirements: `cmake` and
 `pkg-config` (FFmpeg's configure locates libaom through a pinned
 `PKG_CONFIG_LIBDIR`). x86 and x86_64 build with `AOM_TARGET_CPU=generic` so no
 NASM is needed.
+
+On a Linux JVM host, `standard` and `full` probe `pkg-config` for the system
+`libva` package. A successful probe enables FFmpeg's VAAPI device backend; the
+resulting runtime consequently requires a compatible libva installation on the
+deployment machine. If libva is absent at build time, VAAPI is disabled and the
+player reports or uses its software fallback. Windows JVM builds enable the
+SDK-provided D3D11VA and DXVA2 backends, while macOS builds enable VideoToolbox.
+Every backend is probed again when a player opens its decoder.
 
 Custom profiles can extend a built-in profile. The DSL has typed sets for
 encoders, decoders, muxers, demuxers, parsers, protocols, filters, input and
@@ -216,7 +224,10 @@ and `emmake`:
 Browser builds disable host devices, network sockets, and hardware acceleration.
 The pinned `ffmpeg` scheduler itself requires pthreads, so
 the final module uses a bounded Emscripten pthread pool inside the command Web
-Worker. Deployments must provide `SharedArrayBuffer` through cross-origin
+Worker. The linked module also exports the per-player FFplay facade used by both
+browser Kotlin targets. Its software decoder owns mounted input inside Wasm memory
+and exposes only a latest-frame mailbox to JavaScript, which bounds memory when
+the renderer falls behind. Deployments must provide `SharedArrayBuffer` through cross-origin
 isolation (`Cross-Origin-Opener-Policy: same-origin` and
 `Cross-Origin-Embedder-Policy: require-corp`). Profile component
 selection and target overrides remain available through `wasm { ... }`; the
@@ -230,7 +241,9 @@ python3 native-build/wasm/browser-smoke/server.py
 ```
 
 It executes a generated-video FFmpeg command in the module worker and checks
-that a main-page heartbeat continues while the command is running.
+that a main-page heartbeat continues while the command is running. Open
+`player.html` to run the mounted-input FFplay lifecycle and verify that a decoded,
+scheduled RGBA frame reaches an HTML canvas.
 
 ## Traceability and licensing checks
 

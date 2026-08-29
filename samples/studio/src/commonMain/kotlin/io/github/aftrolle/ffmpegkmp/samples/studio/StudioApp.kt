@@ -47,6 +47,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
@@ -61,7 +62,18 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import io.github.aftrolle.ffmpegkmp.core.CommandIo
+import io.github.aftrolle.ffmpegkmp.ffplay.FFplaySource
+import io.github.aftrolle.ffmpegkmp.ffplay.FFplayState
+import io.github.aftrolle.ffmpegkmp.ffplay.FFplaySurface
+import io.github.aftrolle.ffmpegkmp.ffplay.rememberFFplayPlayer
+import io.github.vinceglb.filekit.readBytes
 import kotlin.math.roundToInt
+import kotlin.time.Duration.Companion.seconds
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.withContext
+import okio.Buffer
 
 private val Ink = Color(0xFF090B10)
 private val Panel = Color(0xFF11151D)
@@ -241,6 +253,39 @@ private fun EditorWorkspace(state: StudioState, controller: StudioController) {
 
 @Composable
 private fun PreviewPanel(state: StudioState, modifier: Modifier = Modifier) {
+    val player = rememberFFplayPlayer()
+    val playback by player.snapshot.collectAsState()
+    val selectedClip = state.selectedClip
+
+    LaunchedEffect(selectedClip?.id) {
+        if (selectedClip == null) {
+            player.stop()
+            return@LaunchedEffect
+        }
+        try {
+            val bytes = withContext(Dispatchers.Default) { selectedClip.file.readBytes() }
+            val path = "/studio/preview-${selectedClip.id}.${selectedClip.displayName.previewExtension()}"
+            val io = CommandIo { input(path, Buffer().apply { write(bytes) }) }
+            player.prepare(FFplaySource(path, io))
+            player.seekTo(selectedClip.trimStartSeconds.seconds)
+            player.play()
+        } catch (cancellation: CancellationException) {
+            throw cancellation
+        } catch (failure: Throwable) {
+            println("[FFmpegKMP Studio] Preview failed: ${failure.message}")
+        }
+    }
+
+    LaunchedEffect(selectedClip?.id, playback.position, playback.state) {
+        val clip = selectedClip ?: return@LaunchedEffect
+        if (playback.state == FFplayState.PLAYING &&
+            playback.position.inWholeMilliseconds >= (clip.trimEndSeconds * 1_000).toLong()
+        ) {
+            player.seekTo(clip.trimStartSeconds.seconds)
+            player.play()
+        }
+    }
+
     Card(modifier, colors = CardDefaults.cardColors(containerColor = Panel.copy(alpha = 0.93f))) {
         Column(Modifier.fillMaxSize().padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -260,8 +305,16 @@ private fun PreviewPanel(state: StudioState, modifier: Modifier = Modifier) {
                         .border(1.dp, Color.White.copy(alpha = 0.12f), RoundedCornerShape(12.dp)),
                     contentAlignment = Alignment.Center,
                 ) {
-                    FilmPattern()
-                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    FFplaySurface(player, Modifier.fillMaxSize())
+                    if (playback.video == null) FilmPattern()
+                    Column(
+                        modifier = Modifier
+                            .align(Alignment.BottomCenter)
+                            .fillMaxWidth()
+                            .background(Color.Black.copy(alpha = 0.58f))
+                            .padding(12.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                    ) {
                         Text(
                             state.selectedClip?.displayName ?: "Select a clip",
                             modifier = Modifier.padding(horizontal = 24.dp),
@@ -275,16 +328,61 @@ private fun PreviewPanel(state: StudioState, modifier: Modifier = Modifier) {
                             listOfNotNull(
                                 info?.width?.let { width -> info.height?.let { height -> "$width×$height" } },
                                 info?.codec?.uppercase(),
-                            ).joinToString("  •  ").ifBlank { "FFmpeg preview canvas" },
+                                playback.output?.decoder?.name?.lowercase()?.let { "$it decoder" },
+                            ).joinToString("  •  ").ifBlank { playback.state.previewLabel() },
                             color = Color.White.copy(alpha = 0.62f),
                             fontSize = 12.sp,
                         )
+                        if (selectedClip != null) {
+                            Spacer(Modifier.height(8.dp))
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                            ) {
+                                OutlinedButton(
+                                    onClick = {
+                                        if (playback.state == FFplayState.PLAYING) player.pause() else player.play()
+                                    },
+                                    enabled = playback.state in setOf(
+                                        FFplayState.READY,
+                                        FFplayState.PLAYING,
+                                        FFplayState.PAUSED,
+                                        FFplayState.ENDED,
+                                    ),
+                                ) {
+                                    Text(if (playback.state == FFplayState.PLAYING) "Pause" else "Play")
+                                }
+                                val currentSeconds = playback.position.inWholeMilliseconds / 1_000.0
+                                Text(
+                                    "${currentSeconds.asTime()} / ${selectedClip.trimEndSeconds.asTime()}",
+                                    color = Color.White.copy(alpha = 0.72f),
+                                    fontSize = 11.sp,
+                                )
+                            }
+                        }
                     }
                 }
             }
         }
     }
 }
+
+private fun FFplayState.previewLabel(): String = when (this) {
+    FFplayState.IDLE -> "Preview idle"
+    FFplayState.PREPARING -> "Preparing preview…"
+    FFplayState.WAITING_FOR_OUTPUT -> "Waiting for preview surface…"
+    FFplayState.READY -> "Preview ready"
+    FFplayState.PLAYING -> "Playing preview"
+    FFplayState.PAUSED -> "Preview paused"
+    FFplayState.SEEKING -> "Seeking preview…"
+    FFplayState.ENDED -> "Preview ended"
+    FFplayState.STOPPED -> "Preview stopped"
+    FFplayState.FAILED -> "Preview unavailable"
+    FFplayState.CLOSED -> "Preview closed"
+}
+
+private fun String.previewExtension(): String =
+    substringAfterLast('.', "mp4").lowercase().filter(Char::isLetterOrDigit).take(8).ifBlank { "mp4" }
 
 @Composable
 private fun FilmPattern() {

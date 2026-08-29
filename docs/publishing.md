@@ -10,7 +10,7 @@ These are declaration/API artifacts, not ready-to-run FFmpeg distributions.
 Consumers must build or otherwise provide a compatible native runtime under
 the applicable platform and licence rules.
 
-Only `:bindings` and the four projects under `:library` apply the publishing
+Only `:bindings` and the five projects under `:library` apply the publishing
 plugin. Native-build and sample projects are excluded. The
 `verifyMavenPublicationScope` task fails if that allow-list changes, and the
 archive scan also rejects sample package paths.
@@ -26,6 +26,7 @@ target artifact.
 | Core | `io.github.aftrolle.ffmpegkmp:core:<version>` |
 | FFmpeg API | `io.github.aftrolle.ffmpegkmp:ffmpeg:<version>` |
 | FFprobe API | `io.github.aftrolle.ffmpegkmp:ffprobe:<version>` |
+| FFplay API | `io.github.aftrolle.ffmpegkmp:ffplay:<version>` |
 | Filters DSL | `io.github.aftrolle.ffmpegkmp:filters:<version>` |
 
 ```kotlin
@@ -33,6 +34,7 @@ kotlin {
     sourceSets.commonMain.dependencies {
         implementation("io.github.aftrolle.ffmpegkmp:ffmpeg:<version>")
         implementation("io.github.aftrolle.ffmpegkmp:ffprobe:<version>")
+        implementation("io.github.aftrolle.ffmpegkmp:ffplay:<version>")
         implementation("io.github.aftrolle.ffmpegkmp:filters:<version>")
     }
 }
@@ -150,7 +152,7 @@ version. For example:
 Inspect the result at any time:
 
 ```shell
-./gradlew -q printVersion --no-configuration-cache
+./gradlew -q printVersion
 ```
 
 Central releases are immutable. Never move a release tag or try to reuse a
@@ -202,8 +204,7 @@ build directory:
 release_version='0.1.0'
 ./gradlew verifyMavenPublicationScope \
     publishAllPublicationsToReleaseCheckRepository \
-    -Pffmpegkmp.version="$release_version" \
-    --no-configuration-cache
+    -Pffmpegkmp.version="$release_version"
 ```
 
 Run the mandatory native-content scan:
@@ -219,8 +220,7 @@ explicitly unsigned local audit repository instead:
 ./gradlew verifyMavenPublicationScope \
     publishAllPublicationsToReleaseCheckRepository \
     -Pffmpegkmp.version="$release_version" \
-    -Pffmpegkmp.unsignedPublicationAudit=true \
-    --no-configuration-cache
+    -Pffmpegkmp.unsignedPublicationAudit=true
 scripts/verify-no-native-binaries.sh build/release-check-repository
 ```
 
@@ -275,8 +275,7 @@ The same guarded flow can be run locally after preflight:
 
 ```shell
 ./gradlew publishAndReleaseToMavenCentral \
-    -Pffmpegkmp.version="$release_version" \
-    --no-configuration-cache
+    -Pffmpegkmp.version="$release_version"
 ```
 
 `publishToMavenCentral` uploads for portal review without automatically

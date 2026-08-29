@@ -79,7 +79,7 @@ tasks.register<Exec>("linkFfmpegKmpWorker") {
             "-sINITIAL_MEMORY=67108864",
             "-sALLOW_MEMORY_GROWTH=1",
             "-sALLOW_TABLE_GROWTH=1",
-            "-sEXPORTED_FUNCTIONS=['_malloc','_free','_ffmpegkmp_context_create','_ffmpegkmp_context_destroy','_ffmpegkmp_context_set_io_callback','_ffmpegkmp_execute','_ffmpegkmp_cancel']",
+            "-sEXPORTED_FUNCTIONS=['_malloc','_free','_ffmpegkmp_context_create','_ffmpegkmp_context_destroy','_ffmpegkmp_context_set_io_callback','_ffmpegkmp_execute','_ffmpegkmp_cancel','_ffplaykmp_web_player_create','_ffplaykmp_web_player_destroy','_ffplaykmp_web_player_prepare_bytes','_ffplaykmp_web_player_set_output','_ffplaykmp_web_player_poll','_ffplaykmp_web_player_open_packets','_ffplaykmp_web_player_read_packet','_ffplaykmp_web_player_close_packets','_ffplaykmp_web_player_set_webcodecs_output','_ffplaykmp_web_player_webcodecs_play','_ffplaykmp_web_player_webcodecs_pause','_ffplaykmp_web_player_webcodecs_seek','_ffplaykmp_web_player_webcodecs_presented','_ffplaykmp_web_player_webcodecs_end','_ffplaykmp_player_clear_output','_ffplaykmp_player_play','_ffplaykmp_player_pause','_ffplaykmp_player_seek','_ffplaykmp_player_stop','_ffplaykmp_player_cancel']",
             "-sEXPORTED_RUNTIME_METHODS=['addFunction','removeFunction','setValue','stringToNewUTF8','FS','HEAPU8','PThread']",
             "-sASSERTIONS=1",
         ),

@@ -420,12 +420,26 @@ abstract class FfmpegBuildTask : DefaultTask() {
             }
             "linux" -> {
                 arguments += listOf(
-                    "--target-os=linux", "--arch=${architecture.get()}", "--disable-vaapi",
+                    "--target-os=linux", "--arch=${architecture.get()}",
                     "--disable-vdpau", "--disable-vulkan", "--disable-opencl",
                 )
+                // VAAPI is an optional host capability. Enable it only when the target build can
+                // resolve libva; the player still probes device creation again at runtime.
+                if (hardwareDecoding.get() && pkgConfigPackageExists("libva")) {
+                    arguments += "--enable-vaapi"
+                } else {
+                    arguments += "--disable-vaapi"
+                }
                 if (architecture.get().startsWith("x86")) arguments += "--disable-x86asm"
             }
-            "windows" -> arguments += listOf("--target-os=mingw32", "--arch=x86_64", "--disable-x86asm")
+            "windows" -> {
+                arguments += listOf("--target-os=mingw32", "--arch=x86_64", "--disable-x86asm")
+                arguments += if (hardwareDecoding.get()) {
+                    listOf("--enable-d3d11va", "--enable-dxva2")
+                } else {
+                    listOf("--disable-d3d11va", "--disable-dxva2")
+                }
+            }
             else -> error("Unsupported JVM native host: $os")
         }
         if (os != "macos" && extraCompilerArgs.get().isNotEmpty()) {
@@ -555,6 +569,14 @@ abstract class FfmpegBuildTask : DefaultTask() {
         return path.any { directory ->
             suffixes.any { suffix -> File(directory, command + suffix).isFile }
         }
+    }
+
+    private fun pkgConfigPackageExists(packageName: String): Boolean {
+        if (!commandExists("pkg-config")) return false
+        return execOperations.exec {
+            commandLine("pkg-config", "--exists", packageName)
+            isIgnoreExitValue = true
+        }.exitValue == 0
     }
 
     private fun addComponentFlags(arguments: MutableList<String>, type: String, values: Set<String>) {

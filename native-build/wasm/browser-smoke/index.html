@@ -15,7 +15,6 @@
     const status = document.querySelector('#status');
     const heartbeatNode = document.querySelector('#heartbeat');
     const eventsNode = document.querySelector('#events');
-    const decoder = new TextDecoder();
     let heartbeat = 0;
     const timer = setInterval(() => {
       heartbeat += 1;
@@ -23,7 +22,7 @@
     }, 10);
 
     const worker = new Worker(
-      '/bindings/src/wasmJsMain/resources/ffmpegkmp-worker.mjs',
+      '/bindings/src/webMain/resources/ffmpegkmp-worker.mjs',
       { type: 'module' },
     );
     const width = 256;
@@ -39,7 +38,7 @@
     const startedAt = heartbeat;
     worker.onmessage = ({ data }) => {
       if (data.type === 'event') {
-        eventsNode.textContent += decoder.decode(data.bytes);
+        eventsNode.textContent += data.text;
         return;
       }
       if (data.type === 'complete') {
@@ -68,8 +67,7 @@
         '-loop', '1', '-framerate', '30', '-i', '/input.ppm',
         '-frames:v', '30', '-vf', 'scale=1280:720', '-f', 'null', '-',
       ],
-      inputs: [{ path: '/input.ppm', bytes: ppm }],
-      outputPaths: [],
+      mounts: [{ path: '/input.ppm', access: 'read', truncate: false, bytes: ppm }],
       moduleUrl: '/native-build/wasm/build/worker/standard/ffmpegkmp.mjs',
     });
   </script>

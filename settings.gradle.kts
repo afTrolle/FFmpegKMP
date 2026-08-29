@@ -31,6 +31,7 @@ include(
     ":library:core",
     ":library:ffmpeg",
     ":library:ffprobe",
+    ":library:ffplay",
     ":library:filters",
     ":samples:studio",
     ":samples:android",

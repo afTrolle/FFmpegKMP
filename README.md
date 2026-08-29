@@ -1,7 +1,7 @@
 # FFmpegKMP
 
-**FFmpegKMP** is a Kotlin Multiplatform wrapper around FFmpeg and
-FFprobe.
+**FFmpegKMP** is a Kotlin Multiplatform wrapper around FFmpeg, FFprobe, and a
+Compose-first FFplay API.
 Its goal is to expose one Kotlin-first API for media processing and inspection
 across Apple platforms, Android, JVM desktop, and the browser through Kotlin/JS
 or Kotlin/Wasm backed by the same WebAssembly runtime.
@@ -18,6 +18,7 @@ The intended developer experience includes:
 - structured logging, progress, results, and errors;
 - a command DSL for common inputs, outputs, codecs, and formats;
 - typed FFprobe models for formats, streams, chapters, and metadata;
+- state-driven video playback with a portable Compose surface;
 - an optional DSL for composing FFmpeg filter graphs;
 - a raw argument API as an escape hatch;
 - platform bindings hidden behind common Kotlin interfaces.
@@ -72,18 +73,19 @@ truncated by those limits.
 The module layers, binding backends, and native build flow are described in the
 [architecture documentation](docs/architecture.md).
 
-## Target platforms
+## Kotlin Multiplatform targets
 
-| Platform family | Kotlin target | Planned interop |
-| --- | --- | --- |
-| Apple | iOS, macOS, tvOS, and watchOS devices and simulators | Kotlin/Native cinterop |
-| Android | Android | Generated JNI bindings |
-| Desktop | JVM on supported desktop hosts | Generated JNI bindings |
-| Web | Kotlin/JS and Kotlin/Wasm in the browser | Shared worker protocol over an Emscripten Wasm runtime |
+| Module | Android | JVM | JS | Wasm | iOS | macOS | tvOS | watchOS |
+| --- | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: |
+| `bindings` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| `core` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| `ffmpeg` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| `ffprobe` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| `filters` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| `ffplay` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | — | — |
 
-The `ffmpegkmp.multiplatform-library` convention currently declares Android,
-JVM, browser Kotlin/JS, browser Kotlin/Wasm, and the supported Kotlin/Native
-Apple architectures in one shared target policy.
+`ffplay` excludes tvOS and watchOS because Compose UI artifacts are not
+published for those targets.
 
 ## Repository layout
 
@@ -93,7 +95,7 @@ FFmpegKMP/
 ├── ffmpeg/            Pinned FFmpeg source checkout
 ├── native-build/      Android, Apple, JVM, and Wasm build pipelines
 ├── bindings/          One KMP module for native, JNI, and Wasm interop
-├── library/           Public core, FFmpeg, FFprobe, and filter APIs
+├── library/           Public core, FFmpeg, FFprobe, FFplay, and filter APIs
 └── samples/           Android, desktop, iOS, and web examples
 ```
 
@@ -105,7 +107,8 @@ FFmpegKMP/
   adapters. JVM and Android share one JNI C++/Java binding implementation.
 - `library/` contains the platform-neutral API exposed to consumers.
 - `samples/` contains FFmpegKMP Studio, a shared Compose Multiplatform multi-clip
-  editor with Android, iOS, desktop, and browser launchers.
+  editor with Android, iOS, desktop, and browser launchers. Its selected-clip
+  preview is wired through `FFplayPlayer` and `FFplaySurface`.
 
 Native artifacts are generated locally through target-specific pipelines. See
 the [native build documentation](docs/native-builds.md) for the intended build
@@ -120,6 +123,7 @@ kotlin {
     sourceSets.commonMain.dependencies {
         implementation("io.github.aftrolle.ffmpegkmp:ffmpeg:<version>")
         implementation("io.github.aftrolle.ffmpegkmp:ffprobe:<version>")
+        implementation("io.github.aftrolle.ffmpegkmp:ffplay:<version>")
         // Optional typed filter graph DSL:
         implementation("io.github.aftrolle.ffmpegkmp:filters:<version>")
     }

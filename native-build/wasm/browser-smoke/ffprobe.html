@@ -13,20 +13,19 @@
   <script type="module">
     const status = document.querySelector('#status');
     const eventsNode = document.querySelector('#events');
-    const decoder = new TextDecoder();
     const fixtureResponse = await fetch(
       '/library/ffprobe/src/wasmJsTest/resources/big-buck-bunny-1s.mp4',
     );
     const fixture = new Uint8Array(await fixtureResponse.arrayBuffer());
     const worker = new Worker(
-      '/bindings/src/wasmJsMain/resources/ffmpegkmp-worker.mjs',
+      '/bindings/src/webMain/resources/ffmpegkmp-worker.mjs',
       { type: 'module' },
     );
 
     status.textContent = 'probing video';
     worker.onmessage = ({ data }) => {
       if (data.type === 'event') {
-        eventsNode.textContent += decoder.decode(data.bytes);
+        eventsNode.textContent += data.text;
         return;
       }
       status.textContent = data.type === 'complete' && data.returnCode === 0
@@ -46,8 +45,12 @@
         '-v', 'error', '-of', 'json', '-show_format', '-show_streams',
         '/fixtures/big-buck-bunny-1s.mp4',
       ],
-      inputs: [{ path: '/fixtures/big-buck-bunny-1s.mp4', bytes: fixture }],
-      outputPaths: [],
+      mounts: [{
+        path: '/fixtures/big-buck-bunny-1s.mp4',
+        access: 'read',
+        truncate: false,
+        bytes: fixture,
+      }],
       moduleUrl: '/native-build/wasm/build/worker/standard/ffmpegkmp.mjs',
     });
   </script>

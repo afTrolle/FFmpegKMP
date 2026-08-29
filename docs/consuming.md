@@ -23,6 +23,7 @@ kotlin {
     sourceSets.commonMain.dependencies {
         implementation("io.github.aftrolle.ffmpegkmp:ffmpeg:<version>")
         implementation("io.github.aftrolle.ffmpegkmp:ffprobe:<version>")
+        implementation("io.github.aftrolle.ffmpegkmp:ffplay:<version>") // Compose playback
         implementation("io.github.aftrolle.ffmpegkmp:filters:<version>") // optional
     }
 }

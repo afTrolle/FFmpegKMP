@@ -1,3 +1,5 @@
+import io.github.aftrolle.ffmpegkmp.buildlogic.PublicationScopeVerificationTask
+
 plugins {
     id("ffmpegkmp.project")
     alias(libs.plugins.android.kotlin.multiplatform.library) apply false
@@ -7,23 +9,25 @@ plugins {
 
 val selectedNativeProfile = providers.gradleProperty("ffmpegkmp.profile").orElse("standard")
 
-val verifyMavenPublicationScope = tasks.register("verifyMavenPublicationScope") {
+val verifyMavenPublicationScope = tasks.register<PublicationScopeVerificationTask>("verifyMavenPublicationScope") {
     group = "verification"
     description = "Verifies that only bindings and public library modules can publish Maven artifacts"
-    doLast {
-        val allowed = setOf(
+    expectedPublishingProjects.set(
+        setOf(
             ":bindings",
             ":library:core",
             ":library:ffmpeg",
             ":library:ffprobe",
+            ":library:ffplay",
             ":library:filters",
-        )
-        val publishingProjects = allprojects
-            .filter { it.pluginManager.hasPlugin("com.vanniktech.maven.publish") }
-            .map { it.path }
-            .toSet()
-        check(publishingProjects == allowed) {
-            "Unexpected Maven publication scope. Expected $allowed but found $publishingProjects"
+        ),
+    )
+}
+
+allprojects {
+    plugins.withId("com.vanniktech.maven.publish") {
+        verifyMavenPublicationScope.configure {
+            publishingProjects.add(this@allprojects.path)
         }
     }
 }
