@@ -50,6 +50,37 @@ Okio `FileHandle`, `Source`, or `Sink`; Apple commands no longer create staging
 files. `FileHandle` mounts are seekable and use offset-based reads and writes,
 while stream mounts deliberately report themselves as non-seekable.
 
+The Android/JVM bridge stages `Sink` outputs in a temporary seekable file and
+copies completed output to the sink after a successful command. This supports
+formats such as regular MP4 without requiring callers to manage temporary files.
+All `Sink` outputs use this predictable behavior; `Source` and `FileHandle`
+mounts continue to use the protocol directly.
+
+Android runtime source preparation adds P010 byte-buffer input to FFmpeg's
+MediaCodec encoder without modifying the pinned FFmpeg submodule. This enables
+HEVC Main10 HDR10 commands on Android 13+ devices whose codecs advertise P010
+and the HDR10 profile; capability selection and SDR fallback remain caller
+policy. PQ commands select Android's dedicated Main10 HDR10 profile, while HLG
+continues to use the regular Main10 profile. The overlay also forwards any
+`AV_FRAME_DATA_MASTERING_DISPLAY_METADATA`/`AV_FRAME_DATA_CONTENT_LIGHT_LEVEL`
+frame side data present on the encoder's `AVCodecContext` to Android's
+`hdr-static-info` MediaFormat key (CTA-861.3), so mastering-display and
+MaxCLL/MaxFALL metadata from an HDR source survives re-encoding instead of
+being silently dropped.
+
+The Android HDR10 profile is selected from `avctx->profile`, not inferred from
+pixel format or color metadata, so a caller must set it explicitly. A minimal
+HDR10-to-HDR10 command on Android looks like:
+
+```
+-i input.mp4 -vf "scale=out_color_matrix=bt2020:out_primaries=bt2020:out_transfer=smpte2084:out_range=tv:intent=absolute_colorimetric,format=p010le,setparams=colorspace=bt2020nc:color_primaries=bt2020:color_trc=smpte2084:range=tv"
+-c:v hevc_mediacodec -profile:v main10 -pix_fmt p010le output.mp4
+```
+
+(the `-vf` chain is `ToneMap.ToHdr10Bt2020` + `ToneMap.Hdr10P010Output` from the
+`filters` artifact.) Omitting `-profile:v main10` silently produces a non-HDR
+Main/Main10 stream even though the pixel format and color metadata are correct.
+
 ## Command bridge
 
 `native-build/bridge` defines a small C ABI for context lifetime, execution,

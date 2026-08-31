@@ -131,6 +131,13 @@ abstract class FfmpegBuildTask : DefaultTask() {
         install.mkdirs()
 
         val preparedSource = prepareSourceWithIoProtocol(source, work)
+        if (targetKind.get() == "android" && androidMediaCodec.get() && hardwareEncoding.get()) {
+            val mediaCodecEncoder = preparedSource.resolve("libavcodec/mediacodecenc.c")
+            mediaCodecEncoder.writeText(addMediaCodecP010Support(mediaCodecEncoder.readText()))
+            val mediaCodecWrapper = preparedSource.resolve("libavcodec/mediacodec_wrapper.c")
+            mediaCodecWrapper.writeText(addMediaCodecHdr10ProfileSupport(mediaCodecWrapper.readText()))
+            mediaCodecEncoder.writeText(addMediaCodecHdrStaticInfoSupport(mediaCodecEncoder.readText()))
+        }
         val configure = preparedSource.resolve("configure")
 
         val arguments = mutableListOf<String>()

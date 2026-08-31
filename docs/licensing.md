@@ -6,8 +6,9 @@ FFmpeg artifacts, and downstream distribution.
 ## Licences by component
 
 Code authored for FFmpegKMP outside the `bindings` module is licensed under the
-[Apache License 2.0](../LICENSE). It may be used in open-source and proprietary
-software, including commercial products, subject to the licence conditions.
+[Apache License 2.0](../LICENSE), except source-overlay code explicitly marked
+`LGPL-2.1-or-later`. It may be used in open-source and proprietary software,
+including commercial products, subject to the applicable licence conditions.
 
 The [`bindings` module](../bindings/README.md), including generated bindings, is
 separately licensed under `LGPL-2.1-or-later`; its complete licence text is in
@@ -19,6 +20,11 @@ FFmpeg and other third-party components are not relicensed under Apache 2.0.
 They retain their own licences. See the
 [third-party notices](../THIRD_PARTY_NOTICES.md) and the licence files in the
 pinned `ffmpeg` submodule.
+
+The MediaCodec P010/HDR10 overlay contains FFmpeg-derived source fragments and
+is therefore marked `LGPL-2.1-or-later`. Generated FFmpeg sources carry a dated
+modification notice. A corresponding-source release must include the pinned
+FFmpeg revision and the FFmpegKMP build logic that applies the overlay.
 
 ## No-binary-distribution policy
 

@@ -57,7 +57,10 @@ FFmpegClient().use { ffmpeg ->
 }
 ```
 
-Okio `Source` and `Sink` mounts are also supported for genuinely streaming I/O.
+Okio `Source` mounts support streaming input. `Sink` outputs are transparently
+staged on Android and JVM, then copied to the sink after a successful command.
+This supports formats such as regular MP4 that require seeking. Seekable
+`FileHandle` mounts use random access directly.
 On Android, overloads accept file descriptors, `ParcelFileDescriptor`,
 `AssetFileDescriptor`, content `Uri`, and Java input/output streams; seekable
 descriptors use random access and pipe-backed descriptors automatically fall
@@ -71,6 +74,11 @@ truncated by those limits.
 
 The module layers, binding backends, and native build flow are described in the
 [architecture documentation](docs/architecture.md).
+
+The optional `filters` artifact includes color-managed HDR mappings for HDR10
+BT.2020/PQ output. Android runtime builds expose P010 to MediaCodec encoders;
+callers must still select HEVC Main10 HDR10 only on Android 13+ devices whose
+codecs advertise P010 and the HDR10 profile.
 
 ## Target platforms
 
