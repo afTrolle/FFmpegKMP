@@ -26,7 +26,9 @@ import okio.Buffer
 public class StudioController(
     private val scope: CoroutineScope,
 ) {
-    private val mutableState = MutableStateFlow(StudioState())
+    private val mutableState = MutableStateFlow(
+        StudioState(hdrHardwareSupported = isHdrHardwareEncodeSupported()),
+    )
     public val state = mutableState.asStateFlow()
 
     private var nextClipId = 1L
@@ -81,8 +83,8 @@ public class StudioController(
     private suspend fun analyzeClip(clip: TimelineClip) {
         val virtualPath = "/studio/probe-${clip.id}.${clip.displayName.safeExtension()}"
         try {
-            val source = Buffer().apply { write(clip.file.readBytes()) }
-            val io = CommandIo { input(virtualPath, source) }
+            val fileHandle = ByteArrayFileHandle(clip.file.readBytes())
+            val io = CommandIo { input(virtualPath, fileHandle) }
             val client = FFprobeClient()
             val media = try {
                 client.inspect(virtualPath, io = io)
@@ -103,6 +105,8 @@ public class StudioController(
                         frameRate = video?.averageFrameRate,
                         hasAudio = audio != null,
                         audioCodec = audio?.codecName,
+                        colorTransfer = video?.colorTransfer,
+                        isHdr = video?.isHdrTransfer == true,
                     ),
                     analysisState = ClipAnalysisState.READY,
                     trimEndSeconds = duration,
@@ -172,6 +176,10 @@ public class StudioController(
         mutableState.update { it.copy(quality = quality) }
     }
 
+    public fun setHdrExport(enabled: Boolean) {
+        mutableState.update { it.copy(hdrExportRequested = enabled && it.hdrHardwareSupported) }
+    }
+
     public fun render() {
         val snapshot = mutableState.value
         if (!snapshot.canRender) return
@@ -180,11 +188,16 @@ public class StudioController(
                 it.copy(render = RenderState(RenderStage.PREPARING, "Mounting ${snapshot.clips.size} clips…"))
             }
             try {
-                val plan = ExportCommandFactory.create(snapshot.clips, snapshot.canvas, snapshot.quality)
-                val sources = snapshot.clips.map { clip -> Buffer().apply { write(clip.file.readBytes()) } }
+                val plan = ExportCommandFactory.create(
+                    snapshot.clips,
+                    snapshot.canvas,
+                    snapshot.quality,
+                    hdr = snapshot.hdrExportRequested,
+                )
+                val sources = snapshot.clips.map { clip -> clip.file.readBytes() }
                 val rendered = Buffer()
                 val io = CommandIo {
-                    plan.inputPaths.zip(sources).forEach { (path, source) -> input(path, source) }
+                    plan.inputPaths.zip(sources).forEach { (path, bytes) -> input(path, ByteArrayFileHandle(bytes)) }
                     output(plan.outputPath, rendered)
                 }
                 val client = FFmpegClient()
@@ -224,10 +237,12 @@ public class StudioController(
                     client.close()
                 }
 
+                val bytes = rendered.readByteArray()
+                if (snapshot.hdrExportRequested) verifyHdrOutput(bytes)
+
                 mutableState.update {
                     it.copy(render = it.render.copy(stage = RenderStage.SAVING, message = "Choose where to save the montage"))
                 }
-                val bytes = rendered.readByteArray()
                 val saved = saveRenderedVideo(bytes, "ffmpegkmp-montage.mp4")
                 mutableState.update {
                     it.copy(
@@ -285,6 +300,38 @@ public class StudioController(
         }
     }
 
+    /**
+     * Probes the just-rendered bytes and logs whether the output actually carries HDR
+     * (PQ/HLG) transfer characteristics. This is the concrete on-device check for whether
+     * FFmpegKMP's Android MediaCodec P010/HDR10 overlay produced real HDR10 output, not
+     * just a stream that requested it.
+     */
+    private suspend fun verifyHdrOutput(bytes: ByteArray) {
+        val outcome = runCatching {
+            val client = FFprobeClient()
+            try {
+                val path = "/studio/hdr-check.mp4"
+                val io = CommandIo { input(path, ByteArrayFileHandle(bytes)) }
+                val media = client.inspect(path, io = io)
+                val video = media.streams.firstOrNull { it.codecType == "video" }
+                (video?.isHdrTransfer == true) to video?.colorTransfer
+            } finally {
+                client.close()
+            }
+        }
+        val line = outcome.fold(
+            onSuccess = { (isHdr, colorTransfer) ->
+                if (isHdr) {
+                    "HDR10 check: output is tagged HDR (color_transfer=$colorTransfer)"
+                } else {
+                    "HDR10 check FAILED: output is not tagged HDR (color_transfer=${colorTransfer ?: "unknown"})"
+                }
+            },
+            onFailure = { failure -> "HDR10 check FAILED: could not probe output (${failure.message})" },
+        )
+        appendLog(line)
+    }
+
     private fun appendLog(line: String) {
         mutableState.update { current ->
             current.copy(render = current.render.copy(logs = (current.render.logs + line).takeLast(24)))
@@ -302,7 +349,7 @@ private fun Throwable.reportToConsole(context: String): List<String> {
     val causes = causeMessages().mapIndexed { index, message ->
         if (index == 0) "$context: $message" else "Caused by: $message"
     }
-    println("[FFmpegKMP Studio] $context\n${stackTraceToString()}")
+    logDiagnostic("FFmpegKMPStudio", context, this)
     return causes
 }
 

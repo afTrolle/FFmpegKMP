@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 package io.github.aftrolle.ffmpegkmp.samples.studio
 
+import io.github.aftrolle.ffmpegkmp.filters.ToneMap
 import io.github.vinceglb.filekit.PlatformFile
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -49,6 +50,38 @@ class ExportCommandFactoryTest {
     }
 
     @Test
+    fun createsHdr10CommandWithPerClipToneMapping() {
+        val clips = listOf(
+            clip(id = 1, name = "hdr.mov", duration = 6.0, hasAudio = true, trimStart = 0.0, trimEnd = 6.0, speed = 1.0, isHdr = true),
+            clip(id = 2, name = "sdr.mp4", duration = 4.0, hasAudio = false, trimStart = 0.0, trimEnd = 4.0, speed = 1.0, isHdr = false),
+        )
+
+        val plan = ExportCommandFactory.create(clips, CanvasPreset.LANDSCAPE, ExportQuality.BALANCED, hdr = true)
+
+        assertTrue(ToneMap.ToHdr10Bt2020 in plan.filterGraph)
+        assertTrue(ToneMap.SdrBt709ToHdr10 in plan.filterGraph)
+        assertTrue("[vcat]${ToneMap.Hdr10P010Output}[outv]" in plan.filterGraph)
+        assertTrue("format=yuv420p" !in plan.filterGraph)
+        assertTrue(
+            plan.command.arguments.containsAll(
+                listOf("-c:v", "hevc_mediacodec", "-profile:v", "main10", "-pix_fmt", "p010le"),
+            ),
+        )
+        assertTrue("mpeg4" !in plan.command.arguments)
+        assertTrue("-q:v" !in plan.command.arguments)
+    }
+
+    @Test
+    fun defaultCommandStaysSdrWhenHdrIsNotRequested() {
+        val clips = listOf(clip(id = 1, name = "a.mp4", duration = 4.0, hasAudio = true, trimStart = 0.0, trimEnd = 4.0, speed = 1.0))
+
+        val plan = ExportCommandFactory.create(clips, CanvasPreset.LANDSCAPE, ExportQuality.BALANCED)
+
+        assertTrue("hevc_mediacodec" !in plan.command.arguments)
+        assertTrue("format=yuv420p" in plan.filterGraph)
+    }
+
+    @Test
     fun stateDurationAccountsForTrimAndSpeed() {
         val state = StudioState(
             clips = listOf(
@@ -68,12 +101,23 @@ class ExportCommandFactoryTest {
         trimStart: Double,
         trimEnd: Double,
         speed: Double,
+        isHdr: Boolean = false,
     ) = TimelineClip(
         id = id,
         file = PlatformFile("/tmp/$name"),
         displayName = name,
         sizeBytes = null,
-        mediaInfo = ClipMediaInfo(duration, 1920, 1080, "h264", "30/1", hasAudio, if (hasAudio) "aac" else null),
+        mediaInfo = ClipMediaInfo(
+            durationSeconds = duration,
+            width = 1920,
+            height = 1080,
+            codec = "h264",
+            frameRate = "30/1",
+            hasAudio = hasAudio,
+            audioCodec = if (hasAudio) "aac" else null,
+            colorTransfer = if (isHdr) "smpte2084" else "bt709",
+            isHdr = isHdr,
+        ),
         analysisState = ClipAnalysisState.READY,
         trimStartSeconds = trimStart,
         trimEndSeconds = trimEnd,

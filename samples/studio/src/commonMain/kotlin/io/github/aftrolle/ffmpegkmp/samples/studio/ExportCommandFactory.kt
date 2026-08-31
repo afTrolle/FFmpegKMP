@@ -2,6 +2,7 @@
 package io.github.aftrolle.ffmpegkmp.samples.studio
 
 import io.github.aftrolle.ffmpegkmp.ffmpeg.FFmpegCommand
+import io.github.aftrolle.ffmpegkmp.filters.ToneMap
 
 internal data class ExportPlan(
     val command: FFmpegCommand,
@@ -15,6 +16,7 @@ internal object ExportCommandFactory {
         clips: List<TimelineClip>,
         canvas: CanvasPreset,
         quality: ExportQuality,
+        hdr: Boolean = false,
     ): ExportPlan {
         require(clips.isNotEmpty()) { "At least one clip is required" }
 
@@ -23,7 +25,7 @@ internal object ExportCommandFactory {
             "/studio/input-$index.$extension"
         }
         val outputPath = "/studio/render.mp4"
-        val graph = buildFilterGraph(clips, canvas)
+        val graph = buildFilterGraph(clips, canvas, hdr)
 
         val command = FFmpegCommand {
             overwrite()
@@ -38,10 +40,20 @@ internal object ExportCommandFactory {
             complexFilter(graph)
             map("[outv]")
             map("[outa]")
-            // The standard FFmpegKMP profile intentionally avoids GPL-only
-            // libx264. MPEG-4 Part 2 is built into FFmpeg on every sample target.
-            videoCodec("mpeg4")
-            option("-q:v", quality.videoQuality.toString())
+            if (hdr) {
+                // Android-only: HEVC Main10 HDR10 via FFmpegKMP's MediaCodec P010/HDR10
+                // overlay. The profile must be explicit; it is not inferred from pixel
+                // format or color metadata. See docs/bindings.md.
+                videoCodec("hevc_mediacodec")
+                option("-profile:v", "main10")
+                option("-pix_fmt", "p010le")
+                option("-b:v", HDR_BITRATE)
+            } else {
+                // The standard FFmpegKMP profile intentionally avoids GPL-only
+                // libx264. MPEG-4 Part 2 is built into FFmpeg on every sample target.
+                videoCodec("mpeg4")
+                option("-q:v", quality.videoQuality.toString())
+            }
             audioCodec("aac")
             option("-b:a", "192k")
             option("-threads", "1")
@@ -51,18 +63,30 @@ internal object ExportCommandFactory {
         return ExportPlan(command, inputPaths, outputPath, graph)
     }
 
-    private fun buildFilterGraph(clips: List<TimelineClip>, canvas: CanvasPreset): String {
+    // Not wired to ExportQuality: hevc_mediacodec's bitrate-mode scale doesn't map onto
+    // the mpeg4 -q:v scale ExportQuality was designed for. A flat rate keeps the demo simple.
+    private const val HDR_BITRATE = "12M"
+
+    private fun buildFilterGraph(clips: List<TimelineClip>, canvas: CanvasPreset, hdr: Boolean): String {
         val chains = buildList {
             clips.forEachIndexed { index, clip ->
                 val start = clip.trimStartSeconds.ffmpegNumber()
                 val end = clip.trimEndSeconds.ffmpegNumber()
                 val speed = clip.speed.ffmpegNumber()
+                // In HDR mode each clip is tone-mapped into the same HDR10 (BT.2020/PQ)
+                // signal before concatenation: a genuinely HDR source keeps its absolute
+                // luminance, an SDR source is promoted to the 203-nit reference white.
+                val colorStage = when {
+                    !hdr -> "format=yuv420p"
+                    clip.mediaInfo?.isHdr == true -> ToneMap.ToHdr10Bt2020
+                    else -> ToneMap.SdrBt709ToHdr10
+                }
                 add(
                     "[$index:v:0]trim=start=$start:end=$end," +
                         "setpts=(PTS-STARTPTS)/$speed," +
                         "scale=${canvas.width}:${canvas.height}:force_original_aspect_ratio=decrease," +
                         "pad=${canvas.width}:${canvas.height}:(ow-iw)/2:(oh-ih)/2:black," +
-                        "setsar=1,fps=30,format=yuv420p[v$index]",
+                        "setsar=1,fps=30,$colorStage[v$index]",
                 )
 
                 if (clip.mediaInfo?.hasAudio == true) {
@@ -81,7 +105,14 @@ internal object ExportCommandFactory {
                 }
             }
             val concatInputs = clips.indices.joinToString("") { "[v$it][a$it]" }
-            add("${concatInputs}concat=n=${clips.size}:v=1:a=1[outv][outa]")
+            if (hdr) {
+                add("${concatInputs}concat=n=${clips.size}:v=1:a=1[vcat][outa]")
+                // Re-stamps p010le + BT.2020/PQ frame metadata once after concat, in case
+                // the concat filter doesn't preserve it end to end from every clip's tone map.
+                add("[vcat]${ToneMap.Hdr10P010Output}[outv]")
+            } else {
+                add("${concatInputs}concat=n=${clips.size}:v=1:a=1[outv][outa]")
+            }
         }
         return chains.joinToString(";")
     }

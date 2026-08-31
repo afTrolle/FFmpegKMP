@@ -415,6 +415,7 @@ private fun InspectorPanel(
                     )
                 }
             }
+            HdrExportRow(state, controller)
             HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.7f))
             val clip = state.selectedClip
             if (clip == null) {
@@ -423,6 +424,37 @@ private fun InspectorPanel(
                 ClipInspector(clip, state, controller, compact)
             }
         }
+    }
+}
+
+@Composable
+private fun HdrExportRow(state: StudioState, controller: StudioController) {
+    Text("HDR", fontWeight = FontWeight.SemiBold)
+    if (state.hdrHardwareSupported) {
+        FilterChip(
+            selected = state.hdrExportRequested,
+            onClick = { controller.setHdrExport(!state.hdrExportRequested) },
+            label = { Text("Export HDR10 (hevc_mediacodec)", fontSize = 11.sp) },
+        )
+        if (state.hdrExportRequested) {
+            val hdrClips = state.clips.count { it.mediaInfo?.isHdr == true }
+            Text(
+                if (hdrClips > 0) {
+                    "$hdrClips HDR clip${if (hdrClips == 1) "" else "s"} kept HDR; " +
+                        "SDR clips are promoted to HDR10 at 203-nit reference white."
+                } else {
+                    "No HDR sources selected; all clips are promoted to HDR10 at 203-nit reference white."
+                },
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                fontSize = 10.sp,
+            )
+        }
+    } else {
+        Text(
+            "HDR10 hardware export isn't available on this device/build.",
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            fontSize = 11.sp,
+        )
     }
 }
 
@@ -444,13 +476,15 @@ private fun ColumnScope.ClipInspector(
             clip.sizeBytes?.asFileSize(),
         ).joinToString("  •  ")
     }
+    val failed = clip.analysisState == ClipAnalysisState.FAILED
     Text(
         infoText,
-        color = if (clip.analysisState == ClipAnalysisState.FAILED) MaterialTheme.colorScheme.error
-        else MaterialTheme.colorScheme.onSurfaceVariant,
+        color = if (failed) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
         fontSize = 11.sp,
-        maxLines = 2,
-        overflow = TextOverflow.Ellipsis,
+        // The full ffprobe stderr matters for diagnosing a failure; only truncate the
+        // short codec/resolution/size summary shown once analysis succeeds.
+        maxLines = if (failed) Int.MAX_VALUE else 2,
+        overflow = if (failed) TextOverflow.Clip else TextOverflow.Ellipsis,
     )
 
     ValueLabel("Trim in", clip.trimStartSeconds.asTime())
@@ -519,8 +553,13 @@ private fun RenderBar(state: StudioState, controller: StudioController) {
                         maxLines = if (state.render.stage == RenderStage.FAILED) 2 else 1,
                         overflow = TextOverflow.Ellipsis,
                     )
-                    val detail = state.render.logs.lastOrNull()
-                        ?: "${state.canvas.label}  •  ${state.quality.label}  •  ${state.totalDurationSeconds.asTime()}"
+                    val detail = state.render.logs.lastOrNull() ?: buildString {
+                        append(state.canvas.label)
+                        append("  •  ")
+                        append(if (state.hdrExportRequested) "HDR10" else state.quality.label)
+                        append("  •  ")
+                        append(state.totalDurationSeconds.asTime())
+                    }
                     Text(detail, color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 10.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 }
                 if (active) {

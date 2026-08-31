@@ -30,6 +30,8 @@ public data class ClipMediaInfo(
     val frameRate: String?,
     val hasAudio: Boolean,
     val audioCodec: String?,
+    val colorTransfer: String? = null,
+    val isHdr: Boolean = false,
 )
 
 public enum class ClipAnalysisState { WAITING, ANALYZING, READY, FAILED }
@@ -73,6 +75,8 @@ public data class StudioState(
     val isImporting: Boolean = false,
     val importMessage: String? = null,
     val render: RenderState = RenderState(),
+    val hdrHardwareSupported: Boolean = false,
+    val hdrExportRequested: Boolean = false,
 ) {
     val selectedClip: TimelineClip?
         get() = clips.firstOrNull { it.id == selectedClipId }
