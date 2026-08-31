@@ -103,9 +103,10 @@ class JavaCppExecutionBridgeTest {
             val leftoverStagingDirs = tempDir.listFiles { file ->
                 file.isDirectory && file.name.startsWith("ffmpegkmp-$executionId-") && file.name.endsWith(".staging")
             }
-            assertTrue(leftoverStagingDirs.isNullOrEmpty()) {
-                "Staging directory was not cleaned up after a failed command: ${leftoverStagingDirs?.toList()}"
-            }
+            assertTrue(
+                leftoverStagingDirs.isNullOrEmpty(),
+                "Staging directory was not cleaned up after a failed command: ${leftoverStagingDirs?.toList()}",
+            )
         }
     }
 
