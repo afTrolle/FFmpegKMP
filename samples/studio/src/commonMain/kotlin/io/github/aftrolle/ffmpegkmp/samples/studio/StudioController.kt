@@ -319,17 +319,7 @@ public class StudioController(
                 client.close()
             }
         }
-        val line = outcome.fold(
-            onSuccess = { (isHdr, colorTransfer) ->
-                if (isHdr) {
-                    "HDR10 check: output is tagged HDR (color_transfer=$colorTransfer)"
-                } else {
-                    "HDR10 check FAILED: output is not tagged HDR (color_transfer=${colorTransfer ?: "unknown"})"
-                }
-            },
-            onFailure = { failure -> "HDR10 check FAILED: could not probe output (${failure.message})" },
-        )
-        appendLog(line)
+        appendLog(formatHdrCheckLog(outcome))
     }
 
     private fun appendLog(line: String) {
@@ -338,6 +328,18 @@ public class StudioController(
         }
     }
 }
+
+/** Pure so the log wording can be unit-tested without a real ffprobe/native execution. */
+internal fun formatHdrCheckLog(outcome: Result<Pair<Boolean, String?>>): String = outcome.fold(
+    onSuccess = { (isHdr, colorTransfer) ->
+        if (isHdr) {
+            "HDR10 check: output is tagged HDR (color_transfer=$colorTransfer)"
+        } else {
+            "HDR10 check FAILED: output is not tagged HDR (color_transfer=${colorTransfer ?: "unknown"})"
+        }
+    },
+    onFailure = { failure -> "HDR10 check FAILED: could not probe output (${failure.message})" },
+)
 
 private fun String.safeExtension(): String =
     substringAfterLast('.', "mp4").lowercase().filter(Char::isLetterOrDigit).take(8).ifBlank { "mp4" }
