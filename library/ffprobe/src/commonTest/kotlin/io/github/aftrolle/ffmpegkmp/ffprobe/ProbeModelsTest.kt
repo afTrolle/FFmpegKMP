@@ -51,4 +51,23 @@ class ProbeModelsTest {
         assertTrue("-show_packets" in full)
         assertTrue("-show_frames" in full)
     }
+
+    @Test
+    fun identifiesPqAndHlgAsHdrTransfers() {
+        val media = FFprobeClient().use { client ->
+            client.parse(
+                """
+                {
+                  "streams": [
+                    {"codec_type":"video","color_transfer":"SMPTE2084"},
+                    {"codec_type":"video","color_transfer":"arib-std-b67"},
+                    {"codec_type":"video","color_transfer":"bt709"}
+                  ]
+                }
+                """.trimIndent(),
+            )
+        }
+
+        assertEquals(listOf(true, true, false), media.streams.map(ProbeStream::isHdrTransfer))
+    }
 }

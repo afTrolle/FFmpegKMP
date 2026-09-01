@@ -36,6 +36,8 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import okio.Sink
+import okio.buffer
 
 @InternalFFmpegKmpApi
 public enum class CommandKind { FFMPEG, FFPROBE }
@@ -226,6 +228,7 @@ private class CommandExecutionSession(
 
     suspend fun run() {
         val started = TimeSource.Monotonic.markNow()
+        var staged: StagedMounts? = null
         try {
             if (cancelled.load()) {
                 completeCancelled(kotlin.time.Duration.ZERO)
@@ -233,7 +236,17 @@ private class CommandExecutionSession(
             }
 
             mutableState.value = SessionState.RUNNING
-            val nativeResult = executeAndCaptureEvents()
+            staged = prepareStaging()
+            val nativeResult = executeAndCaptureEvents(staged.mounts)
+
+            if (!cancelled.load() && nativeResult.returnCode == 0) {
+                // Verify every staged mount before copying any of them: a command with two
+                // staged outputs where only one was actually written must not leave the other
+                // sink populated while the overall result reports failure.
+                staged.contexts.forEach(::verifyStagedOutputWasWritten)
+                staged.contexts.forEach(::copyStagedOutput)
+            }
+
             io.mounts.forEach { mount ->
                 when (val resource = mount.resource) {
                     is NativeFileResource -> if (resource.access != NativeIoAccess.READ) {
@@ -258,9 +271,54 @@ private class CommandExecutionSession(
             mutableState.value = SessionState.FAILED
             completion.completeExceptionally(NativeExecutionException("Native FFmpeg execution failed", failure))
         } finally {
+            staged?.contexts?.forEach { context -> runCatching { context.temporaryFile.close() } }
             closeIoOnce()
             notifyTerminalOnce()
             if (closeRequested.load()) mutableState.value = SessionState.CLOSED
+        }
+    }
+
+    /** Substitutes a real temporary [NativeFileResource] for each mount that requested [Staging]. */
+    private fun prepareStaging(): StagedMounts {
+        val contexts = mutableListOf<StagingContext>()
+        try {
+            val mounts = io.mounts.mapIndexed { index, mount ->
+                val resource = mount.resource
+                if (mount.staging && resource is NativeSinkResource) {
+                    val temporaryFile = TemporaryFile("ffmpegkmp-$id-$index")
+                    contexts += StagingContext(mount.path, resource.sink, temporaryFile)
+                    NativeMountedIo(
+                        mount.path,
+                        NativeFileResource(temporaryFile.fileHandle, NativeIoAccess.WRITE, truncate = false),
+                    )
+                } else {
+                    NativeMountedIo(mount.path, resource)
+                }
+            }
+            return StagedMounts(mounts, contexts)
+        } catch (failure: Throwable) {
+            // A later mount's TemporaryFile failed to open; close what earlier mounts already
+            // opened instead of leaking their file handles and backing files.
+            contexts.forEach { context -> runCatching { context.temporaryFile.close() } }
+            throw failure
+        }
+    }
+
+    /** A command that reports success must not silently hand the caller an empty sink. */
+    private fun verifyStagedOutputWasWritten(context: StagingContext) {
+        if (context.temporaryFile.fileHandle.size() <= 0L) {
+            throw StagedOutputEmptyException(
+                "FFmpeg reported success but wrote no output for staged mount '${context.path}'",
+            )
+        }
+    }
+
+    private fun copyStagedOutput(context: StagingContext) {
+        val source = context.temporaryFile.fileHandle.source(0L).buffer()
+        try {
+            source.readAll(context.sink)
+        } finally {
+            source.close()
         }
     }
 
@@ -294,7 +352,9 @@ private class CommandExecutionSession(
             ),
         )
 
-    private suspend fun executeAndCaptureEvents(): io.github.aftrolle.ffmpegkmp.bindings.NativeExecutionResult = coroutineScope {
+    private suspend fun executeAndCaptureEvents(
+        mounts: List<NativeMountedIo>,
+    ): io.github.aftrolle.ffmpegkmp.bindings.NativeExecutionResult = coroutineScope {
         val nativeEvents = Channel<NativeExecutionEvent>(limits.maxPendingNativeEvents)
         val acceptingEvents = AtomicBoolean(true)
         val overflow = AtomicReference<NativeExecutionException?>(null)
@@ -307,7 +367,7 @@ private class CommandExecutionSession(
                     id = id,
                     kind = if (kind == CommandKind.FFMPEG) NativeCommandKind.FFMPEG else NativeCommandKind.FFPROBE,
                     arguments = arguments,
-                    mounts = io.mounts.map { NativeMountedIo(it.path, it.resource) },
+                    mounts = mounts,
                 ),
             ) { event ->
                 if (acceptingEvents.load() && !nativeEvents.trySend(event).isSuccess) {
@@ -379,6 +439,10 @@ private class CommandExecutionSession(
         if (terminalNotified.compareAndSet(expectedValue = false, newValue = true)) onTerminal(this)
     }
 }
+
+private class StagedMounts(val mounts: List<NativeMountedIo>, val contexts: List<StagingContext>)
+
+private class StagingContext(val path: String, val sink: Sink, val temporaryFile: TemporaryFile)
 
 private class BoundedTextCapture(private val maxCharacters: Int) {
     private val value = StringBuilder(minOf(maxCharacters, 8_192))

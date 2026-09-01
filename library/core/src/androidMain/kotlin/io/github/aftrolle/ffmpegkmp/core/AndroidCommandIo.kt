@@ -49,17 +49,22 @@ public fun CommandIo.Builder.input(path: String, descriptor: AssetFileDescriptor
 
 /**
  * Mounts an Android descriptor for output. This function takes ownership of [descriptor].
- * Pipe-backed descriptors are mounted as streams; seekable descriptors use Okio random access.
+ * Pipe-backed descriptors are mounted as streams; seekable descriptors use Okio random access
+ * directly and ignore [staging]. Pass [staging] when the descriptor may be pipe-backed (e.g. a
+ * `content://` `Uri` from a streaming DocumentsProvider) and the output format needs to seek —
+ * see [Staging].
  */
 public fun CommandIo.Builder.output(
     path: String,
     descriptor: ParcelFileDescriptor,
     truncate: Boolean = true,
+    staging: Staging? = null,
 ) {
     if (descriptor.isSeekable()) {
         output(path, AndroidFileHandle(descriptor, readWrite = true), truncate)
     } else {
-        output(path, ParcelFileDescriptor.AutoCloseOutputStream(descriptor).sink())
+        val sink = ParcelFileDescriptor.AutoCloseOutputStream(descriptor).sink()
+        if (staging != null) output(path, sink, staging) else output(path, sink)
     }
 }
 
@@ -79,8 +84,13 @@ public fun CommandIo.Builder.input(path: String, descriptor: FileDescriptor) {
 }
 
 /** Duplicates [descriptor]; the caller retains ownership of the original descriptor. */
-public fun CommandIo.Builder.output(path: String, descriptor: FileDescriptor, truncate: Boolean = true) {
-    output(path, ParcelFileDescriptor.dup(descriptor), truncate)
+public fun CommandIo.Builder.output(
+    path: String,
+    descriptor: FileDescriptor,
+    truncate: Boolean = true,
+    staging: Staging? = null,
+) {
+    output(path, ParcelFileDescriptor.dup(descriptor), truncate, staging)
 }
 
 /** Duplicates [descriptor]; the caller retains ownership of the original descriptor. */
@@ -94,8 +104,13 @@ public fun CommandIo.Builder.input(path: String, fd: Int) {
 }
 
 /** Duplicates [fd]; the caller retains ownership of the original integer descriptor. */
-public fun CommandIo.Builder.output(path: String, fd: Int, truncate: Boolean = true) {
-    output(path, checkNotNull(ParcelFileDescriptor.fromFd(fd)), truncate)
+public fun CommandIo.Builder.output(
+    path: String,
+    fd: Int,
+    truncate: Boolean = true,
+    staging: Staging? = null,
+) {
+    output(path, checkNotNull(ParcelFileDescriptor.fromFd(fd)), truncate, staging)
 }
 
 /** Duplicates [fd]; the caller retains ownership of the original integer descriptor. */
@@ -110,19 +125,25 @@ public fun CommandIo.Builder.input(path: String, resolver: ContentResolver, uri:
     input(path, descriptor)
 }
 
-/** Opens [uri] through Android's content resolver and mounts it for output. */
+/**
+ * Opens [uri] through Android's content resolver and mounts it for output. Pass [staging] when
+ * the provider behind [uri] may return a pipe-backed descriptor (common for streaming
+ * DocumentsProviders, e.g. cloud-storage-backed `content://` URIs) and the output format needs
+ * to seek — see [Staging].
+ */
 public fun CommandIo.Builder.output(
     path: String,
     resolver: ContentResolver,
     uri: Uri,
     truncate: Boolean = true,
+    staging: Staging? = null,
 ) {
     val descriptor = (runCatching {
         resolver.openFileDescriptor(uri, if (truncate) "rwt" else "rw")
     }.getOrNull() ?: if (truncate) resolver.openFileDescriptor(uri, "wt") else null)
         ?: error("Content provider returned no descriptor for $uri")
     // The ContentResolver mode already applies truncation where requested.
-    output(path, descriptor, truncate = false)
+    output(path, descriptor, truncate = false, staging = staging)
 }
 
 /** Opens [uri] through Android's content resolver for random reads and writes. */
@@ -142,9 +163,14 @@ public fun CommandIo.Builder.input(path: String, stream: InputStream) {
     input(path, stream.source())
 }
 
-/** Mounts a Java output stream through Okio. The command session closes the stream. */
-public fun CommandIo.Builder.output(path: String, stream: OutputStream) {
-    output(path, stream.sink())
+/**
+ * Mounts a Java output stream through Okio. The command session closes the stream. An
+ * `OutputStream` is always non-seekable; pass [staging] when the output format needs to seek
+ * (e.g. a non-fragmented MP4/MOV muxer) — see [Staging].
+ */
+public fun CommandIo.Builder.output(path: String, stream: OutputStream, staging: Staging? = null) {
+    val sink = stream.sink()
+    if (staging != null) output(path, sink, staging) else output(path, sink)
 }
 
 private fun ParcelFileDescriptor.isSeekable(): Boolean = try {

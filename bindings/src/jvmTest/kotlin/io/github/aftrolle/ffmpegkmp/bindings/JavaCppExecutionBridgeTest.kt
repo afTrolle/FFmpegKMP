@@ -6,7 +6,9 @@ package io.github.aftrolle.ffmpegkmp.bindings
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNotEquals
+import kotlin.test.assertTrue
 import kotlinx.coroutines.runBlocking
+import okio.Buffer
 
 class JavaCppExecutionBridgeTest {
     @Test
@@ -28,6 +30,44 @@ class JavaCppExecutionBridgeTest {
             assertEquals(0, first.returnCode)
             assertNotEquals(0, invalid.returnCode)
             assertEquals(0, last.returnCode)
+        }
+    }
+
+    @Test
+    fun plainSinkMountWritesAFormatThatDoesNotNeedToSeek() = runBlocking {
+        // Sink mounts are plain and non-seekable at this layer; formats that mux forward-only
+        // (unlike the default, non-fragmented MP4 writer) work with a raw Sink. Staging for
+        // formats that do need to seek is a caller-level opt-in — see library:core's
+        // CompiledRuntimeIntegrationTest — not something this bridge does implicitly.
+        val input = Buffer().write(ByteArray(16 * 16 * 3))
+        val output = Buffer()
+
+        createPlatformExecutionBridge().use { nativeBridge ->
+            val result = nativeBridge.execute(
+                NativeExecutionRequest(
+                    id = 1,
+                    kind = NativeCommandKind.FFMPEG,
+                    arguments = listOf(
+                        "-y",
+                        "-f", "rawvideo",
+                        "-pixel_format", "rgb24",
+                        "-video_size", "16x16",
+                        "-i", "input.rgb",
+                        "-frames:v", "1",
+                        "-c:v", "rawvideo",
+                        "-f", "nut",
+                        "output.nut",
+                    ),
+                    mounts = listOf(
+                        NativeMountedIo("input.rgb", NativeSourceResource(input)),
+                        NativeMountedIo("output.nut", NativeSinkResource(output)),
+                    ),
+                ),
+                {},
+            )
+
+            assertEquals(0, result.returnCode)
+            assertTrue(output.size > 0L)
         }
     }
 

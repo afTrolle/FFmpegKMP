@@ -129,3 +129,6 @@ public class NativeExecutionException(
 ) : FFmpegKmpException(message, cause)
 
 public class CommandParseException(message: String) : FFmpegKmpException(message)
+
+/** A [Staging]-mounted output that a "successful" command never wrote a byte to. */
+public class StagedOutputEmptyException(message: String) : FFmpegKmpException(message)

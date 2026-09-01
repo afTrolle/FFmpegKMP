@@ -57,7 +57,14 @@ FFmpegClient().use { ffmpeg ->
 }
 ```
 
-Okio `Source` and `Sink` mounts are also supported for genuinely streaming I/O.
+Okio `Source` and `Sink` mounts are non-seekable streams on every platform.
+Formats that seek to patch their own header (regular, non-fragmented MP4 chief
+among them) need a seekable destination: mount a `FileHandle` directly, or
+opt into `output(path, sink, Staging())` to have FFmpeg write to a real
+temporary file that gets copied to the sink once the command succeeds. Staging
+is a caller choice, not implicit bridge behavior, so streaming-friendly
+formats (`-f mpegts`, or MP4 with `-movflags frag_keyframe+empty_moov`) can
+mount a plain `Sink` and avoid the extra write.
 On Android, overloads accept file descriptors, `ParcelFileDescriptor`,
 `AssetFileDescriptor`, content `Uri`, and Java input/output streams; seekable
 descriptors use random access and pipe-backed descriptors automatically fall
@@ -71,6 +78,11 @@ truncated by those limits.
 
 The module layers, binding backends, and native build flow are described in the
 [architecture documentation](docs/architecture.md).
+
+The optional `filters` artifact includes color-managed HDR mappings for HDR10
+BT.2020/PQ output. Android runtime builds expose P010 to MediaCodec encoders;
+callers must still select HEVC Main10 HDR10 only on Android 13+ devices whose
+codecs advertise P010 and the HDR10 profile.
 
 ## Target platforms
 

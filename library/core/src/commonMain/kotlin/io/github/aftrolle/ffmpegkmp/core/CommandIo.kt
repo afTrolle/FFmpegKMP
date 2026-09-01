@@ -15,7 +15,7 @@ import okio.Source
 public class CommandIo private constructor(
     internal val mounts: List<Mount>,
 ) {
-    internal data class Mount(val path: String, val resource: NativeIoResource)
+    internal data class Mount(val path: String, val resource: NativeIoResource, val staging: Boolean = false)
 
     public class Builder {
         private val mounts = mutableListOf<Mount>()
@@ -27,6 +27,14 @@ public class CommandIo private constructor(
 
         public fun output(path: String, sink: Sink) {
             add(path, NativeSinkResource(sink))
+        }
+
+        /**
+         * Mounts a [Sink] output backed by a real temporary file instead of `Sink`'s default
+         * forward-only write capability. See [Staging] for when this is (and isn't) needed.
+         */
+        public fun output(path: String, sink: Sink, staging: Staging) {
+            add(path, NativeSinkResource(sink), staging = true)
         }
 
         /** Mounts an Okio file handle for seekable, random-access input. */
@@ -46,10 +54,10 @@ public class CommandIo private constructor(
             add(path, NativeFileResource(fileHandle, NativeIoAccess.READ_WRITE, truncate))
         }
 
-        private fun add(path: String, resource: NativeIoResource) {
+        private fun add(path: String, resource: NativeIoResource, staging: Boolean = false) {
             requirePath(path)
             require(paths.add(path)) { "I/O path is already mounted: $path" }
-            mounts += Mount(path, resource)
+            mounts += Mount(path, resource, staging)
         }
 
         internal fun build(): CommandIo = CommandIo(mounts.toList())

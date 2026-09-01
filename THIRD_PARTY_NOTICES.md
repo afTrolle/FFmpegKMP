@@ -36,6 +36,11 @@ submodule, including:
 
 FFmpegKMP's Apache License 2.0 does not replace or alter these licences.
 
+The MediaCodec P010/HDR10 source overlay in `build-logic` contains
+FFmpeg-derived source fragments and is licensed under `LGPL-2.1-or-later`.
+Distributors of binaries produced with that overlay must provide the pinned
+FFmpeg source and the overlay/build logic as part of the corresponding source.
+
 Recommended attribution for an LGPL build:
 
 > This product uses libraries from the FFmpeg project under the GNU Lesser
