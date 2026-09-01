@@ -58,10 +58,13 @@ suspend fun transcode(input: String, output: String) {
 ```
 
 Native, Android, and desktop callers may pass normal filesystem paths directly.
-Mounted files use Okio `FileHandle` for random reads and writes; Okio
-`Source` values support non-seekable streams, while Android/JVM `Sink` outputs
-are transparently staged and copied after successful commands. Android
-additionally accepts integer or Java file descriptors, `ParcelFileDescriptor`,
+Mounted files use Okio `FileHandle` for random reads and writes; Okio `Source`
+and `Sink` values are non-seekable streams by default on every platform.
+Formats that need to seek (regular MP4 chief among them) require either a
+`FileHandle` mount or an explicit `output(path, sink, Staging())` opt-in,
+which stages through a real temporary file and copies it to the sink after a
+successful command. Android additionally accepts integer or Java file
+descriptors, `ParcelFileDescriptor`,
 `AssetFileDescriptor`, content `Uri`, `InputStream`, and `OutputStream`. Browser
 mounts are transferred to the worker's random-access protocol registry. Studio
 mounts FileKit bytes consistently so Android content URIs and browser files

@@ -46,15 +46,32 @@ cannot import as function-like macros. Static FFmpeg archives are deliberately
 not embedded in the published klib.
 Mounted Okio resources are exposed to FFmpeg through the `ffmpegkmp:` URL
 protocol. Its open/read/write/size/seek/close callbacks dispatch directly to an
-Okio `FileHandle`, `Source`, or `Sink`; Apple commands no longer create staging
-files. `FileHandle` mounts are seekable and use offset-based reads and writes,
-while stream mounts deliberately report themselves as non-seekable.
+Okio `FileHandle`, `Source`, or `Sink`. `FileHandle` mounts are seekable and use
+offset-based reads and writes; `Source`/`Sink` stream mounts deliberately
+report themselves as non-seekable, identically on every platform — no bridge
+stages `Sink` output implicitly.
 
-The Android/JVM bridge stages `Sink` outputs in a temporary seekable file and
-copies completed output to the sink after a successful command. This supports
-formats such as regular MP4 without requiring callers to manage temporary files.
-All `Sink` outputs use this predictable behavior; `Source` and `FileHandle`
-mounts continue to use the protocol directly.
+Formats that seek to patch their own header after writing (regular,
+non-fragmented MP4 chief among them) need a seekable destination. Prefer these
+zero-copy options first:
+
+- **The destination is really a file**: mount it as a `FileHandle` directly —
+  FFmpeg writes it once, with real seeking, no extra copy.
+- **The destination is genuinely a stream**: use a format that never seeks
+  (`-f mpegts`, or MP4 with `-movflags frag_keyframe+empty_moov`) with a plain
+  `Sink` mount.
+
+Only when neither applies — the destination is a stream but the format must
+seek — reach for `output(path, sink, Staging())`. This is an explicit,
+caller-visible opt-in rather than automatic bridge behavior: it writes to a
+real temporary file — implemented once in common code, so it works the same
+way on every target that has a synchronous filesystem — and copies the
+finished bytes to the sink after a successful command, deleting the temporary
+file afterward. A command that reports success without ever writing the
+staged mount fails loudly instead of silently handing back an empty sink.
+`Staging` throws on Kotlin/JS and Kotlin/Wasm browser targets, which have no
+synchronous filesystem; the two zero-copy options above remain available
+there.
 
 Android runtime source preparation adds P010 byte-buffer input to FFmpeg's
 MediaCodec encoder without modifying the pinned FFmpeg submodule. This enables

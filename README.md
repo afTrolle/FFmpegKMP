@@ -57,10 +57,14 @@ FFmpegClient().use { ffmpeg ->
 }
 ```
 
-Okio `Source` mounts support streaming input. `Sink` outputs are transparently
-staged on Android and JVM, then copied to the sink after a successful command.
-This supports formats such as regular MP4 that require seeking. Seekable
-`FileHandle` mounts use random access directly.
+Okio `Source` and `Sink` mounts are non-seekable streams on every platform.
+Formats that seek to patch their own header (regular, non-fragmented MP4 chief
+among them) need a seekable destination: mount a `FileHandle` directly, or
+opt into `output(path, sink, Staging())` to have FFmpeg write to a real
+temporary file that gets copied to the sink once the command succeeds. Staging
+is a caller choice, not implicit bridge behavior, so streaming-friendly
+formats (`-f mpegts`, or MP4 with `-movflags frag_keyframe+empty_moov`) can
+mount a plain `Sink` and avoid the extra write.
 On Android, overloads accept file descriptors, `ParcelFileDescriptor`,
 `AssetFileDescriptor`, content `Uri`, and Java input/output streams; seekable
 descriptors use random access and pipe-backed descriptors automatically fall

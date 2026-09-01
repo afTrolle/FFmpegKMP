@@ -79,6 +79,19 @@ kotlin {
         commonTest.dependencies {
             implementation(libs.kotlinx.coroutines.test)
         }
+        // TemporaryFile only needs a real synchronous filesystem, which JVM, Android, and every
+        // Kotlin/Native target share via okio.FileSystem.SYSTEM (unlike Kotlin/JS and Kotlin/Wasm,
+        // which get their own actual under webMain) — one shared source directory for all three,
+        // since Kotlin does not support a JVM+Android+Native intermediate source set directly.
+        jvmMain {
+            kotlin.srcDir("src/systemMain/kotlin")
+        }
+        androidMain {
+            kotlin.srcDir("src/systemMain/kotlin")
+        }
+        nativeMain {
+            kotlin.srcDir("src/systemMain/kotlin")
+        }
         webTest {
             resources.srcDir(stageCoreWasmTestRuntime)
         }

@@ -3,7 +3,6 @@
 
 package io.github.aftrolle.ffmpegkmp.bindings
 
-import java.io.File
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNotEquals
@@ -35,7 +34,11 @@ class JavaCppExecutionBridgeTest {
     }
 
     @Test
-    fun stagesSinkOutput() = runBlocking {
+    fun plainSinkMountWritesAFormatThatDoesNotNeedToSeek() = runBlocking {
+        // Sink mounts are plain and non-seekable at this layer; formats that mux forward-only
+        // (unlike the default, non-fragmented MP4 writer) work with a raw Sink. Staging for
+        // formats that do need to seek is a caller-level opt-in — see library:core's
+        // CompiledRuntimeIntegrationTest — not something this bridge does implicitly.
         val input = Buffer().write(ByteArray(16 * 16 * 3))
         val output = Buffer()
 
@@ -51,12 +54,13 @@ class JavaCppExecutionBridgeTest {
                         "-video_size", "16x16",
                         "-i", "input.rgb",
                         "-frames:v", "1",
-                        "-c:v", "mpeg4",
-                        "output.mp4",
+                        "-c:v", "rawvideo",
+                        "-f", "nut",
+                        "output.nut",
                     ),
                     mounts = listOf(
                         NativeMountedIo("input.rgb", NativeSourceResource(input)),
-                        NativeMountedIo("output.mp4", NativeSinkResource(output)),
+                        NativeMountedIo("output.nut", NativeSinkResource(output)),
                     ),
                 ),
                 {},
@@ -64,49 +68,6 @@ class JavaCppExecutionBridgeTest {
 
             assertEquals(0, result.returnCode)
             assertTrue(output.size > 0L)
-            assertEquals("ftyp", output.snapshot().substring(4, 8).utf8())
-        }
-    }
-
-    @Test
-    fun leavesSinkUntouchedAndCleansUpStagingAfterFailure() = runBlocking {
-        val input = Buffer().write(ByteArray(16 * 16 * 3))
-        val output = Buffer()
-        val executionId = 42L
-        val tempDir = File(System.getProperty("java.io.tmpdir"))
-
-        createPlatformExecutionBridge().use { nativeBridge ->
-            val result = nativeBridge.execute(
-                NativeExecutionRequest(
-                    id = executionId,
-                    kind = NativeCommandKind.FFMPEG,
-                    arguments = listOf(
-                        "-y",
-                        "-f", "rawvideo",
-                        "-pixel_format", "rgb24",
-                        "-video_size", "16x16",
-                        "-i", "input.rgb",
-                        "-frames:v", "1",
-                        "-c:v", "this_codec_does_not_exist",
-                        "output.mp4",
-                    ),
-                    mounts = listOf(
-                        NativeMountedIo("input.rgb", NativeSourceResource(input)),
-                        NativeMountedIo("output.mp4", NativeSinkResource(output)),
-                    ),
-                ),
-                {},
-            )
-
-            assertNotEquals(0, result.returnCode)
-            assertEquals(0L, output.size)
-            val leftoverStagingDirs = tempDir.listFiles { file ->
-                file.isDirectory && file.name.startsWith("ffmpegkmp-$executionId-") && file.name.endsWith(".staging")
-            }
-            assertTrue(
-                leftoverStagingDirs.isNullOrEmpty(),
-                "Staging directory was not cleaned up after a failed command: ${leftoverStagingDirs?.toList()}",
-            )
         }
     }
 

@@ -9,8 +9,6 @@ import io.github.aftrolle.ffmpegkmp.bindings.generated.bridge.ffmpegkmp_io_callb
 import io.github.aftrolle.ffmpegkmp.bindings.generated.bridge.global.bridge
 import java.io.File
 import okio.Buffer
-import okio.Sink
-import okio.source
 import org.bytedeco.javacpp.BytePointer
 import org.bytedeco.javacpp.Loader
 import org.bytedeco.javacpp.Pointer
@@ -77,28 +75,12 @@ private class JavaCppExecutionBridge : NativeExecutionBridge {
         emit: (NativeExecutionEvent) -> Unit,
     ): NativeExecutionResult {
         check(!closed) { "The JavaCPP execution bridge is closed" }
-        val staging = request.mounts
-            .takeIf { mounts -> mounts.any { it.resource is NativeSinkResource } }
-            ?.let { createStagingDirectory(request.id) }
-        val stagedOutputs = staging?.let { directory ->
-            request.mounts.mapIndexedNotNull { index, mount ->
-                (mount.resource as? NativeSinkResource)?.let { resource ->
-                    mount.path to StagedOutput(
-                        resource,
-                        File(directory, "output-$index${mount.path.fileSuffix()}"),
-                    )
-                }
-            }.toMap()
-        }.orEmpty()
-        val mounts = request.mounts.mapIndexedNotNull { index, mount ->
-            if (mount.resource is NativeSinkResource) return@mapIndexedNotNull null
+        val mounts = request.mounts.mapIndexed { index, mount ->
             val id = index.toLong() + 1L
             id to MountedResource(mount.resource)
         }.toMap()
         val mountedPaths = request.mounts.mapIndexed { index, mount ->
-            val resolvedPath = stagedOutputs[mount.path]?.file?.absolutePath
-                ?: protocolUrl(index.toLong() + 1L, mount.path)
-            mount.path to resolvedPath
+            mount.path to protocolUrl(index.toLong() + 1L, mount.path)
         }.toMap()
         try {
             val executable = if (request.kind == NativeCommandKind.FFMPEG) "ffmpeg" else "ffprobe"
@@ -128,15 +110,9 @@ private class JavaCppExecutionBridge : NativeExecutionBridge {
                     "The FFmpegKMP JNI bridge was built without embedded fftools entry points",
                 )
             }
-            if (returnCode == 0) {
-                stagedOutputs.values.forEach { output ->
-                    if (output.file.isFile) output.file.copyTo(output.resource.sink)
-                }
-            }
             return NativeExecutionResult(returnCode)
         } finally {
             mountedResources = emptyMap()
-            staging?.deleteRecursively()
         }
     }
 
@@ -204,29 +180,6 @@ private object JavaCppBridgeLoader {
 }
 
 private fun protocolUrl(id: Long, path: String): String = "ffmpegkmp:$id${path.fileSuffix()}"
-
-private data class StagedOutput(
-    val resource: NativeSinkResource,
-    val file: File,
-)
-
-private fun createStagingDirectory(executionId: Long): File {
-    val marker = File.createTempFile("ffmpegkmp-$executionId-", ".staging")
-    check(marker.delete() && marker.mkdir()) { "Could not create FFmpegKMP staging directory at $marker" }
-    return marker
-}
-
-private fun File.copyTo(sink: Sink) {
-    source().use { source ->
-        val buffer = Buffer()
-        while (true) {
-            val read = source.read(buffer, COPY_BUFFER_SIZE)
-            if (read == -1L) break
-            sink.write(buffer, read)
-        }
-    }
-    sink.flush()
-}
 
 private fun String.fileSuffix(): String {
     val name = substringAfterLast('/').substringAfterLast('\\')
@@ -328,4 +281,3 @@ private const val IO_CAP_WRITE = 2
 private const val IO_CAP_SEEK = 4
 private const val AVIO_FLAG_WRITE = 2
 private const val IO_FAILURE = -1L
-private const val COPY_BUFFER_SIZE = 8_192L
