@@ -5,6 +5,7 @@ import org.gradle.api.publish.PublishingExtension
 import org.jetbrains.kotlin.gradle.ExperimentalWasmDsl
 import org.jetbrains.kotlin.gradle.dsl.KotlinMultiplatformExtension
 import org.jetbrains.kotlin.gradle.plugin.mpp.NativeBuildType
+import org.jetbrains.kotlin.gradle.tasks.KotlinJvmCompile
 
 plugins {
     id("ffmpegkmp.project")
@@ -16,6 +17,9 @@ plugins {
 val defaultNamespace = "io.github.aftrolle.ffmpegkmp" +
         project.path.replace(':', '.').replace("-", "")
 val namespacePropertySuffix = project.path.removePrefix(":").replace(':', '.')
+// Kotlin defaults the JVM module name to "<group>:<name>". R8 regenerates the .kotlin_module
+// entry from that name, and bundletool rejects the colon when packing an Android App Bundle.
+val kotlinJvmModuleName = "ffmpegkmp-" + project.path.removePrefix(":").replace(':', '-')
 val androidNamespace = providers
     .gradleProperty("ffmpegkmp.android.namespace.$namespacePropertySuffix")
     .orElse(defaultNamespace)
@@ -142,6 +146,10 @@ extensions.configure<KotlinMultiplatformExtension> {
             implementation(versionCatalog.findLibrary("androidx-test-runner").get())
         }
     }
+}
+
+tasks.withType<KotlinJvmCompile>().configureEach {
+    compilerOptions.moduleName.set(kotlinJvmModuleName)
 }
 
 tasks.matching { it.name == "tvosSimulatorArm64Test" }.configureEach {
