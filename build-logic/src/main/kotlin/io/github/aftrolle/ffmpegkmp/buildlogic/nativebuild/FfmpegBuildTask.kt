@@ -4,6 +4,7 @@ import org.gradle.api.DefaultTask
 import org.gradle.api.file.DirectoryProperty
 import org.gradle.api.file.FileSystemOperations
 import org.gradle.api.provider.ListProperty
+import org.gradle.api.provider.ProviderFactory
 import org.gradle.api.provider.Property
 import org.gradle.api.provider.SetProperty
 import org.gradle.api.tasks.Input
@@ -27,6 +28,9 @@ abstract class FfmpegBuildTask : DefaultTask() {
 
     @get:Inject
     protected abstract val fileSystemOperations: FileSystemOperations
+
+    @get:Inject
+    protected abstract val providers: ProviderFactory
 
     @get:InputDirectory
     @get:PathSensitive(PathSensitivity.RELATIVE)
@@ -89,6 +93,9 @@ abstract class FfmpegBuildTask : DefaultTask() {
     @get:Input abstract val extraCompilerArgs: ListProperty<String>
     @get:Input abstract val extraLinkerArgs: ListProperty<String>
 
+    /** Whether libva resolves on this host, so installing it makes a Linux build stale. */
+    @get:Input abstract val libvaAvailable: Property<Boolean>
+
     init {
         sdkName.convention("")
         deploymentTarget.convention("")
@@ -97,6 +104,16 @@ abstract class FfmpegBuildTask : DefaultTask() {
         androidNdkDirectory.convention("")
         emscriptenDirectory.convention("")
         buildRuntime.convention(true)
+        libvaAvailable.convention(
+            targetKind.zip(targetName) { kind, name -> kind == "jvm" && name.startsWith("linux") }
+                .flatMap { linux ->
+                    if (linux) {
+                        providers.of(PkgConfigPackageExists::class.java) { parameters.packageName.set("libva") }
+                    } else {
+                        providers.provider { false }
+                    }
+                },
+        )
         encoders.convention(emptySet())
         decoders.convention(emptySet())
         muxers.convention(emptySet())
@@ -432,7 +449,7 @@ abstract class FfmpegBuildTask : DefaultTask() {
                 )
                 // VAAPI is an optional host capability. Enable it only when the target build can
                 // resolve libva; the player still probes device creation again at runtime.
-                if (hardwareDecoding.get() && pkgConfigPackageExists("libva")) {
+                if (hardwareDecoding.get() && libvaAvailable.get()) {
                     arguments += "--enable-vaapi"
                 } else {
                     arguments += "--disable-vaapi"
@@ -578,14 +595,6 @@ abstract class FfmpegBuildTask : DefaultTask() {
         return path.any { directory ->
             suffixes.any { suffix -> File(directory, command + suffix).isFile }
         }
-    }
-
-    private fun pkgConfigPackageExists(packageName: String): Boolean {
-        if (!commandExists("pkg-config")) return false
-        return execOperations.exec {
-            commandLine("pkg-config", "--exists", packageName)
-            isIgnoreExitValue = true
-        }.exitValue == 0
     }
 
     private fun addComponentFlags(arguments: MutableList<String>, type: String, values: Set<String>) {
