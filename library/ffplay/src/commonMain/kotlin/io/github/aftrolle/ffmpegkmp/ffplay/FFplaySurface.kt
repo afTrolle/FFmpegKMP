@@ -77,7 +77,7 @@ internal fun ComposeCanvasFFplaySurface(
 
 private class ComposeCanvasOutput : FFplayVideoOutput {
     override val kind: FFplayRendererKind = FFplayRendererKind.COMPOSE_CANVAS
-    override val frames = MutableStateFlow<FFplayFrame?>(null)
+    val frames = MutableStateFlow<FFplayFrame?>(null)
     override val capabilities = FFplayOutputCapabilities(
         softwareFrameUpload = true,
         zeroCopy = false,

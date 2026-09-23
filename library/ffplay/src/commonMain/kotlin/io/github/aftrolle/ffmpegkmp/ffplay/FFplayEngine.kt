@@ -22,7 +22,6 @@ import io.github.aftrolle.ffmpegkmp.bindings.createPlatformPlayerBridge
 import io.github.aftrolle.ffmpegkmp.core.toNativeMounts
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.microseconds
-import kotlinx.coroutines.flow.StateFlow
 
 internal data class FFplayFrame(
     val image: ImageBitmap,
@@ -33,7 +32,6 @@ internal data class FFplayFrame(
 
 internal interface FFplayVideoOutput {
     val kind: FFplayRendererKind
-    val frames: StateFlow<FFplayFrame?>
     val capabilities: FFplayOutputCapabilities
     /** Private platform object (for example android.view.Surface) consumed by the native bridge. */
     val platformTarget: Any? get() = null

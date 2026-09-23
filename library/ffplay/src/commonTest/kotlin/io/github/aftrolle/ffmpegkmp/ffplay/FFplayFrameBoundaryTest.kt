@@ -335,11 +335,8 @@ private class PlatformOutput(
     override val capabilities: FFplayOutputCapabilities = FFplayOutputCapabilities(),
 ) : FFplayVideoOutput {
     override val kind = FFplayRendererKind.NATIVE_SURFACE
-    override val frames = kotlinx.coroutines.flow.MutableStateFlow<FFplayFrame?>(null)
     override fun submit(frame: FFplayFrame): Boolean = true
-    override fun discard() {
-        frames.value = null
-    }
+    override fun discard() = Unit
 }
 
 private class CountingOutput(
@@ -347,7 +344,6 @@ private class CountingOutput(
     override val capabilities: FFplayOutputCapabilities = FFplayOutputCapabilities(),
     override val kind: FFplayRendererKind = FFplayRendererKind.COMPOSE_CANVAS,
 ) : FFplayVideoOutput {
-    override val frames = kotlinx.coroutines.flow.MutableStateFlow<FFplayFrame?>(null)
     var submitCount = 0
         private set
     var platformSubmitCount = 0
@@ -355,7 +351,6 @@ private class CountingOutput(
 
     override fun submit(frame: FFplayFrame): Boolean {
         submitCount++
-        if (acceptFrames) frames.value = frame
         return acceptFrames
     }
 
@@ -369,7 +364,5 @@ private class CountingOutput(
         return acceptFrames
     }
 
-    override fun discard() {
-        frames.value = null
-    }
+    override fun discard() = Unit
 }

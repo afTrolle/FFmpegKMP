@@ -160,7 +160,6 @@ private class FakeAudio : FFplayAudioOutput {
 
 private class CanvasOutput : FFplayVideoOutput {
     override val kind = FFplayRendererKind.COMPOSE_CANVAS
-    override val frames = MutableStateFlow<FFplayFrame?>(null)
     override val capabilities = FFplayOutputCapabilities()
     override fun submit(frame: FFplayFrame): Boolean = true
     override fun discard() = Unit

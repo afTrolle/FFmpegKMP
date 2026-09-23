@@ -10,7 +10,6 @@ import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 import kotlin.test.assertNotEquals
 import kotlin.time.Duration.Companion.seconds
-import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.filterIsInstance
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.async
@@ -304,20 +303,17 @@ private fun testPlayer(
 
 private class FakeOutput : FFplayVideoOutput {
     override val kind: FFplayRendererKind = FFplayRendererKind.COMPOSE_CANVAS
-    override val frames = MutableStateFlow<FFplayFrame?>(null)
     override val capabilities = FFplayOutputCapabilities()
     var discardCount = 0
         private set
     override fun submit(frame: FFplayFrame): Boolean = true
     override fun discard() {
         discardCount++
-        frames.value = null
     }
 }
 
 private class SecureFakeOutput : FFplayVideoOutput {
     override val kind = FFplayRendererKind.NATIVE_SURFACE
-    override val frames = MutableStateFlow<FFplayFrame?>(null)
     override val capabilities = FFplayOutputCapabilities(
         hardwareFrameImport = true,
         softwareFrameUpload = false,

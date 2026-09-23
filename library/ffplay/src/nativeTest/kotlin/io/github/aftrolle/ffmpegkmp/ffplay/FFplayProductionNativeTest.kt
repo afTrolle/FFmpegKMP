@@ -10,7 +10,6 @@ import io.github.aftrolle.ffmpegkmp.bindings.NativeVideoFrame
 import io.github.aftrolle.ffmpegkmp.core.CommandIo
 import kotlinx.cinterop.addressOf
 import kotlinx.cinterop.usePinned
-import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.runBlocking
 import okio.Buffer
 import platform.Foundation.NSBundle
@@ -52,7 +51,6 @@ class FFplayProductionNativeTest {
 
 private class NativeProductionOutput : FFplayVideoOutput {
     override val kind = FFplayRendererKind.COMPOSE_CANVAS
-    override val frames = MutableStateFlow<FFplayFrame?>(null)
     override val capabilities = FFplayOutputCapabilities()
     var framesReceived = 0
         private set
@@ -64,9 +62,7 @@ private class NativeProductionOutput : FFplayVideoOutput {
         return true
     }
 
-    override fun discard() {
-        frames.value = null
-    }
+    override fun discard() = Unit
 }
 
 private fun bundledTestResource(name: String): ByteArray {

@@ -21,7 +21,6 @@ import androidx.compose.ui.graphics.asAndroidBitmap
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalView
-import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
 
@@ -104,7 +103,6 @@ private class AndroidSurfaceOutput(
     private val paint = Paint(Paint.FILTER_BITMAP_FLAG)
 
     override val kind: FFplayRendererKind = FFplayRendererKind.NATIVE_SURFACE
-    override val frames = MutableStateFlow<FFplayFrame?>(null)
     override val capabilities: FFplayOutputCapabilities
         get() = synchronized(lock) {
             val directSurfacePresentation = contentScale == ContentScale.Fit &&
@@ -201,16 +199,13 @@ private class AndroidSurfaceOutput(
                 paint,
             )
             canvas.restore()
-            frames.value = frame
         } finally {
             target.unlockCanvasAndPost(canvas)
         }
         true
     }
 
-    override fun discard() = synchronized(lock) {
-        frames.value = null
-    }
+    override fun discard() = Unit
 }
 
 private fun FFplayVideoInfo?.hasIdentityDisplayTransform(): Boolean =

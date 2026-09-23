@@ -21,7 +21,6 @@ import io.github.aftrolle.ffmpegkmp.bindings.NativePlatformVideoFrameKind
 import kotlin.js.ExperimentalWasmJsInterop
 import kotlin.js.JsAny
 import kotlinx.browser.document
-import kotlinx.coroutines.flow.MutableStateFlow
 import org.w3c.dom.HTMLCanvasElement
 
 @Composable
@@ -56,7 +55,6 @@ internal actual fun PlatformFFplaySurface(
 private class WebCanvasOutput : FFplayVideoOutput {
     val canvas = document.createElement("canvas") as HTMLCanvasElement
     override val kind = FFplayRendererKind.NATIVE_SURFACE
-    override val frames = MutableStateFlow<FFplayFrame?>(null)
     override val capabilities = FFplayOutputCapabilities(
         hardwareFrameImport = webCodecsAvailable(),
         softwareFrameUpload = true,

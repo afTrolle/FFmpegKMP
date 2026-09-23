@@ -128,7 +128,7 @@ internal actual fun PlatformFFplaySurface(
 
 private class IOSSampleBufferOutput : FFplayVideoOutput {
     override val kind: FFplayRendererKind = FFplayRendererKind.NATIVE_SURFACE
-    override val frames = MutableStateFlow<FFplayFrame?>(null)
+    val frames = MutableStateFlow<FFplayFrame?>(null)
     override val capabilities: FFplayOutputCapabilities
         get() {
             val directPresentation = videoInfo.hasIdentityDisplayTransform()

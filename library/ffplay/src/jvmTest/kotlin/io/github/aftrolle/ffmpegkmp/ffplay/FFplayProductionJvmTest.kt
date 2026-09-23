@@ -99,7 +99,6 @@ class FFplayProductionJvmTest {
 @OptIn(InternalFFmpegKmpApi::class)
 private class ProductionOutput : FFplayVideoOutput {
     override val kind = FFplayRendererKind.COMPOSE_CANVAS
-    override val frames = kotlinx.coroutines.flow.MutableStateFlow<FFplayFrame?>(null)
     override val capabilities = FFplayOutputCapabilities()
     var framesReceived = 0
         private set
@@ -111,9 +110,7 @@ private class ProductionOutput : FFplayVideoOutput {
         return true
     }
 
-    override fun discard() {
-        frames.value = null
-    }
+    override fun discard() = Unit
 }
 
 private class BlockingPrepareEngine(

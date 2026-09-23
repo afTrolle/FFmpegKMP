@@ -189,7 +189,6 @@ class FFplayAudioJvmTest {
 
     private class CountingOutput : FFplayVideoOutput {
         override val kind = FFplayRendererKind.COMPOSE_CANVAS
-        override val frames = kotlinx.coroutines.flow.MutableStateFlow<FFplayFrame?>(null)
         override val capabilities = FFplayOutputCapabilities()
 
         @Volatile
