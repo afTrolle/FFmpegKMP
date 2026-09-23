@@ -4,7 +4,7 @@ package io.github.aftrolle.ffmpegkmp.ffplay
 import androidx.compose.foundation.Canvas
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
-import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.RememberObserver
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
@@ -16,26 +16,39 @@ import androidx.compose.ui.graphics.drawscope.withTransform
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
+import kotlinx.coroutines.DelicateCoroutinesApi
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.NonCancellable
-import kotlinx.coroutines.awaitCancellation
+import kotlinx.coroutines.GlobalScope
 import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.withContext
+import kotlinx.coroutines.launch
 
+/** A player that is closed when it leaves the composition. */
 @Composable
 public fun rememberFFplayPlayer(
     configuration: FFplayConfiguration = FFplayConfiguration(),
-): FFplayPlayer {
-    val player = remember(configuration) { FFplayPlayer(configuration) }
-    LaunchedEffect(player) {
-        try {
-            awaitCancellation()
-        } finally {
-            player.requestClose()
-            withContext(NonCancellable + Dispatchers.Default) { player.close() }
-        }
+): FFplayPlayer = rememberFFplayPlayer(configuration, ::FFplayPlayer)
+
+@Composable
+internal fun rememberFFplayPlayer(
+    configuration: FFplayConfiguration,
+    create: (FFplayConfiguration) -> FFplayPlayer,
+): FFplayPlayer = remember(configuration) { RememberedFFplayPlayer(create(configuration)) }.player
+
+/**
+ * Closes [player] when it is forgotten, or when the composition that created it is abandoned
+ * before it applies, which an effect never observes.
+ */
+internal class RememberedFFplayPlayer(val player: FFplayPlayer) : RememberObserver {
+    override fun onRemembered() = Unit
+    override fun onForgotten() = release()
+    override fun onAbandoned() = release()
+
+    @OptIn(DelicateCoroutinesApi::class)
+    private fun release() {
+        // Cancelling native work is immediate; destroying the engine may wait for it to stop.
+        player.requestClose()
+        GlobalScope.launch(Dispatchers.Default) { player.close() }
     }
-    return player
 }
 
 @Composable
