@@ -35,7 +35,6 @@ import kotlinx.cinterop.staticCFunction
 import kotlinx.cinterop.usePinned
 import platform.posix.memcpy
 import kotlin.concurrent.atomics.AtomicBoolean
-import okio.Buffer
 
 @InternalFFmpegKmpApi
 public actual fun createPlatformExecutionBridge(): NativeExecutionBridge = NativeCInteropExecutionBridge()
@@ -117,13 +116,6 @@ private class NativeCInteropExecutionBridge : NativeExecutionBridge {
     }
 }
 
-internal fun protocolUrl(id: Long, path: String): String = "ffmpegkmp:$id${path.fileSuffix()}"
-
-private fun String.fileSuffix(): String {
-    val name = substringAfterLast('/').substringAfterLast('\\')
-    val suffix = name.substringAfterLast('.', missingDelimiterValue = "")
-    return if (suffix.isEmpty()) "" else ".$suffix"
-}
 
 private class CallbackState {
     var emit: ((NativeExecutionEvent) -> Unit)? = null
@@ -149,13 +141,10 @@ private fun receiveNativeEvent(
     )
 }
 
-internal class NativeMountedResource(
-    private val resource: NativeIoResource,
-    private val replayableSource: Boolean = false,
-) {
-    private val truncated = AtomicBoolean(false)
-    private val sourceCache = Buffer()
-    private var sourceExhausted = false
+/** Moves `ffmpegkmp:` protocol bytes between native memory and a [MountedIo]. */
+internal class NativeMountedResource(resource: NativeIoResource, replayableSource: Boolean = false) {
+    private val io = MountedIo(resource, replayableSource)
+    private var scratch = ByteArray(0)
 
     /** Serializes dispatch like the JVM's @Synchronized: player worker threads share the cache. */
     private val busy = AtomicBoolean(false)
@@ -166,11 +155,24 @@ internal class NativeMountedResource(
         }
         return try {
             when (operation) {
-                IO_OPEN -> open(offset.toInt())
-                IO_READ -> read(offset, data ?: return IO_FAILURE, size.checkedSize())
-                IO_WRITE -> write(offset, data ?: return IO_FAILURE, size.checkedSize())
-                IO_SIZE -> size()
-                IO_CLOSE -> close()
+                IO_OPEN -> io.open(offset.toInt())
+                IO_READ -> {
+                    val length = size.checkedSize()
+                    val bytes = scratch(length)
+                    val count = io.read(offset, bytes, length)
+                    if (count > 0) {
+                        val target = data ?: return IO_FAILURE
+                        bytes.usePinned { pinned -> memcpy(target, pinned.addressOf(0), count.convert()) }
+                    }
+                    count.toLong()
+                }
+                IO_WRITE -> {
+                    val length = size.checkedSize()
+                    val bytes = (data ?: return IO_FAILURE).readBytes(length)
+                    if (io.write(offset, bytes, length)) length.toLong() else IO_FAILURE
+                }
+                IO_SIZE -> io.size()
+                IO_CLOSE -> io.close()
                 else -> IO_FAILURE
             }
         } catch (_: Throwable) {
@@ -180,93 +182,10 @@ internal class NativeMountedResource(
         }
     }
 
-    private fun open(flags: Int): Long = when (resource) {
-        is NativeFileResource -> {
-            if (
-                resource.truncate &&
-                flags and AVIO_FLAG_WRITE != 0 &&
-                truncated.compareAndSet(expectedValue = false, newValue = true)
-            ) {
-                resource.fileHandle.resize(0L)
-            }
-            when (resource.access) {
-                NativeIoAccess.READ -> IO_CAP_READ or IO_CAP_SEEK
-                NativeIoAccess.WRITE -> IO_CAP_WRITE or IO_CAP_SEEK
-                NativeIoAccess.READ_WRITE -> IO_CAP_READ or IO_CAP_WRITE or IO_CAP_SEEK
-            }
-        }
-        is NativeSourceResource -> IO_CAP_READ or if (replayableSource) IO_CAP_SEEK else 0
-        is NativeSinkResource -> IO_CAP_WRITE
-    }.toLong()
-
-    private fun read(offset: Long, data: CPointer<UByteVar>, size: Int): Long {
-        val bytes = ByteArray(size)
-        val count = when (resource) {
-            is NativeFileResource -> resource.fileHandle.read(offset, bytes, 0, size)
-            is NativeSourceResource -> if (replayableSource) {
-                fillSourceCache(offset + size)
-                val available = (sourceCache.size - offset).coerceIn(0, size.toLong()).toInt()
-                if (available > 0) {
-                    val copy = Buffer()
-                    sourceCache.copyTo(copy, offset, available.toLong())
-                    copy.readExactly(bytes, available)
-                }
-                available
-            } else {
-                val buffer = Buffer()
-                val read = resource.source.read(buffer, size.toLong())
-                if (read > 0L) buffer.readExactly(bytes, read.toInt())
-                read.toInt()
-            }
-            is NativeSinkResource -> return IO_FAILURE
-        }
-        if (count <= 0) return 0L
-        bytes.usePinned { pinned -> memcpy(data, pinned.addressOf(0), count.convert()) }
-        return count.toLong()
-    }
-
-    private fun write(offset: Long, data: CPointer<UByteVar>, size: Int): Long {
-        val bytes = data.readBytes(size)
-        when (resource) {
-            is NativeFileResource -> resource.fileHandle.write(offset, bytes, 0, size)
-            is NativeSinkResource -> {
-                val buffer = Buffer().write(bytes)
-                resource.sink.write(buffer, size.toLong())
-            }
-            is NativeSourceResource -> return IO_FAILURE
-        }
-        return size.toLong()
-    }
-
-    private fun size(): Long = when (resource) {
-        is NativeFileResource -> resource.fileHandle.size()
-        is NativeSourceResource -> if (replayableSource) {
-            fillSourceCache(requiredSize = null)
-            sourceCache.size
-        } else {
-            IO_FAILURE
-        }
-        else -> IO_FAILURE
-    }
-
-    private fun fillSourceCache(requiredSize: Long?) {
-        val source = (resource as? NativeSourceResource)?.source ?: return
-        while (!sourceExhausted && (requiredSize == null || sourceCache.size < requiredSize)) {
-            val request = requiredSize
-                ?.minus(sourceCache.size)
-                ?.coerceAtMost(32_768L)
-                ?: 32_768L
-            if (source.read(sourceCache, request) <= 0L) sourceExhausted = true
-        }
-    }
-
-    private fun close(): Long {
-        when (resource) {
-            is NativeFileResource -> if (resource.access != NativeIoAccess.READ) resource.fileHandle.flush()
-            is NativeSinkResource -> resource.sink.flush()
-            is NativeSourceResource -> Unit
-        }
-        return 0L
+    /** Reused across calls: FFmpeg reads in similar-sized blocks. */
+    private fun scratch(size: Int): ByteArray {
+        if (scratch.size < size) scratch = ByteArray(size)
+        return scratch
     }
 }
 
@@ -287,13 +206,3 @@ private fun ULong.checkedSize(): Int {
     return toInt()
 }
 
-private const val IO_OPEN = 0
-private const val IO_READ = 1
-private const val IO_WRITE = 2
-private const val IO_SIZE = 3
-private const val IO_CLOSE = 4
-private const val IO_CAP_READ = 1
-private const val IO_CAP_WRITE = 2
-private const val IO_CAP_SEEK = 4
-private const val AVIO_FLAG_WRITE = 2
-private const val IO_FAILURE = -1L

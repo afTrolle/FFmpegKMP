@@ -6,11 +6,6 @@
 
 package io.github.aftrolle.ffmpegkmp.bindings
 
-import io.github.aftrolle.ffmpegkmp.bindings.cinterop.FFPLAYKMP_OUTPUT_HARDWARE_FRAME_IMPORT
-import io.github.aftrolle.ffmpegkmp.bindings.cinterop.FFPLAYKMP_OUTPUT_PROTECTED_CONTENT
-import io.github.aftrolle.ffmpegkmp.bindings.cinterop.FFPLAYKMP_OUTPUT_SOFTWARE_FRAME_UPLOAD
-import io.github.aftrolle.ffmpegkmp.bindings.cinterop.FFPLAYKMP_OUTPUT_TONE_MAP_HDR_TO_SDR
-import io.github.aftrolle.ffmpegkmp.bindings.cinterop.FFPLAYKMP_OUTPUT_ZERO_COPY
 import io.github.aftrolle.ffmpegkmp.bindings.cinterop.FFPLAYKMP_PLATFORM_FRAME_CV_PIXEL_BUFFER
 import io.github.aftrolle.ffmpegkmp.bindings.cinterop.FFPLAYKMP_SOURCE_REQUIRE_SECURE_PATH
 import io.github.aftrolle.ffmpegkmp.bindings.cinterop.ffplaykmp_configuration
@@ -130,7 +125,7 @@ private class NativeCInteropPlayerBridge(
         checkOpen()
         val nativeCapabilities = alloc<ffplaykmp_output_capabilities>()
         ffplaykmp_output_capabilities_init(nativeCapabilities.ptr)
-        nativeCapabilities.flags = capabilities.toFlags()
+        nativeCapabilities.flags = capabilities.toNativeFlags().toUInt()
         ffplaykmp_player_set_output(player, nativeCapabilities.ptr)
     }
 
@@ -268,75 +263,39 @@ private fun receiveNativePlayerIo(
     state.mounts[resourceId]?.dispatch(operation.toInt(), offset, data, size) ?: -1L
 }
 
-private fun NativePlayerOutputCapabilities.toFlags(): UInt =
-    (if (hardwareFrameImport) FFPLAYKMP_OUTPUT_HARDWARE_FRAME_IMPORT else 0u) or
-        (if (softwareFrameUpload) FFPLAYKMP_OUTPUT_SOFTWARE_FRAME_UPLOAD else 0u) or
-        (if (zeroCopy) FFPLAYKMP_OUTPUT_ZERO_COPY else 0u) or
-        (if (protectedContent) FFPLAYKMP_OUTPUT_PROTECTED_CONTENT else 0u) or
-        (if (toneMapHdrToSdr) FFPLAYKMP_OUTPUT_TONE_MAP_HDR_TO_SDR else 0u)
-
-private fun ffplaykmp_snapshot.toNativeSnapshot(): NativePlayerSnapshot {
-    val flags = output_flags
-    return NativePlayerSnapshot(
-        state = NativePlayerState.entries[state.toInt()],
-        positionUs = position_us,
-        durationUs = duration_us.takeIf { it >= 0L },
-        queueSerial = queue_serial,
-        outputCapabilities = flags.takeIf { it != 0u }?.let {
-            NativePlayerOutputCapabilities(
-                hardwareFrameImport = it and FFPLAYKMP_OUTPUT_HARDWARE_FRAME_IMPORT != 0u,
-                softwareFrameUpload = it and FFPLAYKMP_OUTPUT_SOFTWARE_FRAME_UPLOAD != 0u,
-                zeroCopy = it and FFPLAYKMP_OUTPUT_ZERO_COPY != 0u,
-                protectedContent = it and FFPLAYKMP_OUTPUT_PROTECTED_CONTENT != 0u,
-                toneMapHdrToSdr = it and FFPLAYKMP_OUTPUT_TONE_MAP_HDR_TO_SDR != 0u,
-            )
-        },
-        errorCode = last_error,
-        videoWidth = video_width,
-        videoHeight = video_height,
-        activeDecoder = NativePlayerDecoderKind.entries[active_decoder.toInt()],
-        droppedFrames = dropped_frames.toLong(),
-        videoInfo = video_width.takeIf { it > 0 }?.let {
-            NativePlayerVideoInfo(
-                width = it,
-                height = video_height,
-                pixelFormat = pixel_format,
-                pixelFormatName = ffplaykmp_pixel_format_name(pixel_format)?.toKString(),
-                bitDepth = bit_depth,
-                sampleAspectRatioNumerator = sample_aspect_ratio_num,
-                sampleAspectRatioDenominator = sample_aspect_ratio_den,
-                rotationDegrees = rotation_degrees,
-                colorPrimaries = color_primaries,
-                colorTransfer = color_transfer,
-                colorSpace = color_space,
-                colorRange = color_range,
-                chromaLocation = chroma_location,
-                hdrType = NativePlayerHdrType.entries[hdr_type.toInt()],
-                masteringDisplay = if (mastering_has_primaries != 0 ||
-                    mastering_has_luminance != 0
-                ) {
-                    NativePlayerMasteringDisplayMetadata(
-                        hasPrimaries = mastering_has_primaries != 0,
-                        hasLuminance = mastering_has_luminance != 0,
-                        redX = mastering_red_x,
-                        redY = mastering_red_y,
-                        greenX = mastering_green_x,
-                        greenY = mastering_green_y,
-                        blueX = mastering_blue_x,
-                        blueY = mastering_blue_y,
-                        whiteX = mastering_white_x,
-                        whiteY = mastering_white_y,
-                        minLuminance = mastering_min_luminance,
-                        maxLuminance = mastering_max_luminance,
-                    )
-                } else {
-                    null
-                },
-                maxContentLightLevel = max_content_light_level.toInt()
-                    .takeIf { content_light_present != 0 },
-                maxFrameAverageLightLevel = max_frame_average_light_level.toInt()
-                    .takeIf { content_light_present != 0 },
-            )
-        },
-    )
-}
+private fun ffplaykmp_snapshot.toNativeSnapshot(): NativePlayerSnapshot = nativePlayerSnapshot(
+    state = state.toInt(),
+    positionUs = position_us,
+    durationUs = duration_us,
+    queueSerial = queue_serial,
+    outputFlags = output_flags.toInt(),
+    errorCode = last_error,
+    videoWidth = video_width,
+    videoHeight = video_height,
+    activeDecoder = active_decoder.toInt(),
+    droppedFrames = dropped_frames.toLong(),
+    pixelFormat = pixel_format,
+    pixelFormatName = ffplaykmp_pixel_format_name(pixel_format)?.toKString(),
+    bitDepth = bit_depth,
+    sampleAspectRatioNumerator = sample_aspect_ratio_num,
+    sampleAspectRatioDenominator = sample_aspect_ratio_den,
+    rotationDegrees = rotation_degrees,
+    colorPrimaries = color_primaries,
+    colorTransfer = color_transfer,
+    colorSpace = color_space,
+    colorRange = color_range,
+    chromaLocation = chroma_location,
+    hdrType = hdr_type.toInt(),
+    masteringHasPrimaries = mastering_has_primaries != 0,
+    masteringHasLuminance = mastering_has_luminance != 0,
+    mastering = {
+        doubleArrayOf(
+            mastering_red_x, mastering_red_y, mastering_green_x, mastering_green_y,
+            mastering_blue_x, mastering_blue_y, mastering_white_x, mastering_white_y,
+            mastering_min_luminance, mastering_max_luminance,
+        )
+    },
+    contentLightPresent = content_light_present != 0,
+    maxContentLightLevel = max_content_light_level.toInt(),
+    maxFrameAverageLightLevel = max_frame_average_light_level.toInt(),
+)

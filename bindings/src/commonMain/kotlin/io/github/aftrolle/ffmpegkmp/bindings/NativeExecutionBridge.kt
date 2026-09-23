@@ -37,7 +37,10 @@ public class NativeFileResource(
 ) : NativeIoResource
 
 @InternalFFmpegKmpApi
-public class NativeSourceResource(public val source: Source) : NativeIoResource
+public class NativeSourceResource(public val source: Source) : NativeIoResource {
+    /** Shared by every mount of this resource, so a re-prepare replays what was already read. */
+    internal val replay: ReplayableSource by lazy { ReplayableSource(source) }
+}
 
 @InternalFFmpegKmpApi
 public class NativeSinkResource(public val sink: Sink) : NativeIoResource

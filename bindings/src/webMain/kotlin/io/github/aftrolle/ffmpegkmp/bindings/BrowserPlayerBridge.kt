@@ -101,7 +101,7 @@ private class BrowserNativePlayerBridge(
         )
         update(current)
         activeWorker.prepare(source, source.mounts.readBytesForBrowserPlayer())
-        output?.let { activeWorker.setOutput(it.toBrowserFlags()) }
+        output?.let { activeWorker.setOutput(it.toNativeFlags()) }
         return 0
     }
 
@@ -124,7 +124,7 @@ private class BrowserNativePlayerBridge(
         }
         if (validation < 0) return fail(validation)
         output = capabilities
-        if (source != null) worker?.setOutput(capabilities.toBrowserFlags())
+        if (source != null) worker?.setOutput(capabilities.toNativeFlags())
         return 0
     }
 
@@ -283,98 +283,50 @@ private fun List<NativeMountedIo>.readBytesForBrowserPlayer(): Array<ByteArray> 
             resource.fileHandle.read(0L, buffer, resource.fileHandle.size())
             buffer.readByteArray()
         }
+        // Through the replay cache, so preparing the same source again still has its bytes.
         is NativeSourceResource -> {
-            val buffer = Buffer()
-            while (resource.source.read(buffer, 8_192L) != -1L) {
-                // Drain the mounted source before transferring its independently owned buffer.
-            }
-            buffer.readByteArray()
+            resource.replay.readAll()
         }
         is NativeSinkResource -> ByteArray(0)
     }
 }.toTypedArray()
 
-private fun NativePlayerOutputCapabilities.toBrowserFlags(): Int =
-    (if (hardwareFrameImport) 1 else 0) or
-        (if (softwareFrameUpload) 2 else 0) or
-        (if (zeroCopy) 4 else 0) or
-        (if (protectedContent) 8 else 0) or
-        (if (toneMapHdrToSdr) 16 else 0)
-
 internal fun String.toBrowserNativePlayerSnapshot(): NativePlayerSnapshot {
     val value = Json.parseToJsonElement(this) as JsonObject
-    val mastering = if (value.int("masteringHasPrimaries") != 0 ||
-        value.int("masteringHasLuminance") != 0
-    ) {
-        NativePlayerMasteringDisplayMetadata(
-            hasPrimaries = value.int("masteringHasPrimaries") != 0,
-            hasLuminance = value.int("masteringHasLuminance") != 0,
-            redX = value.double("masteringRedX"),
-            redY = value.double("masteringRedY"),
-            greenX = value.double("masteringGreenX"),
-            greenY = value.double("masteringGreenY"),
-            blueX = value.double("masteringBlueX"),
-            blueY = value.double("masteringBlueY"),
-            whiteX = value.double("masteringWhiteX"),
-            whiteY = value.double("masteringWhiteY"),
-            minLuminance = value.double("masteringMinLuminance"),
-            maxLuminance = value.double("masteringMaxLuminance"),
-        )
-    } else {
-        null
-    }
-    val width = value.int("videoWidth")
-    val height = value.int("videoHeight")
-    val outputFlags = value.int("outputFlags")
-    val duration = value.long("durationUs")
-    return NativePlayerSnapshot(
-        state = NativePlayerState.entries.getOrElse(value.int("state")) { NativePlayerState.FAILED },
+    return nativePlayerSnapshot(
+        state = value.int("state"),
         positionUs = value.long("positionUs"),
-        durationUs = duration.takeIf { it >= 0 },
+        durationUs = value.long("durationUs"),
         queueSerial = value.long("queueSerial").toUInt(),
-        outputCapabilities = outputFlags.takeIf { it != 0 }?.let {
-            NativePlayerOutputCapabilities(
-                hardwareFrameImport = it and 1 != 0,
-                softwareFrameUpload = it and 2 != 0,
-                zeroCopy = it and 4 != 0,
-                protectedContent = it and 8 != 0,
-                toneMapHdrToSdr = it and 16 != 0,
-            )
-        },
+        outputFlags = value.int("outputFlags"),
         errorCode = value.int("errorCode"),
-        videoWidth = width,
-        videoHeight = height,
-        activeDecoder = NativePlayerDecoderKind.entries.getOrElse(value.int("activeDecoder")) {
-            NativePlayerDecoderKind.UNKNOWN
-        },
-        videoInfo = if (width > 0 && height > 0) {
-            NativePlayerVideoInfo(
-                width = width,
-                height = height,
-                pixelFormat = value.int("pixelFormat"),
-                pixelFormatName = value.getValue("pixelFormatName").jsonPrimitive.content.ifEmpty { null },
-                bitDepth = value.int("bitDepth"),
-                sampleAspectRatioNumerator = value.int("sarNum"),
-                sampleAspectRatioDenominator = value.int("sarDen"),
-                rotationDegrees = value.double("rotation"),
-                colorPrimaries = value.int("colorPrimaries"),
-                colorTransfer = value.int("colorTransfer"),
-                colorSpace = value.int("colorSpace"),
-                colorRange = value.int("colorRange"),
-                chromaLocation = value.int("chromaLocation"),
-                hdrType = NativePlayerHdrType.entries.getOrElse(value.int("hdrType")) {
-                    NativePlayerHdrType.UNKNOWN_HDR
-                },
-                masteringDisplay = mastering,
-                maxContentLightLevel = value.int("maxContentLightLevel")
-                    .takeIf { value.int("contentLightPresent") != 0 },
-                maxFrameAverageLightLevel = value.int("maxFrameAverageLightLevel")
-                    .takeIf { value.int("contentLightPresent") != 0 },
-            )
-        } else {
-            null
-        },
+        videoWidth = value.int("videoWidth"),
+        videoHeight = value.int("videoHeight"),
+        activeDecoder = value.int("activeDecoder"),
         droppedFrames = value.long("droppedFrames"),
+        pixelFormat = value.int("pixelFormat"),
+        pixelFormatName = value.getValue("pixelFormatName").jsonPrimitive.content,
+        bitDepth = value.int("bitDepth"),
+        sampleAspectRatioNumerator = value.int("sarNum"),
+        sampleAspectRatioDenominator = value.int("sarDen"),
+        rotationDegrees = value.double("rotation"),
+        colorPrimaries = value.int("colorPrimaries"),
+        colorTransfer = value.int("colorTransfer"),
+        colorSpace = value.int("colorSpace"),
+        colorRange = value.int("colorRange"),
+        chromaLocation = value.int("chromaLocation"),
+        hdrType = value.int("hdrType"),
+        masteringHasPrimaries = value.int("masteringHasPrimaries") != 0,
+        masteringHasLuminance = value.int("masteringHasLuminance") != 0,
+        mastering = {
+            listOf(
+                "RedX", "RedY", "GreenX", "GreenY", "BlueX", "BlueY", "WhiteX", "WhiteY",
+                "MinLuminance", "MaxLuminance",
+            ).map { value.double("mastering$it") }.toDoubleArray()
+        },
+        contentLightPresent = value.int("contentLightPresent") != 0,
+        maxContentLightLevel = value.int("maxContentLightLevel"),
+        maxFrameAverageLightLevel = value.int("maxFrameAverageLightLevel"),
     )
 }
 

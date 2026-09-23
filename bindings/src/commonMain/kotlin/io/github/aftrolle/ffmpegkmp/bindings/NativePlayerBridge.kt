@@ -324,3 +324,117 @@ private class InMemoryNativePlayerBridge(
 
     private fun checkOpen() = check(!closed) { "The player bridge is closed" }
 }
+
+/** `ffplaykmp_output_flags` bits, identical in the C header and the browser worker. */
+private const val OUTPUT_HARDWARE_FRAME_IMPORT = 1
+private const val OUTPUT_SOFTWARE_FRAME_UPLOAD = 2
+private const val OUTPUT_ZERO_COPY = 4
+private const val OUTPUT_PROTECTED_CONTENT = 8
+private const val OUTPUT_TONE_MAP_HDR_TO_SDR = 16
+
+internal fun NativePlayerOutputCapabilities.toNativeFlags(): Int =
+    (if (hardwareFrameImport) OUTPUT_HARDWARE_FRAME_IMPORT else 0) or
+        (if (softwareFrameUpload) OUTPUT_SOFTWARE_FRAME_UPLOAD else 0) or
+        (if (zeroCopy) OUTPUT_ZERO_COPY else 0) or
+        (if (protectedContent) OUTPUT_PROTECTED_CONTENT else 0) or
+        (if (toneMapHdrToSdr) OUTPUT_TONE_MAP_HDR_TO_SDR else 0)
+
+private fun nativeOutputCapabilities(flags: Int): NativePlayerOutputCapabilities? =
+    flags.takeIf { it != 0 }?.let {
+        NativePlayerOutputCapabilities(
+            hardwareFrameImport = it and OUTPUT_HARDWARE_FRAME_IMPORT != 0,
+            softwareFrameUpload = it and OUTPUT_SOFTWARE_FRAME_UPLOAD != 0,
+            zeroCopy = it and OUTPUT_ZERO_COPY != 0,
+            protectedContent = it and OUTPUT_PROTECTED_CONTENT != 0,
+            toneMapHdrToSdr = it and OUTPUT_TONE_MAP_HDR_TO_SDR != 0,
+        )
+    }
+
+/**
+ * Builds a snapshot from the raw `ffplaykmp_snapshot` fields, however a binding reads them
+ * (struct accessors, cinterop fields, or the browser worker's JSON). Unknown enum values from a
+ * newer engine map to safe defaults instead of throwing.
+ */
+internal fun nativePlayerSnapshot(
+    state: Int,
+    positionUs: Long,
+    durationUs: Long,
+    queueSerial: UInt,
+    outputFlags: Int,
+    errorCode: Int,
+    videoWidth: Int,
+    videoHeight: Int,
+    activeDecoder: Int,
+    droppedFrames: Long,
+    pixelFormat: Int,
+    pixelFormatName: String?,
+    bitDepth: Int,
+    sampleAspectRatioNumerator: Int,
+    sampleAspectRatioDenominator: Int,
+    rotationDegrees: Double,
+    colorPrimaries: Int,
+    colorTransfer: Int,
+    colorSpace: Int,
+    colorRange: Int,
+    chromaLocation: Int,
+    hdrType: Int,
+    masteringHasPrimaries: Boolean,
+    masteringHasLuminance: Boolean,
+    mastering: () -> DoubleArray,
+    contentLightPresent: Boolean,
+    maxContentLightLevel: Int,
+    maxFrameAverageLightLevel: Int,
+): NativePlayerSnapshot = NativePlayerSnapshot(
+    state = NativePlayerState.entries.getOrElse(state) { NativePlayerState.FAILED },
+    positionUs = positionUs,
+    durationUs = durationUs.takeIf { it >= 0L },
+    queueSerial = queueSerial,
+    outputCapabilities = nativeOutputCapabilities(outputFlags),
+    errorCode = errorCode,
+    videoWidth = videoWidth,
+    videoHeight = videoHeight,
+    activeDecoder = NativePlayerDecoderKind.entries.getOrElse(activeDecoder) { NativePlayerDecoderKind.UNKNOWN },
+    droppedFrames = droppedFrames,
+    videoInfo = if (videoWidth > 0 && videoHeight > 0) {
+        NativePlayerVideoInfo(
+            width = videoWidth,
+            height = videoHeight,
+            pixelFormat = pixelFormat,
+            pixelFormatName = pixelFormatName?.takeIf(String::isNotEmpty),
+            bitDepth = bitDepth,
+            sampleAspectRatioNumerator = sampleAspectRatioNumerator,
+            sampleAspectRatioDenominator = sampleAspectRatioDenominator,
+            rotationDegrees = rotationDegrees,
+            colorPrimaries = colorPrimaries,
+            colorTransfer = colorTransfer,
+            colorSpace = colorSpace,
+            colorRange = colorRange,
+            chromaLocation = chromaLocation,
+            hdrType = NativePlayerHdrType.entries.getOrElse(hdrType) { NativePlayerHdrType.UNKNOWN_HDR },
+            masteringDisplay = if (masteringHasPrimaries || masteringHasLuminance) {
+                // Red, green, blue and white x/y, then min and max luminance.
+                val values = mastering()
+                NativePlayerMasteringDisplayMetadata(
+                    hasPrimaries = masteringHasPrimaries,
+                    hasLuminance = masteringHasLuminance,
+                    redX = values[0],
+                    redY = values[1],
+                    greenX = values[2],
+                    greenY = values[3],
+                    blueX = values[4],
+                    blueY = values[5],
+                    whiteX = values[6],
+                    whiteY = values[7],
+                    minLuminance = values[8],
+                    maxLuminance = values[9],
+                )
+            } else {
+                null
+            },
+            maxContentLightLevel = maxContentLightLevel.takeIf { contentLightPresent },
+            maxFrameAverageLightLevel = maxFrameAverageLightLevel.takeIf { contentLightPresent },
+        )
+    } else {
+        null
+    },
+)

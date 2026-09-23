@@ -161,7 +161,7 @@ private class JavaCppPlayerBridge(
         checkOpen()
         val nativeCapabilities = ffplaykmp_output_capabilities()
         bridge.ffplaykmp_output_capabilities_init(nativeCapabilities)
-        nativeCapabilities.flags(capabilities.toFlags())
+        nativeCapabilities.flags(capabilities.toNativeFlags())
         return try {
             bridge.ffplaykmp_player_set_output(player, nativeCapabilities)
         } finally {
@@ -225,76 +225,39 @@ private class JavaCppPlayerBridge(
     private fun closedError(): Nothing = throw IllegalStateException("The native player bridge is closed")
 }
 
-private fun NativePlayerOutputCapabilities.toFlags(): Int =
-    (if (hardwareFrameImport) bridge.FFPLAYKMP_OUTPUT_HARDWARE_FRAME_IMPORT else 0) or
-        (if (softwareFrameUpload) bridge.FFPLAYKMP_OUTPUT_SOFTWARE_FRAME_UPLOAD else 0) or
-        (if (zeroCopy) bridge.FFPLAYKMP_OUTPUT_ZERO_COPY else 0) or
-        (if (protectedContent) bridge.FFPLAYKMP_OUTPUT_PROTECTED_CONTENT else 0) or
-        (if (toneMapHdrToSdr) bridge.FFPLAYKMP_OUTPUT_TONE_MAP_HDR_TO_SDR else 0)
-
-private fun ffplaykmp_snapshot.toNativeSnapshot(): NativePlayerSnapshot {
-    val flags = output_flags()
-    return NativePlayerSnapshot(
-        state = NativePlayerState.entries[state()],
-        positionUs = position_us(),
-        durationUs = duration_us().takeIf { it >= 0L },
-        queueSerial = queue_serial().toUInt(),
-        outputCapabilities = flags.takeIf { it != 0 }?.let {
-            NativePlayerOutputCapabilities(
-                hardwareFrameImport = it and bridge.FFPLAYKMP_OUTPUT_HARDWARE_FRAME_IMPORT != 0,
-                softwareFrameUpload = it and bridge.FFPLAYKMP_OUTPUT_SOFTWARE_FRAME_UPLOAD != 0,
-                zeroCopy = it and bridge.FFPLAYKMP_OUTPUT_ZERO_COPY != 0,
-                protectedContent = it and bridge.FFPLAYKMP_OUTPUT_PROTECTED_CONTENT != 0,
-                toneMapHdrToSdr = it and bridge.FFPLAYKMP_OUTPUT_TONE_MAP_HDR_TO_SDR != 0,
-            )
-        },
-        errorCode = last_error(),
-        videoWidth = video_width(),
-        videoHeight = video_height(),
-        activeDecoder = NativePlayerDecoderKind.entries[active_decoder()],
-        droppedFrames = dropped_frames(),
-        videoInfo = video_width().takeIf { it > 0 }?.let {
-            NativePlayerVideoInfo(
-                width = it,
-                height = video_height(),
-                pixelFormat = pixel_format(),
-                pixelFormatName = bridge.ffplaykmp_pixel_format_name(pixel_format())
-                    ?.getString(),
-                bitDepth = bit_depth(),
-                sampleAspectRatioNumerator = sample_aspect_ratio_num(),
-                sampleAspectRatioDenominator = sample_aspect_ratio_den(),
-                rotationDegrees = rotation_degrees(),
-                colorPrimaries = color_primaries(),
-                colorTransfer = color_transfer(),
-                colorSpace = color_space(),
-                colorRange = color_range(),
-                chromaLocation = chroma_location(),
-                hdrType = NativePlayerHdrType.entries[hdr_type()],
-                masteringDisplay = if (mastering_has_primaries() != 0 ||
-                    mastering_has_luminance() != 0
-                ) {
-                    NativePlayerMasteringDisplayMetadata(
-                        hasPrimaries = mastering_has_primaries() != 0,
-                        hasLuminance = mastering_has_luminance() != 0,
-                        redX = mastering_red_x(),
-                        redY = mastering_red_y(),
-                        greenX = mastering_green_x(),
-                        greenY = mastering_green_y(),
-                        blueX = mastering_blue_x(),
-                        blueY = mastering_blue_y(),
-                        whiteX = mastering_white_x(),
-                        whiteY = mastering_white_y(),
-                        minLuminance = mastering_min_luminance(),
-                        maxLuminance = mastering_max_luminance(),
-                    )
-                } else {
-                    null
-                },
-                maxContentLightLevel = max_content_light_level()
-                    .takeIf { content_light_present() != 0 },
-                maxFrameAverageLightLevel = max_frame_average_light_level()
-                    .takeIf { content_light_present() != 0 },
-            )
-        },
-    )
-}
+private fun ffplaykmp_snapshot.toNativeSnapshot(): NativePlayerSnapshot = nativePlayerSnapshot(
+    state = state(),
+    positionUs = position_us(),
+    durationUs = duration_us(),
+    queueSerial = queue_serial().toUInt(),
+    outputFlags = output_flags(),
+    errorCode = last_error(),
+    videoWidth = video_width(),
+    videoHeight = video_height(),
+    activeDecoder = active_decoder(),
+    droppedFrames = dropped_frames(),
+    pixelFormat = pixel_format(),
+    pixelFormatName = bridge.ffplaykmp_pixel_format_name(pixel_format())?.getString(),
+    bitDepth = bit_depth(),
+    sampleAspectRatioNumerator = sample_aspect_ratio_num(),
+    sampleAspectRatioDenominator = sample_aspect_ratio_den(),
+    rotationDegrees = rotation_degrees(),
+    colorPrimaries = color_primaries(),
+    colorTransfer = color_transfer(),
+    colorSpace = color_space(),
+    colorRange = color_range(),
+    chromaLocation = chroma_location(),
+    hdrType = hdr_type(),
+    masteringHasPrimaries = mastering_has_primaries() != 0,
+    masteringHasLuminance = mastering_has_luminance() != 0,
+    mastering = {
+        doubleArrayOf(
+            mastering_red_x(), mastering_red_y(), mastering_green_x(), mastering_green_y(),
+            mastering_blue_x(), mastering_blue_y(), mastering_white_x(), mastering_white_y(),
+            mastering_min_luminance(), mastering_max_luminance(),
+        )
+    },
+    contentLightPresent = content_light_present() != 0,
+    maxContentLightLevel = max_content_light_level(),
+    maxFrameAverageLightLevel = max_frame_average_light_level(),
+)
