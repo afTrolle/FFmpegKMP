@@ -83,6 +83,10 @@ class FFplayAudioJvmTest {
             player.prepare(FFplaySource(AV_FIXTURE, CommandIo { input(AV_FIXTURE, fileHandle) }))
 
             val audio = player.audio.value
+            if (!audio.available && !hasAudioDevice()) {
+                println("Skipping: this machine has no audio output device")
+                return@runBlocking
+            }
             assertTrue(audio.available, "The fixture's audio track should be playable")
             assertEquals(1, audio.tracks.size)
             assertEquals(setOf(0), audio.enabledTracks)
@@ -151,6 +155,12 @@ class FFplayAudioJvmTest {
         assertTrue(result.isSuccess, result.errorOutput)
         return path
     }
+
+    private fun hasAudioDevice(): Boolean = runCatching {
+        javax.sound.sampled.AudioSystem.getSourceDataLine(
+            javax.sound.sampled.AudioFormat(48_000f, 16, 2, true, false),
+        ).close()
+    }.isSuccess
 
     private class CountingOutput : FFplayVideoOutput {
         override val kind = FFplayRendererKind.COMPOSE_CANVAS

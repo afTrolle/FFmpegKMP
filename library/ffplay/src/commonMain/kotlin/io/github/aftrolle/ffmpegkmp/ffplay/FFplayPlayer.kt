@@ -26,13 +26,14 @@ import kotlinx.coroutines.withContext
 /**
  * State-driven owner for one FFplay engine instance.
  *
- * The native engine is intentionally accessed through [FFplayEngine]. This keeps SDL and native
- * frame handles out of the public API and lets a Compose surface attach after media preparation.
+ * The native engine is accessed through [FFplayEngine], which keeps native frame handles out of
+ * the public API and lets a Compose surface attach after media preparation.
  */
 @OptIn(ExperimentalAtomicApi::class)
 public class FFplayPlayer internal constructor(
     public val configuration: FFplayConfiguration = FFplayConfiguration(),
     engineFactory: FFplayEngineFactory,
+    audioOpener: FFplayAudioOpener? = null,
 ) : AutoCloseable {
     public constructor(
         configuration: FFplayConfiguration = FFplayConfiguration(),
@@ -44,6 +45,8 @@ public class FFplayPlayer internal constructor(
     ) : this(
         configuration,
         if (useInMemoryEngine) ::createInMemoryFFplayEngine else ::createPlatformFFplayEngine,
+        // In-memory inputs are not real media: never try to open their audio.
+        audioOpener = if (useInMemoryEngine) ({ null }) else null,
     )
 
     private val closed = AtomicBoolean(false)
@@ -53,6 +56,16 @@ public class FFplayPlayer internal constructor(
     private val mutableSnapshot = MutableStateFlow(FFplaySnapshot())
     private val mutableSecureOutputRequired = MutableStateFlow(false)
     private val mutableEvents = MutableSharedFlow<FFplayEvent>(extraBufferCapacity = 16)
+
+    // Before the engine: its callbacks reach audio as soon as it exists.
+    private val audioScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+    private val audioPlayback = audioOpener
+        ?.let { FFplayAudio(audioScope, ::warnAudio, it) }
+        ?: FFplayAudio(audioScope, ::warnAudio)
+
+    /** Bumped by every prepare, stop and close; audio that finishes opening afterwards is stale. */
+    private var audioGeneration = 0
+
     private val engine: FFplayEngine = engineFactory(
         configuration,
         ::acceptEngineUpdate,
@@ -62,14 +75,6 @@ public class FFplayPlayer internal constructor(
     public val snapshot = mutableSnapshot.asStateFlow()
     public val events: Flow<FFplayEvent> = mutableEvents.asSharedFlow()
 
-    private val audioScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
-    private val audioPlayback = FFplayAudio(
-        scope = audioScope,
-        setMasterClock = { mediaTimeUs ->
-            operationLock.withLock { if (!closed.load()) engine.setMasterClock(mediaTimeUs) }
-        },
-        warn = { message -> emit(FFplayEvent.Warning(message)) },
-    )
 
     /** The prepared source's audio tracks and levels; see [setVolume] and [selectAudioTrack]. */
     public val audio: StateFlow<FFplayAudioState> = audioPlayback.state
@@ -77,20 +82,23 @@ public class FFplayPlayer internal constructor(
 
     public suspend fun prepare(source: FFplaySource) {
         prepareMutex.withLock {
-            operationLock.withLock {
+            val generation = operationLock.withLock {
                 checkOpen()
                 mutableSecureOutputRequired.value =
                     source.protection == FFplayContentProtection.REQUIRE_SECURE_PATH
                 mutableSnapshot.value = FFplaySnapshot(state = FFplayState.PREPARING)
                 audioPlayback.close()
+                ++audioGeneration
             }
             try {
                 prepareOnWorker(source)
-                if (configuration.audio) audioPlayback.open(source)
+                if (configuration.audio) attachAudio(source, generation)
             } catch (cancellation: CancellationException) {
-                audioPlayback.close()
                 operationLock.withLock {
+                    audioPlayback.close()
                     if (!closed.load()) {
+                        // Don't leave the source loaded behind an IDLE snapshot.
+                        runCatching { engine.stop() }
                         mutableSecureOutputRequired.value = false
                         mutableSnapshot.value = FFplaySnapshot(state = FFplayState.IDLE)
                     }
@@ -113,29 +121,26 @@ public class FFplayPlayer internal constructor(
         }
     }
 
+    // Audio follows the engine's state transitions (see acceptEngineUpdate), not these calls.
     public fun play(): Unit = operationLock.withLock {
         checkOpen()
-        // Replaying after the end restarts the video from zero; the audio must follow it there.
-        val fromStart = mutableSnapshot.value.state == FFplayState.ENDED
         engine.play()
-        audioPlayback.play(fromStart)
     }
 
     public fun pause(): Unit = operationLock.withLock {
         checkOpen()
         engine.pause()
-        audioPlayback.pause()
     }
 
     public fun seekTo(position: Duration): Unit = operationLock.withLock {
         checkOpen()
         require(!position.isNegative()) { "Seek position must not be negative" }
         engine.seekTo(position)
-        audioPlayback.seekTo(position)
     }
 
     public fun stop(): Unit = operationLock.withLock {
         checkOpen()
+        audioGeneration++
         audioPlayback.close()
         engine.stop()
         mutableSecureOutputRequired.value = false
@@ -203,6 +208,7 @@ public class FFplayPlayer internal constructor(
                 return@withLock
             }
             // Audio reads the same mounted input; release it before the engine closes that input.
+            audioGeneration++
             audioPlayback.close()
             audioScope.cancel()
             engine.close()
@@ -235,8 +241,31 @@ public class FFplayPlayer internal constructor(
     }
 
     private fun acceptEngineUpdate(snapshot: FFplaySnapshot) {
-        if (!closed.load()) mutableSnapshot.value = snapshot
+        if (closed.load()) return
+        mutableSnapshot.value = snapshot
+        audioPlayback.followEngine(snapshot)
     }
+
+    /**
+     * Opens the source's audio (blocking, so outside the lock), then attaches it only if no stop,
+     * close or newer prepare happened meanwhile; otherwise it is closed rather than leaked.
+     */
+    private suspend fun attachAudio(source: FFplaySource, generation: Int) {
+        val audio = audioPlayback.load(source) ?: return
+        val attached = operationLock.withLock {
+            if (closed.load() || generation != audioGeneration) return@withLock false
+            audioPlayback.attach(audio, mutableSnapshot.value, ::reportAudibleClock)
+            true
+        }
+        if (!attached) audio.close()
+    }
+
+    /** Filtering and forwarding share the lock with seekTo, so a pre-seek report can't land after it. */
+    private fun reportAudibleClock(position: Duration) = operationLock.withLock {
+        if (!closed.load()) audioPlayback.clockFor(position)?.let(engine::setMasterClock)
+    }
+
+    private fun warnAudio(message: String) = emit(FFplayEvent.Warning(message))
 
     private fun emit(event: FFplayEvent) {
         if (!closed.load()) mutableEvents.tryEmit(event)
