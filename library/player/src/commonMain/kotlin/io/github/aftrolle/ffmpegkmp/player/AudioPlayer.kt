@@ -1,12 +1,17 @@
 // SPDX-License-Identifier: Apache-2.0
+@file:OptIn(kotlin.concurrent.atomics.ExperimentalAtomicApi::class)
+
 package io.github.aftrolle.ffmpegkmp.player
 
 import io.github.aftrolle.ffmpegkmp.core.AudioLevel
+import kotlin.concurrent.atomics.AtomicBoolean
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.microseconds
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.SupervisorJob
@@ -15,7 +20,7 @@ import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.flow.updateAndGet
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -81,6 +86,7 @@ public class AudioPlayer internal constructor(
         private set
 
     private val commands = Channel<Command>(Channel.UNLIMITED)
+    private val closing = AtomicBoolean(false)
     private val scope = CoroutineScope(SupervisorJob() + dispatcher)
 
     init {
@@ -104,16 +110,20 @@ public class AudioPlayer internal constructor(
     }
 
     public fun setLevel(level: AudioLevel) {
-        decoder.level = level
-        mutableLevel.value = level
+        updateLevel { level }
     }
 
     public fun setVolume(volume: Double) {
-        setLevel(mutableLevel.value.copy(volume = volume))
+        updateLevel { it.copy(volume = volume) }
     }
 
     public fun setMuted(muted: Boolean) {
-        setLevel(mutableLevel.value.copy(muted = muted))
+        updateLevel { it.copy(muted = muted) }
+    }
+
+    /** Atomic, so a volume and a mute change from different threads never lose one another. */
+    private fun updateLevel(transform: (AudioLevel) -> AudioLevel) {
+        decoder.level = mutableLevel.updateAndGet(transform)
     }
 
     public fun setTrackLevel(track: Int, level: AudioLevel) {
@@ -132,7 +142,7 @@ public class AudioPlayer internal constructor(
     /** Adds [track] to, or removes it from, the mix. */
     public fun setTrackEnabled(track: Int, enabled: Boolean) {
         decoder.setTrackEnabled(track, enabled)
-        mutableEnabledTracks.update { current -> if (enabled) current + track else current - track }
+        mutableEnabledTracks.value = decoder.enabledTracks
     }
 
     /** Plays [track] alone, replacing the current selection. */
@@ -143,12 +153,12 @@ public class AudioPlayer internal constructor(
     /** Mixes exactly [selected]. */
     public fun selectTracks(selected: Set<Int>) {
         decoder.selectTracks(selected)
-        mutableEnabledTracks.value = selected.toSet()
+        mutableEnabledTracks.value = decoder.enabledTracks
     }
 
     /** Stops playback and releases the decoder and audio device. The player cannot be reused. */
     override fun close() {
-        if (mutableState.value == PlaybackState.CLOSED) return
+        if (!closing.compareAndSet(expectedValue = false, newValue = true)) return
         commands.close()
         // Unblock a network read so the loop observes cancellation promptly; the loop itself
         // releases the decoder and output, on its own thread, once it has stopped using them.
@@ -205,7 +215,7 @@ public class AudioPlayer internal constructor(
         } catch (error: Throwable) {
             // close() aborts an in-flight read, which surfaces here as a decode error: that is a
             // requested shutdown, not a playback failure.
-            if (scope.isActive) {
+            if (!closing.load()) {
                 failure = error
                 mutableState.value = PlaybackState.FAILED
             }
@@ -250,16 +260,38 @@ public class AudioPlayer internal constructor(
             open(format) { AudioDecoder.open(fileHandle, format) }
 
         private suspend fun open(format: PcmFormat, openDecoder: () -> AudioDecoder): AudioPlayer =
-            withContext(playbackDispatcher) {
-                val decoder = openDecoder()
-                val output = try {
-                    createPlatformAudioOutput(format)
-                } catch (failure: Throwable) {
-                    decoder.close()
-                    throw AudioDecodingException("Could not open the audio output: ${failure.message}", failure)
+            openWith(openDecoder, { createPlatformAudioOutput(format) })
+
+        /**
+         * Opening blocks in native code and cannot be interrupted, so it runs to completion; if the
+         * caller was cancelled meanwhile, the finished player is closed instead of leaked.
+         */
+        internal suspend fun openWith(
+            openDecoder: () -> AudioDecoder,
+            openOutput: () -> PlatformAudioOutput,
+            dispatcher: CoroutineDispatcher = playbackDispatcher,
+        ): AudioPlayer {
+            // Captured inside the block: withContext discards its result (throwing instead) when
+            // the caller was cancelled, and the player built for it must still be closed.
+            var opened: AudioPlayer? = null
+            try {
+                withContext(NonCancellable + dispatcher) {
+                    val decoder = openDecoder()
+                    val output = try {
+                        openOutput()
+                    } catch (failure: Throwable) {
+                        decoder.close()
+                        throw AudioDecodingException("Could not open the audio output: ${failure.message}", failure)
+                    }
+                    opened = AudioPlayer(decoder, output, dispatcher)
                 }
-                AudioPlayer(decoder, output, playbackDispatcher)
+                currentCoroutineContext().ensureActive()
+            } catch (cancellation: CancellationException) {
+                opened?.close()
+                throw cancellation
             }
+            return checkNotNull(opened)
+        }
     }
 }
 

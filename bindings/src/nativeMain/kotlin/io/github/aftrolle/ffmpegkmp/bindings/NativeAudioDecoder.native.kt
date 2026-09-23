@@ -2,7 +2,6 @@
 @file:OptIn(
     kotlinx.cinterop.ExperimentalForeignApi::class,
     io.github.aftrolle.ffmpegkmp.bindings.InternalFFmpegKmpApi::class,
-    kotlin.concurrent.atomics.ExperimentalAtomicApi::class,
 )
 
 package io.github.aftrolle.ffmpegkmp.bindings
@@ -27,38 +26,33 @@ import io.github.aftrolle.ffmpegkmp.bindings.cinterop.ffmpegkmp_player_track_is_
 import io.github.aftrolle.ffmpegkmp.bindings.cinterop.ffmpegkmp_player_track_is_default
 import io.github.aftrolle.ffmpegkmp.bindings.cinterop.ffmpegkmp_player_track_language
 import io.github.aftrolle.ffmpegkmp.bindings.cinterop.ffmpegkmp_player_track_sample_rate
-import io.github.aftrolle.ffmpegkmp.bindings.cinterop.ffmpegkmp_player_track_stream_index
 import io.github.aftrolle.ffmpegkmp.bindings.cinterop.ffmpegkmp_player_track_title
-import kotlin.concurrent.atomics.AtomicBoolean
 import kotlinx.cinterop.ByteVar
 import kotlinx.cinterop.COpaquePointer
 import kotlinx.cinterop.CPointer
+import kotlinx.cinterop.IntVar
 import kotlinx.cinterop.StableRef
 import kotlinx.cinterop.UByteVar
-import kotlinx.cinterop.asStableRef
-import kotlinx.cinterop.convert
-import kotlinx.cinterop.staticCFunction
-import okio.FileHandle
-import platform.posix.memcpy
-import kotlinx.cinterop.IntVar
 import kotlinx.cinterop.addressOf
 import kotlinx.cinterop.alloc
+import kotlinx.cinterop.asStableRef
+import kotlinx.cinterop.convert
 import kotlinx.cinterop.memScoped
 import kotlinx.cinterop.ptr
+import kotlinx.cinterop.staticCFunction
 import kotlinx.cinterop.toKString
 import kotlinx.cinterop.usePinned
 import kotlinx.cinterop.value
+import okio.FileHandle
+import platform.posix.memcpy
 
 @InternalFFmpegKmpApi
 public actual fun openPlatformAudioDecoder(url: String, sampleRate: Int, channels: Int): NativeAudioDecoder =
     memScoped {
         val error = alloc<IntVar>()
         val player = ffmpegkmp_player_open(url, sampleRate, channels, error.ptr)
-            ?: throw NativeAudioDecoderException(
-                "Could not open audio input '$url' (error ${error.value})",
-                error.value,
-            )
-        CInteropAudioDecoder(player, null, sampleRate, channels)
+            ?: throw NativeAudioDecoderException("Could not open audio input '$url' (error ${error.value})", error.value)
+        GuardedAudioDecoder(CInteropAudioEngine(player, null), sampleRate, channels)
     }
 
 @InternalFFmpegKmpApi
@@ -77,7 +71,7 @@ public actual fun openPlatformAudioDecoder(fileHandle: FileHandle, sampleRate: I
             reader.dispose()
             throw NativeAudioDecoderException("Could not open the audio input (error ${error.value})", error.value)
         }
-        CInteropAudioDecoder(player, reader, sampleRate, channels)
+        GuardedAudioDecoder(CInteropAudioEngine(player, reader), sampleRate, channels)
     }
 
 private fun receiveAudioIo(
@@ -100,82 +94,37 @@ private fun receiveAudioIo(
     }
 }
 
-private class CInteropAudioDecoder(
+private class CInteropAudioEngine(
     private val player: CPointer<ffmpegkmp_player>,
     private val reader: StableRef<FileHandleReader>?,
-    override val sampleRate: Int,
-    override val channels: Int,
-) : NativeAudioDecoder {
-    private val closed = AtomicBoolean(false)
+) : AudioEngineCalls {
+    override fun trackCount() = ffmpegkmp_player_track_count(player)
+    override fun trackCodec(track: Int) = ffmpegkmp_player_track_codec(player, track).text()
+    override fun trackLanguage(track: Int) = ffmpegkmp_player_track_language(player, track).text()
+    override fun trackTitle(track: Int) = ffmpegkmp_player_track_title(player, track).text()
+    override fun trackChannels(track: Int) = ffmpegkmp_player_track_channels(player, track)
+    override fun trackSampleRate(track: Int) = ffmpegkmp_player_track_sample_rate(player, track)
+    override fun trackIsDefault(track: Int) = ffmpegkmp_player_track_is_default(player, track) != 0
+    override fun trackIsDecodable(track: Int) = ffmpegkmp_player_track_is_decodable(player, track) != 0
+    override fun trackEnabled(track: Int) = ffmpegkmp_player_track_enabled(player, track) != 0
+    override fun setTrackEnabled(track: Int, enabled: Boolean) =
+        ffmpegkmp_player_set_track_enabled(player, track, if (enabled) 1 else 0)
+    override fun setTrackGain(track: Int, gain: Float) = ffmpegkmp_player_set_track_gain(player, track, gain)
+    override fun setMasterGain(gain: Float) = ffmpegkmp_player_set_master_gain(player, gain)
+    override fun duration() = ffmpegkmp_player_duration_us(player)
+    override fun position() = ffmpegkmp_player_position_us(player)
+    override fun seek(positionMicros: Long) = ffmpegkmp_player_seek(player, positionMicros)
 
-    override val tracks: List<NativeAudioTrackInfo> = List(ffmpegkmp_player_track_count(player)) { index ->
-        NativeAudioTrackInfo(
-            index = index,
-            streamIndex = ffmpegkmp_player_track_stream_index(player, index),
-            codec = ffmpegkmp_player_track_codec(player, index).text().orEmpty(),
-            language = ffmpegkmp_player_track_language(player, index).text(),
-            title = ffmpegkmp_player_track_title(player, index).text(),
-            channels = ffmpegkmp_player_track_channels(player, index),
-            sampleRate = ffmpegkmp_player_track_sample_rate(player, index),
-            isDefault = ffmpegkmp_player_track_is_default(player, index) != 0,
-            isDecodable = ffmpegkmp_player_track_is_decodable(player, index) != 0,
-        )
+    // Decode straight into the caller's array: no intermediate native buffer or copy.
+    override fun read(destination: FloatArray, offset: Int, frames: Int): Int =
+        destination.usePinned { pinned -> ffmpegkmp_player_read(player, pinned.addressOf(offset), frames) }
+
+    override fun abort() = ffmpegkmp_player_abort(player)
+
+    override fun release() {
+        ffmpegkmp_player_close(player)
+        reader?.dispose()
     }
-
-    override val durationMicros: Long get() = ensureOpen().let { ffmpegkmp_player_duration_us(player) }
-    override val positionMicros: Long get() = ensureOpen().let { ffmpegkmp_player_position_us(player) }
-
-    override fun isTrackEnabled(track: Int): Boolean =
-        ensureOpen().let { ffmpegkmp_player_track_enabled(player, track) != 0 }
-
-    override fun setTrackEnabled(track: Int, enabled: Boolean) {
-        ensureOpen()
-        requireSuccess(ffmpegkmp_player_set_track_enabled(player, track, if (enabled) 1 else 0), "enable track $track")
-    }
-
-    override fun setTrackGain(track: Int, gain: Float) {
-        ensureOpen()
-        requireSuccess(ffmpegkmp_player_set_track_gain(player, track, gain), "set gain of track $track")
-    }
-
-    override fun setMasterGain(gain: Float) {
-        ensureOpen()
-        requireSuccess(ffmpegkmp_player_set_master_gain(player, gain), "set master gain")
-    }
-
-    override fun seek(positionMicros: Long) {
-        ensureOpen()
-        requireSuccess(ffmpegkmp_player_seek(player, positionMicros), "seek to ${positionMicros}us")
-    }
-
-    override fun read(destination: FloatArray, offset: Int, frames: Int): Int {
-        ensureOpen()
-        requireReadArguments(destination, offset, frames, channels)
-        if (frames == 0) return 0
-        // Decode straight into the caller's array: no intermediate native buffer or copy.
-        val count = destination.usePinned { pinned ->
-            ffmpegkmp_player_read(player, pinned.addressOf(offset), frames)
-        }
-        requireSuccess(count, "decode audio")
-        return count
-    }
-
-    override fun abort() {
-        if (!closed.load()) ffmpegkmp_player_abort(player)
-    }
-
-    override fun close() {
-        if (closed.compareAndSet(expectedValue = false, newValue = true)) {
-            ffmpegkmp_player_close(player)
-            reader?.dispose()
-        }
-    }
-
-    private fun ensureOpen() = check(!closed.load()) { "The audio decoder is closed" }
-}
-
-private fun requireSuccess(result: Int, action: String) {
-    if (result < 0) throw NativeAudioDecoderException("Could not $action (error $result)", result)
 }
 
 private fun CPointer<ByteVar>?.text(): String? = this?.toKString()?.takeIf(String::isNotEmpty)

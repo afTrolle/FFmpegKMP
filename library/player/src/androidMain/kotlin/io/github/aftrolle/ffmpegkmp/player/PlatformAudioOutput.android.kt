@@ -51,7 +51,11 @@ private class AudioTrackOutput(private val format: PcmFormat) : PlatformAudioOut
 
     override fun pause() = track.pause()
 
+    /** Frames written since the last flush: what the playback head must reach for a drain. */
+    private var framesWritten = 0L
+
     override fun flush() {
+        framesWritten = 0
         // AudioTrack only discards queued data while paused or stopped.
         val wasPlaying = track.playState == AudioTrack.PLAYSTATE_PLAYING
         if (wasPlaying) track.pause()
@@ -65,15 +69,26 @@ private class AudioTrackOutput(private val format: PcmFormat) : PlatformAudioOut
         while (written < total) {
             val count = track.write(samples, written, total - written, AudioTrack.WRITE_BLOCKING)
             check(count >= 0) { "AudioTrack write failed (error $count)" }
-            if (count == 0) return
+            if (count == 0) break
             written += count
         }
+        framesWritten += written / format.channels
     }
 
     override fun drain() {
-        // In streaming mode stop() plays out what is queued; play() resumes the track later.
+        // In streaming mode stop() plays out what is queued but returns at once; wait for the
+        // playback head so the tail is not cut off by a close right after the end.
         track.stop()
+        val pending = framesWritten - track.playbackHeadPosition.toLong()
+        val deadline = System.nanoTime() + (pending * 1_000_000_000L / format.sampleRate) + DRAIN_SLACK_NANOS
+        while (track.playbackHeadPosition.toLong() < framesWritten && System.nanoTime() < deadline) {
+            Thread.sleep(DRAIN_POLL_MILLIS)
+        }
+        framesWritten = 0
     }
 
     override fun close() = track.release()
 }
+
+private const val DRAIN_POLL_MILLIS = 5L
+private const val DRAIN_SLACK_NANOS = 200_000_000L

@@ -6,10 +6,10 @@ package io.github.aftrolle.ffmpegkmp.bindings
 import io.github.aftrolle.ffmpegkmp.bindings.generated.bridge.ffmpegkmp_io_callback
 import io.github.aftrolle.ffmpegkmp.bindings.generated.bridge.ffmpegkmp_player
 import io.github.aftrolle.ffmpegkmp.bindings.generated.bridge.global.bridge
+import okio.FileHandle
 import org.bytedeco.javacpp.BytePointer
 import org.bytedeco.javacpp.FloatPointer
 import org.bytedeco.javacpp.Pointer
-import okio.FileHandle
 
 @InternalFFmpegKmpApi
 public actual fun openPlatformAudioDecoder(url: String, sampleRate: Int, channels: Int): NativeAudioDecoder {
@@ -18,7 +18,7 @@ public actual fun openPlatformAudioDecoder(url: String, sampleRate: Int, channel
     val player = bridge.ffmpegkmp_player_open(url, sampleRate, channels, error)
         ?.takeUnless(ffmpegkmp_player::isNull)
         ?: throw NativeAudioDecoderException("Could not open audio input '$url' (error ${error[0]})", error[0])
-    return JavaCppAudioDecoder(player, null, sampleRate, channels)
+    return GuardedAudioDecoder(JavaCppAudioEngine(player, null, channels), sampleRate, channels)
 }
 
 @InternalFFmpegKmpApi
@@ -48,94 +48,53 @@ public actual fun openPlatformAudioDecoder(fileHandle: FileHandle, sampleRate: I
         callback.close()
         throw NativeAudioDecoderException("Could not open the audio input (error ${error[0]})", error[0])
     }
-    return JavaCppAudioDecoder(player, callback, sampleRate, channels)
+    return GuardedAudioDecoder(JavaCppAudioEngine(player, callback, channels), sampleRate, channels)
 }
 
-private class JavaCppAudioDecoder(
+private class JavaCppAudioEngine(
     private val player: ffmpegkmp_player,
-    /** Kept reachable for the decoder's lifetime: native code calls back into it. */
+    /** Kept reachable for the player's lifetime: native code calls back into it. */
     private val ioCallback: ffmpegkmp_io_callback?,
-    override val sampleRate: Int,
-    override val channels: Int,
-) : NativeAudioDecoder {
-    @Volatile
-    private var closed = false
-
+    private val channels: Int,
+) : AudioEngineCalls {
     /** Reused across reads so steady-state decoding allocates nothing off-heap. */
     private var pcm = FloatPointer(DEFAULT_BUFFER_FRAMES.toLong() * channels)
 
-    override val tracks: List<NativeAudioTrackInfo> = List(bridge.ffmpegkmp_player_track_count(player)) { index ->
-        NativeAudioTrackInfo(
-            index = index,
-            streamIndex = bridge.ffmpegkmp_player_track_stream_index(player, index),
-            codec = bridge.ffmpegkmp_player_track_codec(player, index).text().orEmpty(),
-            language = bridge.ffmpegkmp_player_track_language(player, index).text(),
-            title = bridge.ffmpegkmp_player_track_title(player, index).text(),
-            channels = bridge.ffmpegkmp_player_track_channels(player, index),
-            sampleRate = bridge.ffmpegkmp_player_track_sample_rate(player, index),
-            isDefault = bridge.ffmpegkmp_player_track_is_default(player, index) != 0,
-            isDecodable = bridge.ffmpegkmp_player_track_is_decodable(player, index) != 0,
-        )
-    }
-
-    override val durationMicros: Long get() = ensureOpen().let { bridge.ffmpegkmp_player_duration_us(player) }
-    override val positionMicros: Long get() = ensureOpen().let { bridge.ffmpegkmp_player_position_us(player) }
-
-    override fun isTrackEnabled(track: Int): Boolean =
-        ensureOpen().let { bridge.ffmpegkmp_player_track_enabled(player, track) != 0 }
-
-    override fun setTrackEnabled(track: Int, enabled: Boolean) {
-        ensureOpen()
-        requireSuccess(bridge.ffmpegkmp_player_set_track_enabled(player, track, if (enabled) 1 else 0), "enable track $track")
-    }
-
-    override fun setTrackGain(track: Int, gain: Float) {
-        ensureOpen()
-        requireSuccess(bridge.ffmpegkmp_player_set_track_gain(player, track, gain), "set gain of track $track")
-    }
-
-    override fun setMasterGain(gain: Float) {
-        ensureOpen()
-        requireSuccess(bridge.ffmpegkmp_player_set_master_gain(player, gain), "set master gain")
-    }
-
-    override fun seek(positionMicros: Long) {
-        ensureOpen()
-        requireSuccess(bridge.ffmpegkmp_player_seek(player, positionMicros), "seek to ${positionMicros}us")
-    }
+    override fun trackCount() = bridge.ffmpegkmp_player_track_count(player)
+    override fun trackCodec(track: Int) = bridge.ffmpegkmp_player_track_codec(player, track).text()
+    override fun trackLanguage(track: Int) = bridge.ffmpegkmp_player_track_language(player, track).text()
+    override fun trackTitle(track: Int) = bridge.ffmpegkmp_player_track_title(player, track).text()
+    override fun trackChannels(track: Int) = bridge.ffmpegkmp_player_track_channels(player, track)
+    override fun trackSampleRate(track: Int) = bridge.ffmpegkmp_player_track_sample_rate(player, track)
+    override fun trackIsDefault(track: Int) = bridge.ffmpegkmp_player_track_is_default(player, track) != 0
+    override fun trackIsDecodable(track: Int) = bridge.ffmpegkmp_player_track_is_decodable(player, track) != 0
+    override fun trackEnabled(track: Int) = bridge.ffmpegkmp_player_track_enabled(player, track) != 0
+    override fun setTrackEnabled(track: Int, enabled: Boolean) =
+        bridge.ffmpegkmp_player_set_track_enabled(player, track, if (enabled) 1 else 0)
+    override fun setTrackGain(track: Int, gain: Float) = bridge.ffmpegkmp_player_set_track_gain(player, track, gain)
+    override fun setMasterGain(gain: Float) = bridge.ffmpegkmp_player_set_master_gain(player, gain)
+    override fun duration() = bridge.ffmpegkmp_player_duration_us(player)
+    override fun position() = bridge.ffmpegkmp_player_position_us(player)
+    override fun seek(positionMicros: Long) = bridge.ffmpegkmp_player_seek(player, positionMicros)
 
     override fun read(destination: FloatArray, offset: Int, frames: Int): Int {
-        ensureOpen()
-        requireReadArguments(destination, offset, frames, channels)
-        if (frames == 0) return 0
         val samples = frames.toLong() * channels
         if (pcm.capacity() < samples) {
             pcm.close()
             pcm = FloatPointer(samples)
         }
         val count = bridge.ffmpegkmp_player_read(player, pcm, frames)
-        requireSuccess(count, "decode audio")
-        pcm.position(0L).get(destination, offset, count * channels)
+        if (count > 0) pcm.position(0L).get(destination, offset, count * channels)
         return count
     }
 
-    override fun abort() {
-        if (!closed) bridge.ffmpegkmp_player_abort(player)
-    }
+    override fun abort() = bridge.ffmpegkmp_player_abort(player)
 
-    override fun close() {
-        if (closed) return
-        closed = true
+    override fun release() {
         bridge.ffmpegkmp_player_close(player)
         pcm.close()
         ioCallback?.close()
     }
-
-    private fun ensureOpen() = check(!closed) { "The audio decoder is closed" }
-}
-
-private fun requireSuccess(result: Int, action: String) {
-    if (result < 0) throw NativeAudioDecoderException("Could not $action (error $result)", result)
 }
 
 private fun BytePointer?.text(): String? = this?.takeUnless(BytePointer::isNull)?.string?.takeIf(String::isNotEmpty)

@@ -12,10 +12,11 @@ import platform.AVFAudio.AVAudioEngine
 import platform.AVFAudio.AVAudioFormat
 import platform.AVFAudio.AVAudioPCMBuffer
 import platform.AVFAudio.AVAudioPlayerNode
-import platform.darwin.DISPATCH_TIME_FOREVER
+import platform.darwin.DISPATCH_TIME_NOW
 import platform.darwin.dispatch_semaphore_create
 import platform.darwin.dispatch_semaphore_signal
 import platform.darwin.dispatch_semaphore_wait
+import platform.darwin.dispatch_time
 
 internal actual fun createPlatformAudioOutput(format: PcmFormat): PlatformAudioOutput = AudioEngineOutput(format)
 
@@ -60,7 +61,7 @@ private class AudioEngineOutput(private val format: PcmFormat) : PlatformAudioOu
     }
 
     override fun write(samples: FloatArray, frames: Int) {
-        dispatch_semaphore_wait(slots, DISPATCH_TIME_FOREVER)
+        acquireSlot()
         val slot = next
         next = (next + 1) % QUEUED_BUFFERS
         val buffer = buffers[slot]?.takeIf { it.frameCapacity.toInt() >= frames }
@@ -81,8 +82,18 @@ private class AudioEngineOutput(private val format: PcmFormat) : PlatformAudioOu
     }
 
     override fun drain() {
-        repeat(QUEUED_BUFFERS) { dispatch_semaphore_wait(slots, DISPATCH_TIME_FOREVER) }
+        repeat(QUEUED_BUFFERS) { acquireSlot() }
         repeat(QUEUED_BUFFERS) { dispatch_semaphore_signal(slots) }
+    }
+
+    /**
+     * Waits for a free buffer. If the engine stops by itself (an audio-session interruption or a
+     * route change), queued buffers never complete, so fail instead of blocking forever.
+     */
+    private fun acquireSlot() {
+        while (dispatch_semaphore_wait(slots, dispatch_time(DISPATCH_TIME_NOW, SLOT_WAIT_NANOS)) != 0L) {
+            check(engine.running) { "The audio engine stopped (interrupted or its route changed)" }
+        }
     }
 
     override fun close() {
@@ -93,3 +104,4 @@ private class AudioEngineOutput(private val format: PcmFormat) : PlatformAudioOu
 
 /** With 1,024-frame chunks, about 85 ms of audio queued ahead of the device at 48 kHz. */
 private const val QUEUED_BUFFERS = 4
+private const val SLOT_WAIT_NANOS = 100_000_000L

@@ -157,17 +157,27 @@ internal class NativeMountedResource(
     private val sourceCache = Buffer()
     private var sourceExhausted = false
 
-    fun dispatch(operation: Int, offset: Long, data: CPointer<UByteVar>?, size: ULong): Long = try {
-        when (operation) {
-            IO_OPEN -> open(offset.toInt())
-            IO_READ -> read(offset, data ?: return IO_FAILURE, size.checkedSize())
-            IO_WRITE -> write(offset, data ?: return IO_FAILURE, size.checkedSize())
-            IO_SIZE -> size()
-            IO_CLOSE -> close()
-            else -> IO_FAILURE
+    /** Serializes dispatch like the JVM's @Synchronized: player worker threads share the cache. */
+    private val busy = AtomicBoolean(false)
+
+    fun dispatch(operation: Int, offset: Long, data: CPointer<UByteVar>?, size: ULong): Long {
+        while (!busy.compareAndSet(expectedValue = false, newValue = true)) {
+            // Contention is rare and short: only concurrent reads of one mount.
         }
-    } catch (_: Throwable) {
-        IO_FAILURE
+        return try {
+            when (operation) {
+                IO_OPEN -> open(offset.toInt())
+                IO_READ -> read(offset, data ?: return IO_FAILURE, size.checkedSize())
+                IO_WRITE -> write(offset, data ?: return IO_FAILURE, size.checkedSize())
+                IO_SIZE -> size()
+                IO_CLOSE -> close()
+                else -> IO_FAILURE
+            }
+        } catch (_: Throwable) {
+            IO_FAILURE
+        } finally {
+            busy.store(false)
+        }
     }
 
     private fun open(flags: Int): Long = when (resource) {

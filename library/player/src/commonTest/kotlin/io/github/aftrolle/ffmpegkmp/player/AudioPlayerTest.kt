@@ -14,6 +14,12 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertTrue
 import kotlin.time.Duration.Companion.milliseconds
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.advanceUntilIdle
@@ -122,6 +128,63 @@ class AudioPlayerTest {
         assertTrue(output.closed)
     }
 
+    @Test
+    fun closeWhilePlayingEndsClosedEvenWhenTheAbortSurfacesAsAReadError() = runTest {
+        // A playing loop never idles, so this runs on a real dispatcher and waits in real time.
+        val decoder = FakeDecoder(totalFrames = Int.MAX_VALUE)
+        val output = FakeOutput()
+        val player = AudioPlayer(AudioDecoder(decoder), output, Dispatchers.Default, chunkFrames = 3)
+        player.play()
+        withContext(Dispatchers.Default) {
+            withTimeout(5_000) { player.state.first { it == PlaybackState.PLAYING } }
+            player.close()
+            withTimeout(5_000) { player.state.first { it == PlaybackState.CLOSED || it == PlaybackState.FAILED } }
+        }
+
+        assertTrue(decoder.aborted)
+        assertEquals(PlaybackState.CLOSED, player.state.value)
+        assertEquals(null, player.failure)
+        assertTrue(decoder.closed && output.closed)
+    }
+
+    @Test
+    fun controlsAfterCloseDoNotThrow() = runTest {
+        val (player, _, _) = player(totalFrames = 4)
+        player.close()
+        advanceUntilIdle()
+
+        player.setVolume(0.3)
+        player.setMuted(true)
+        player.setTrackVolume(0, 0.5)
+        player.setTrackEnabled(1, true)
+        player.play()
+        player.seekTo(10.milliseconds)
+        assertEquals(PlaybackState.CLOSED, player.state.value)
+    }
+
+    @Test
+    fun aCancelledOpenClosesWhatItBuiltInsteadOfLeakingIt() = runTest {
+        val decoder = FakeDecoder(totalFrames = 4)
+        val output = FakeOutput()
+        val dispatcher = StandardTestDispatcher(testScheduler)
+        val opening = launch {
+            AudioPlayer.openWith(
+                openDecoder = {
+                    // The caller gives up while the (uninterruptible) native open is in progress.
+                    coroutineContext.cancel()
+                    AudioDecoder(decoder)
+                },
+                openOutput = { output },
+                dispatcher = dispatcher,
+            )
+        }
+        advanceUntilIdle()
+
+        assertTrue(opening.isCancelled)
+        assertTrue(decoder.closed, "the decoder opened for a cancelled caller must be released")
+        assertTrue(output.closed)
+    }
+
     private fun TestScope.player(totalFrames: Int): Triple<AudioPlayer, FakeDecoder, FakeOutput> {
         val decoder = FakeDecoder(totalFrames)
         val output = FakeOutput()
@@ -134,7 +197,7 @@ private class FakeDecoder(private val totalFrames: Int) : NativeAudioDecoder {
     override val sampleRate = 48_000
     override val channels = 2
     override val tracks = List(2) { index ->
-        NativeAudioTrackInfo(index, index, "pcm_f32le", null, null, 2, 48_000, index == 0, true)
+        NativeAudioTrackInfo(index, "pcm_f32le", null, null, 2, 48_000, index == 0, true)
     }
     override val durationMicros = totalFrames * 1_000_000L / sampleRate
     override val positionMicros get() = frame * 1_000_000L / sampleRate
@@ -167,7 +230,13 @@ private class FakeDecoder(private val totalFrames: Int) : NativeAudioDecoder {
         frame += count
         return count
     }
-    override fun abort() = Unit
+    var aborted = false
+
+    override fun abort() {
+        // Like the native engine: once aborted, an in-flight or later read fails.
+        aborted = true
+        failAt = 0
+    }
     override fun close() {
         closed = true
     }

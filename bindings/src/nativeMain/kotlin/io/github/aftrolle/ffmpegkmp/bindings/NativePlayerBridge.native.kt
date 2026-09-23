@@ -81,7 +81,7 @@ private class NativeCInteropPlayerBridge(
         callbackReference.dispose()
         throw NativeBridgeUnavailableException("FFmpegKMP native player allocation failed")
     }
-    private var closed = false
+    private val guard get() = callbackState.guard
 
     init {
         ffplaykmp_player_set_io_callback(
@@ -142,7 +142,7 @@ private class NativeCInteropPlayerBridge(
     override fun play(): Int = checkedCall { ffplaykmp_player_play(player) }
     override fun pause(): Int = checkedCall { ffplaykmp_player_pause(player) }
     override fun setMasterClock(mediaTimeUs: Long) {
-        if (!closed) ffplaykmp_player_set_master_clock(player, mediaTimeUs)
+        guard.use({}) { ffplaykmp_player_set_master_clock(player, mediaTimeUs) }
     }
     override fun seek(positionUs: Long): Int = checkedCall {
         ffplaykmp_player_seek(player, positionUs)
@@ -151,7 +151,7 @@ private class NativeCInteropPlayerBridge(
         ffplaykmp_player_stop(player).also { if (it == 0) callbackState.mounts = emptyMap() }
     }
     override fun cancel() {
-        if (!closed) ffplaykmp_player_cancel(player)
+        guard.use({}) { ffplaykmp_player_cancel(player) }
     }
 
     override fun snapshot(): NativePlayerSnapshot = memScoped {
@@ -164,19 +164,18 @@ private class NativeCInteropPlayerBridge(
     }
 
     override fun close() {
-        if (closed) return
-        closed = true
-        callbackState.mounts = emptyMap()
-        ffplaykmp_player_destroy(player)
-        callbackReference.dispose()
+        guard.close {
+            callbackState.mounts = emptyMap()
+            ffplaykmp_player_destroy(player)
+            callbackReference.dispose()
+        }
     }
 
-    private inline fun checkedCall(block: () -> Int): Int {
-        checkOpen()
-        return block()
-    }
+    private fun checkedCall(block: () -> Int): Int = guard.use(::closedError, block)
 
-    private fun checkOpen() = check(!closed) { "The native player bridge is closed" }
+    private fun checkOpen() = check(guard.isOpen) { "The native player bridge is closed" }
+
+    private fun closedError(): Nothing = throw IllegalStateException("The native player bridge is closed")
 }
 
 private class NativePlayerCallbackState(
@@ -184,22 +183,36 @@ private class NativePlayerCallbackState(
     val frame: (NativeVideoFrame) -> Unit,
     val platformFrame: (NativePlatformVideoFrame) -> Boolean,
 ) {
+    val guard = NativeHandleGuard()
+
+    @kotlin.concurrent.Volatile
     var mounts: Map<Long, NativeMountedResource> = emptyMap()
+}
+
+/**
+ * Resolves a callback's state, or null once the player is closing. A Kotlin exception must never
+ * cross back into C (it would terminate the process), so [block] failures are swallowed.
+ */
+private inline fun <T> COpaquePointer?.withCallbackState(fallback: T, block: (NativePlayerCallbackState) -> T): T {
+    val state = this?.asStableRef<NativePlayerCallbackState>()?.get() ?: return fallback
+    if (!state.guard.isOpen) return fallback
+    return runCatching { block(state) }.getOrDefault(fallback)
 }
 
 private fun receiveNativePlatformVideoFrame(
     opaque: COpaquePointer?,
     nativeFrame: CPointer<ffplaykmp_platform_video_frame>?,
 ): Int {
-    if (opaque == null || nativeFrame == null) return 0
+    if (nativeFrame == null) return 0
     val value = nativeFrame.pointed
     val handle = value.handle ?: return 0
     val kind = when (value.kind) {
         FFPLAYKMP_PLATFORM_FRAME_CV_PIXEL_BUFFER -> NativePlatformVideoFrameKind.CV_PIXEL_BUFFER
         else -> return 0
     }
-    return if (
-        opaque.asStableRef<NativePlayerCallbackState>().get().platformFrame(
+    return opaque.withCallbackState(0) { state ->
+        if (
+        state.platformFrame(
             NativePlatformVideoFrame(
                 kind = kind,
                 handle = handle,
@@ -209,19 +222,21 @@ private fun receiveNativePlatformVideoFrame(
                 queueSerial = value.queue_serial,
             ),
         )
-    ) 1 else 0
+        ) 1 else 0
+    }
 }
 
 private fun receiveNativeVideoFrame(
     opaque: COpaquePointer?,
     nativeFrame: CPointer<ffplaykmp_video_frame>?,
 ) {
-    if (opaque == null || nativeFrame == null) return
+    if (nativeFrame == null) return
     val value = nativeFrame.pointed
     val data = value.rgba ?: return
     val size = value.rgba_size
     if (size == 0uL || size > Int.MAX_VALUE.toULong()) return
-    opaque.asStableRef<NativePlayerCallbackState>().get().frame(
+    opaque.withCallbackState(Unit) { state ->
+        state.frame(
         NativeVideoFrame(
             rgba = data.readBytes(size.toInt()),
             width = value.width,
@@ -230,15 +245,16 @@ private fun receiveNativeVideoFrame(
             presentationTimeUs = value.presentation_time_us,
             queueSerial = value.queue_serial,
         ),
-    )
+        )
+    }
 }
 
 private fun receiveNativePlayerState(
     opaque: COpaquePointer?,
     snapshot: CPointer<ffplaykmp_snapshot>?,
 ) {
-    if (opaque == null || snapshot == null) return
-    opaque.asStableRef<NativePlayerCallbackState>().get().update(snapshot.pointed.toNativeSnapshot())
+    if (snapshot == null) return
+    opaque.withCallbackState(Unit) { state -> state.update(snapshot.pointed.toNativeSnapshot()) }
 }
 
 private fun receiveNativePlayerIo(
@@ -248,13 +264,9 @@ private fun receiveNativePlayerIo(
     offset: Long,
     data: CPointer<UByteVar>?,
     size: ULong,
-): Long = opaque
-    ?.asStableRef<NativePlayerCallbackState>()
-    ?.get()
-    ?.mounts
-    ?.get(resourceId)
-    ?.dispatch(operation.toInt(), offset, data, size)
-    ?: -1L
+): Long = opaque.withCallbackState(-1L) { state ->
+    state.mounts[resourceId]?.dispatch(operation.toInt(), offset, data, size) ?: -1L
+}
 
 private fun NativePlayerOutputCapabilities.toFlags(): UInt =
     (if (hardwareFrameImport) FFPLAYKMP_OUTPUT_HARDWARE_FRAME_IMPORT else 0u) or

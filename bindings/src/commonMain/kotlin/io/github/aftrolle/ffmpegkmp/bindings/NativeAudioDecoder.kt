@@ -1,4 +1,6 @@
 // SPDX-License-Identifier: LGPL-2.1-or-later
+@file:OptIn(io.github.aftrolle.ffmpegkmp.bindings.InternalFFmpegKmpApi::class)
+
 package io.github.aftrolle.ffmpegkmp.bindings
 
 import okio.FileHandle
@@ -7,7 +9,6 @@ import okio.FileHandle
 public data class NativeAudioTrackInfo(
     /** Audio-relative index (`a:N`), the index every other decoder call takes. */
     val index: Int,
-    val streamIndex: Int,
     val codec: String,
     val language: String?,
     val title: String?,
@@ -19,7 +20,8 @@ public data class NativeAudioTrackInfo(
 
 /**
  * The native audio decode/mix engine (`ffmpegkmp_player.c`). [read], [seek] and [close] must
- * not overlap; the gain, track-enable and [abort] calls are safe from any thread.
+ * not overlap; the gain, track-enable and [abort] calls are safe from any thread, and become
+ * no-ops once the decoder is closed.
  */
 @InternalFFmpegKmpApi
 public interface NativeAudioDecoder : AutoCloseable {
@@ -60,6 +62,92 @@ public expect fun openPlatformAudioDecoder(url: String, sampleRate: Int, channel
 /** Opens a random-access [fileHandle], read on demand; the decoder does not close it. */
 @InternalFFmpegKmpApi
 public expect fun openPlatformAudioDecoder(fileHandle: FileHandle, sampleRate: Int, channels: Int): NativeAudioDecoder
+
+/**
+ * Raw `ffmpegkmp_player_*` calls for one open player, implemented per platform binding. Results
+ * are the engine's: negative AVERROR codes, and nullable strings for absent tags.
+ */
+internal interface AudioEngineCalls {
+    fun trackCount(): Int
+    fun trackCodec(track: Int): String?
+    fun trackLanguage(track: Int): String?
+    fun trackTitle(track: Int): String?
+    fun trackChannels(track: Int): Int
+    fun trackSampleRate(track: Int): Int
+    fun trackIsDefault(track: Int): Boolean
+    fun trackIsDecodable(track: Int): Boolean
+    fun trackEnabled(track: Int): Boolean
+    fun setTrackEnabled(track: Int, enabled: Boolean): Int
+    fun setTrackGain(track: Int, gain: Float): Int
+    fun setMasterGain(gain: Float): Int
+    fun duration(): Long
+    fun position(): Long
+    fun seek(positionMicros: Long): Int
+    fun read(destination: FloatArray, offset: Int, frames: Int): Int
+    fun abort()
+
+    /** Frees the player and anything the binding keeps alive for it (callbacks, buffers). */
+    fun release()
+}
+
+/** The platform-independent half of every native audio decoder: validation, errors, guarding. */
+internal class GuardedAudioDecoder(
+    private val engine: AudioEngineCalls,
+    override val sampleRate: Int,
+    override val channels: Int,
+) : NativeAudioDecoder {
+    private val guard = NativeHandleGuard()
+
+    override val tracks: List<NativeAudioTrackInfo> = List(engine.trackCount()) { index ->
+        NativeAudioTrackInfo(
+            index = index,
+            codec = engine.trackCodec(index).orEmpty(),
+            language = engine.trackLanguage(index),
+            title = engine.trackTitle(index),
+            channels = engine.trackChannels(index),
+            sampleRate = engine.trackSampleRate(index),
+            isDefault = engine.trackIsDefault(index),
+            isDecodable = engine.trackIsDecodable(index),
+        )
+    }
+
+    override val durationMicros: Long get() = guard.use(::closedError, engine::duration)
+    override val positionMicros: Long get() = guard.use(::closedError, engine::position)
+
+    override fun isTrackEnabled(track: Int): Boolean = guard.use({ false }) { engine.trackEnabled(track) }
+
+    override fun setTrackEnabled(track: Int, enabled: Boolean) = guard.use({}) {
+        requireSuccess(engine.setTrackEnabled(track, enabled), "enable track $track")
+    }
+
+    override fun setTrackGain(track: Int, gain: Float) = guard.use({}) {
+        requireSuccess(engine.setTrackGain(track, gain), "set gain of track $track")
+    }
+
+    override fun setMasterGain(gain: Float) = guard.use({}) {
+        requireSuccess(engine.setMasterGain(gain), "set master gain")
+    }
+
+    override fun seek(positionMicros: Long) = guard.use(::closedError) {
+        requireSuccess(engine.seek(positionMicros), "seek to ${positionMicros}us")
+    }
+
+    override fun read(destination: FloatArray, offset: Int, frames: Int): Int = guard.use(::closedError) {
+        requireReadArguments(destination, offset, frames, channels)
+        if (frames == 0) return@use 0
+        engine.read(destination, offset, frames).also { requireSuccess(it, "decode audio") }
+    }
+
+    override fun abort() = guard.use({}) { engine.abort() }
+
+    override fun close() = guard.close(engine::release)
+
+    private fun closedError(): Nothing = throw IllegalStateException("The audio decoder is closed")
+}
+
+internal fun requireSuccess(result: Int, action: String) {
+    if (result < 0) throw NativeAudioDecoderException("Could not $action (error $result)", result)
+}
 
 /** Serves the engine's READ/SIZE callbacks from an Okio file handle, reusing one buffer. */
 internal class FileHandleReader(private val fileHandle: FileHandle) {

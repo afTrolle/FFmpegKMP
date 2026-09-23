@@ -47,19 +47,19 @@ private class JavaCppPlayerBridge(
     private val player: ffplaykmp_player
     @Volatile
     private var mounts: Map<Long, MountedResource> = emptyMap()
-    @Volatile
-    private var closed = false
+    /** Keeps [player] alive while the cross-thread calls (cancel, master clock) use it. */
+    private val guard = NativeHandleGuard()
 
     init {
         JavaCppBridgeLoader.load()
         stateCallback = object : ffplaykmp_state_callback() {
             override fun call(opaque: Pointer?, snapshot: ffplaykmp_snapshot?) {
-                if (snapshot != null && !closed) update(snapshot.toNativeSnapshot())
+                if (snapshot != null && guard.isOpen) update(snapshot.toNativeSnapshot())
             }
         }
         frameCallback = object : ffplaykmp_video_frame_callback() {
             override fun call(opaque: Pointer?, nativeFrame: ffplaykmp_video_frame?) {
-                if (nativeFrame == null || closed) return
+                if (nativeFrame == null || !guard.isOpen) return
                 val size = nativeFrame.rgba_size()
                 val data = nativeFrame.rgba()
                 if (data == null || size <= 0 || size > Int.MAX_VALUE) return
@@ -79,7 +79,7 @@ private class JavaCppPlayerBridge(
         }
         platformFrameCallback = object : ffplaykmp_platform_video_frame_callback() {
             override fun call(opaque: Pointer?, nativeFrame: ffplaykmp_platform_video_frame?): Int {
-                if (nativeFrame == null || closed) return 0
+                if (nativeFrame == null || !guard.isOpen) return 0
                 val handle = nativeFrame.handle() ?: return 0
                 val kind = when (nativeFrame.kind()) {
                     bridge.FFPLAYKMP_PLATFORM_FRAME_CV_PIXEL_BUFFER ->
@@ -182,7 +182,7 @@ private class JavaCppPlayerBridge(
     override fun play(): Int = checkedCall { bridge.ffplaykmp_player_play(player) }
     override fun pause(): Int = checkedCall { bridge.ffplaykmp_player_pause(player) }
     override fun setMasterClock(mediaTimeUs: Long) {
-        if (!closed) bridge.ffplaykmp_player_set_master_clock(player, mediaTimeUs)
+        guard.use({}) { bridge.ffplaykmp_player_set_master_clock(player, mediaTimeUs) }
     }
     override fun seek(positionUs: Long): Int = checkedCall {
         bridge.ffplaykmp_player_seek(player, positionUs)
@@ -191,7 +191,7 @@ private class JavaCppPlayerBridge(
         bridge.ffplaykmp_player_stop(player).also { if (it == 0) mounts = emptyMap() }
     }
     override fun cancel() {
-        if (!closed) bridge.ffplaykmp_player_cancel(player)
+        guard.use({}) { bridge.ffplaykmp_player_cancel(player) }
     }
 
     override fun snapshot(): NativePlayerSnapshot {
@@ -208,22 +208,21 @@ private class JavaCppPlayerBridge(
     }
 
     override fun close() {
-        if (closed) return
-        closed = true
-        mounts = emptyMap()
-        bridge.ffplaykmp_player_destroy(player)
-        ioCallback.close()
-        platformFrameCallback.close()
-        frameCallback.close()
-        stateCallback.close()
+        guard.close {
+            mounts = emptyMap()
+            bridge.ffplaykmp_player_destroy(player)
+            ioCallback.close()
+            platformFrameCallback.close()
+            frameCallback.close()
+            stateCallback.close()
+        }
     }
 
-    private inline fun checkedCall(block: () -> Int): Int {
-        checkOpen()
-        return block()
-    }
+    private fun checkedCall(block: () -> Int): Int = guard.use(::closedError, block)
 
-    private fun checkOpen() = check(!closed) { "The native player bridge is closed" }
+    private fun checkOpen() = check(guard.isOpen) { "The native player bridge is closed" }
+
+    private fun closedError(): Nothing = throw IllegalStateException("The native player bridge is closed")
 }
 
 private fun NativePlayerOutputCapabilities.toFlags(): Int =

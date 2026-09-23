@@ -129,7 +129,6 @@ FFMPEGKMP_EXPORT void ffmpegkmp_player_abort(ffmpegkmp_player *player);
 FFMPEGKMP_EXPORT void ffmpegkmp_player_close(ffmpegkmp_player *player);
 
 FFMPEGKMP_EXPORT int ffmpegkmp_player_track_count(const ffmpegkmp_player *player);
-FFMPEGKMP_EXPORT int ffmpegkmp_player_track_stream_index(const ffmpegkmp_player *player, int track);
 FFMPEGKMP_EXPORT int ffmpegkmp_player_track_channels(const ffmpegkmp_player *player, int track);
 FFMPEGKMP_EXPORT int ffmpegkmp_player_track_sample_rate(const ffmpegkmp_player *player, int track);
 /* Strings stay valid until the player is closed; absent tags are "". */

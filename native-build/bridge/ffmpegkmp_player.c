@@ -521,11 +521,6 @@ static const player_track *track_at(const ffmpegkmp_player *player, int track) {
     return player && track >= 0 && track < player->track_count ? &player->tracks[track] : NULL;
 }
 
-int ffmpegkmp_player_track_stream_index(const ffmpegkmp_player *player, int track) {
-    const player_track *info = track_at(player, track);
-    return info ? info->stream_index : AVERROR(EINVAL);
-}
-
 int ffmpegkmp_player_track_channels(const ffmpegkmp_player *player, int track) {
     const player_track *info = track_at(player, track);
     return info ? player->format->streams[info->stream_index]->codecpar->ch_layout.nb_channels : AVERROR(EINVAL);
