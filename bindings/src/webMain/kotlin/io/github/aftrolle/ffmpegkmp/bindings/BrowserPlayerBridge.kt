@@ -4,6 +4,7 @@
 package io.github.aftrolle.ffmpegkmp.bindings
 
 import kotlinx.coroutines.CancellationException
+import kotlin.js.JsAny
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
@@ -23,6 +24,9 @@ internal interface BrowserPlayerWorker {
     fun seek(positionUs: Long)
     fun stop()
     fun cancel()
+
+    /** Posts a player message built in JavaScript, handing over the JS array [transfers]. */
+    fun post(message: JsAny, transfers: JsAny)
 }
 
 internal interface BrowserPlayerWorkerListener {
@@ -43,6 +47,9 @@ internal interface BrowserPlayerWorkerListener {
         queueSerial: UInt,
     ): Boolean
     fun onFailure(message: String)
+
+    /** `opened` with the audio's tracks as JSON, or `failure` with a message. */
+    fun onAudioEvent(event: String, payload: String)
 }
 
 internal expect fun startBrowserPlayerWorker(
@@ -79,6 +86,8 @@ private class BrowserNativePlayerBridge(
     private var workerGeneration = 0
     private var worker: BrowserPlayerWorker? = startWorker()
     private var pendingPreparation: PendingBrowserPreparation? = null
+    private var audio: BrowserPlayerAudio? = null
+    private var audioOpening: CompletableDeferred<String>? = null
 
     override fun resetCancellation() {
         checkOpen()
@@ -94,6 +103,7 @@ private class BrowserNativePlayerBridge(
         }
         val pending = PendingBrowserPreparation(workerGeneration, CompletableDeferred())
         pendingPreparation = pending
+        releaseAudio()
         this.source = source
         current = current.copy(
             state = NativePlayerState.PREPARING,
@@ -143,8 +153,26 @@ private class BrowserNativePlayerBridge(
         return preparedCall { it.seek(positionUs) }
     }
 
+    override fun setMasterClock(mediaTimeUs: Long) {
+        if (!closed && source != null) worker?.post(masterClockMessage(mediaTimeUs.toDouble()), emptyTransfers())
+    }
+
+    override suspend fun openAudio(): NativePlayerAudio {
+        checkOpen()
+        val activeWorker = checkNotNull(worker) { "The browser player worker is not active" }
+        check(source != null) { "Prepare a source before opening its audio" }
+        releaseAudio()
+        val opened = CompletableDeferred<String>().also { audioOpening = it }
+        return try {
+            BrowserPlayerAudio.open(activeWorker, opened) { current.positionUs }.also { audio = it }
+        } finally {
+            if (audioOpening === opened) audioOpening = null
+        }
+    }
+
     override fun stop(): Int {
         checkOpen()
+        releaseAudio()
         worker?.stop()
         source = null
         return 0
@@ -153,6 +181,7 @@ private class BrowserNativePlayerBridge(
     override fun cancel() {
         if (closed) return
         workerGeneration++
+        releaseAudio()
         worker?.cancel()
         worker = null
         source = null
@@ -167,6 +196,7 @@ private class BrowserNativePlayerBridge(
         if (closed) return
         closed = true
         workerGeneration++
+        releaseAudio()
         source = null
         output = null
         worker?.cancel()
@@ -174,6 +204,14 @@ private class BrowserNativePlayerBridge(
         pendingPreparation?.completion?.cancel(
             CancellationException("The browser player bridge was closed"),
         )
+    }
+
+    /** Its caller normally closes the audio first; this covers a worker that is going away. */
+    private fun releaseAudio() {
+        audio?.close()
+        audio = null
+        audioOpening?.cancel(CancellationException("The browser player source changed"))
+        audioOpening = null
     }
 
     private fun preparedCall(action: (BrowserPlayerWorker) -> Unit): Int {
@@ -257,6 +295,15 @@ private class BrowserNativePlayerBridge(
             current = current.copy(state = NativePlayerState.FAILED, errorCode = NativePlayerError.IO)
             update(current)
             pendingPreparationForGeneration()?.completion?.complete(NativePlayerError.IO)
+        }
+
+        override fun onAudioEvent(event: String, payload: String) {
+            if (closed || generation != workerGeneration) return
+            when (event) {
+                "opened" -> audioOpening?.complete(payload)
+                "failure" -> audioOpening?.completeExceptionally(IllegalStateException(payload))
+                    ?: audio?.fail(payload)
+            }
         }
 
         private fun pendingPreparationForGeneration(): PendingBrowserPreparation? =

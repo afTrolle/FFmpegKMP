@@ -97,9 +97,14 @@ player.setAudioTrackVolume(2, 0.4)
 ```
 
 Levels are the same `AudioLevel`s the command and filter DSLs render, so a preview matches an
-export. Set `FFplayConfiguration(audio = false)` for silent previews. Audio is not available in the
-browser yet: there the player emits a warning event and plays video only. Protected sources skip
-audio until a secure audio path exists.
+export. Set `FFplayConfiguration(audio = false)` for silent previews. Protected sources skip audio
+until a secure audio path exists.
+
+In the browser the same engine decodes the audio inside the player's worker, from the input bytes
+it already holds, and streams PCM straight to an AudioWorklet; the page applies the master level
+immediately, while track changes are heard after the quarter second decoded ahead. Browsers only
+start audio after a user gesture: until then video plays on its own, the player emits one
+`FFplayEvent.Warning`, and the audio rejoins at the current position on the first gesture.
 
 ## Deferred picture-in-picture
 

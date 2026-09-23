@@ -63,9 +63,11 @@ public class FFplayPlayer internal constructor(
 
     // Before the engine: its callbacks reach audio as soon as it exists.
     private val audioScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
-    private val audioPlayback = audioOpener
-        ?.let { FFplayAudio(audioScope, ::warnAudio, it) }
-        ?: FFplayAudio(audioScope, ::warnAudio)
+    private val audioPlayback = FFplayAudio(
+        audioScope,
+        ::warnAudio,
+        audioOpener ?: { source -> engine.openAudio(::warnAudio) ?: openAudioPlayer(source) },
+    )
 
     /** Bumped by every prepare, stop and close; audio that finishes opening afterwards is stale. */
     private var audioGeneration = 0

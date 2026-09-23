@@ -72,7 +72,8 @@ software boundary. On the web, Kotlin/JS and Kotlin/Wasm drive the same C engine
 inside an Emscripten worker: decoder pthreads never call page JavaScript, and
 state and the latest frame cross a bounded mailbox. When the source has audio,
 FFplay plays it through the `player` engine and reports the audible position
-back as the video worker's master clock. See
+back as the video worker's master clock. In the browser that engine runs in the
+player's worker and feeds an AudioWorklet directly over a `MessageChannel`. See
 [`library/ffplay/README.md`](../library/ffplay/README.md) for the per-platform
 decoders, renderers and HDR handling.
 

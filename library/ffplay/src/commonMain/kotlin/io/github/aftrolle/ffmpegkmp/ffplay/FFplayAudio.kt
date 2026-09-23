@@ -66,7 +66,7 @@ internal typealias FFplayAudioOpener = suspend (FFplaySource) -> FFplayAudioOutp
 internal class FFplayAudio(
     private val scope: CoroutineScope,
     private val warn: (String) -> Unit,
-    private val open: FFplayAudioOpener = ::openAudioPlayer,
+    private val open: FFplayAudioOpener,
 ) {
     private val mutableState = MutableStateFlow(FFplayAudioState())
     val state: StateFlow<FFplayAudioState> = mutableState.asStateFlow()
@@ -199,7 +199,7 @@ internal class FFplayAudio(
 }
 
 /** Plays a path/URL input, or a mounted file handle; other mounts can't be re-read for audio. */
-private suspend fun openAudioPlayer(source: FFplaySource): FFplayAudioOutput? {
+internal suspend fun openAudioPlayer(source: FFplaySource): FFplayAudioOutput? {
     val mount = source.io.toNativeMounts().firstOrNull { it.path == source.input }
     val player = when (val resource = mount?.resource) {
         null -> AudioPlayer.open(source.input)

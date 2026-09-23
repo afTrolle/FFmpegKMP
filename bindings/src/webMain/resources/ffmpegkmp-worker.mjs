@@ -29,6 +29,146 @@ let webCodecsOutputFlags = 0;
 const webCodecsPresentations = new Map();
 let playerMessageTail = Promise.resolve();
 
+// Audio of the prepared source, decoded here on demand and played by the page's AudioWorklet,
+// which it reaches directly through `port`. Chunks carry the seek epoch they belong to.
+const AUDIO_CHUNK_FRAMES = 2048;
+const AUDIO_BUFFER_SECONDS = 0.25;
+const audio = {
+  handle: 0,
+  port: null,
+  pcm: 0,
+  timer: 0,
+  channels: 0,
+  sampleRate: 0,
+  epoch: 0,
+  decoded: 0,
+  played: 0,
+  ended: false,
+};
+
+function audioFailure(message) {
+  self.postMessage({ type: 'player-audio', event: 'failure', payload: message });
+}
+
+function closeAudio(module) {
+  if (!audio.handle) return;
+  clearInterval(audio.timer);
+  module._ffmpegkmp_player_close(audio.handle);
+  module._free(audio.pcm);
+  audio.port.close();
+  Object.assign(audio, { handle: 0, port: null, pcm: 0, timer: 0 });
+}
+
+/** Keeps about AUDIO_BUFFER_SECONDS decoded ahead of what the worklet has played. */
+function pumpAudio(module) {
+  if (!audio.handle || audio.ended) return;
+  const target = audio.sampleRate * AUDIO_BUFFER_SECONDS;
+  while (audio.decoded - audio.played < target) {
+    const frames = module._ffmpegkmp_player_read(audio.handle, audio.pcm, AUDIO_CHUNK_FRAMES);
+    if (frames < 0) {
+      audioFailure(`Audio decoding failed (${frames})`);
+      closeAudio(module);
+      return;
+    }
+    if (frames === 0) {
+      audio.ended = true;
+      audio.port.postMessage({ type: 'end', epoch: audio.epoch });
+      return;
+    }
+    // slice() copies out of the shared Wasm heap into a buffer that can be transferred.
+    const samples = new Float32Array(module.HEAPU8.buffer, audio.pcm, frames * audio.channels).slice();
+    audio.port.postMessage({ type: 'pcm', epoch: audio.epoch, samples }, [samples.buffer]);
+    audio.decoded += frames;
+  }
+}
+
+function openAudio(module, data) {
+  closeAudio(module);
+  const errorPointer = module._malloc(4);
+  let handle;
+  let error;
+  try {
+    handle = module._ffplaykmp_web_player_open_audio(
+      playerHandle,
+      data.sampleRate,
+      data.channels,
+      errorPointer,
+    );
+    error = new Int32Array(module.HEAPU8.buffer, errorPointer, 1)[0];
+  } finally {
+    module._free(errorPointer);
+  }
+  if (!handle) {
+    data.port.close();
+    audioFailure(`Could not open the source's audio (${error})`);
+    return;
+  }
+  const text = pointer => (pointer ? decodeCString(module.HEAPU8, pointer) : null);
+  const tracks = [];
+  const count = module._ffmpegkmp_player_track_count(handle);
+  for (let track = 0; track < count; track++) {
+    tracks.push({
+      codec: text(module._ffmpegkmp_player_track_codec(handle, track)) || '',
+      language: text(module._ffmpegkmp_player_track_language(handle, track)),
+      title: text(module._ffmpegkmp_player_track_title(handle, track)),
+      channels: module._ffmpegkmp_player_track_channels(handle, track),
+      sampleRate: module._ffmpegkmp_player_track_sample_rate(handle, track),
+      isDefault: module._ffmpegkmp_player_track_is_default(handle, track) === 1,
+      isDecodable: module._ffmpegkmp_player_track_is_decodable(handle, track) === 1,
+      enabled: module._ffmpegkmp_player_track_enabled(handle, track) === 1,
+    });
+  }
+  Object.assign(audio, {
+    handle,
+    port: data.port,
+    pcm: module._malloc(AUDIO_CHUNK_FRAMES * data.channels * 4),
+    channels: data.channels,
+    sampleRate: data.sampleRate,
+    epoch: 0,
+    decoded: 0,
+    played: 0,
+    ended: false,
+  });
+  audio.port.onmessage = ({ data: report }) => {
+    if (report.type === 'played' && report.epoch === audio.epoch) {
+      audio.played = report.frames;
+      pumpAudio(module);
+    }
+  };
+  audio.timer = setInterval(() => pumpAudio(module), 20);
+  self.postMessage({
+    type: 'player-audio',
+    event: 'opened',
+    payload: JSON.stringify({
+      durationUs: Number(module._ffmpegkmp_player_duration_us(handle)),
+      tracks,
+    }),
+  });
+  pumpAudio(module);
+}
+
+function handleAudioMessage(module, data) {
+  if (data.type === 'player-audio-open') {
+    openAudio(module, data);
+    return;
+  }
+  if (!audio.handle) return;
+  let result = 0;
+  if (data.type === 'player-audio-seek') {
+    result = module._ffmpegkmp_player_seek(audio.handle, BigInt(data.positionUs));
+    Object.assign(audio, { epoch: data.epoch, decoded: 0, played: 0, ended: false });
+    audio.port.postMessage({ type: 'flush', epoch: audio.epoch });
+    pumpAudio(module);
+  } else if (data.type === 'player-audio-track-enabled') {
+    result = module._ffmpegkmp_player_set_track_enabled(audio.handle, data.track, data.enabled ? 1 : 0);
+  } else if (data.type === 'player-audio-track-gain') {
+    result = module._ffmpegkmp_player_set_track_gain(audio.handle, data.track, data.gain);
+  } else if (data.type === 'player-audio-close') {
+    closeAudio(module);
+  }
+  if (result < 0) audioFailure(`${data.type} failed (${result})`);
+}
+
 // TextDecoder rejects views backed by the FFmpeg pthread SharedArrayBuffer.
 // Decode directly from that heap so event text crosses the worker boundary as a string.
 function decodeUtf8(heap, start, length) {
@@ -439,8 +579,23 @@ async function handlePlayerMessage(data) {
       return;
     }
     if (!playerHandle) throw new Error('The browser player is not initialized');
+    if (data.type.startsWith('player-audio-')) {
+      handleAudioMessage(module, data);
+      return;
+    }
+    if (data.type === 'player-master-clock') {
+      // Keep both video paths on the audible position; each extrapolates between reports.
+      if (webCodecsActive) {
+        if (webCodecsPlaying) webCodecsClockOriginMs = performance.now() - data.positionUs / 1000;
+      } else {
+        module._ffplaykmp_player_set_master_clock(playerHandle, BigInt(data.positionUs));
+      }
+      return;
+    }
     let result = 0;
     if (data.type === 'player-prepare') {
+      // The audio reads the input this replaces.
+      closeAudio(module);
       resetWebCodecs(module, true);
       const mount = (data.mounts || []).find(candidate => candidate.path === data.input);
       if (!mount?.bytes?.length) {
@@ -532,6 +687,7 @@ async function handlePlayerMessage(data) {
         result = module._ffplaykmp_player_seek(playerHandle, BigInt(data.positionUs));
       }
     } else if (data.type === 'player-stop') {
+      closeAudio(module);
       resetWebCodecs(module, true);
       result = module._ffplaykmp_player_stop(playerHandle);
     }

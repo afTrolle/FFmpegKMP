@@ -84,6 +84,9 @@ internal interface FFplayEngine : AutoCloseable {
 
     /** Makes the audible audio position the video master clock; negative clears it. */
     fun setMasterClock(mediaTimeUs: Long) = Unit
+
+    /** The prepared source's audio when the engine plays it itself (the browser), else null. */
+    suspend fun openAudio(warn: (String) -> Unit): FFplayAudioOutput? = null
     fun stop()
     fun attachOutput(output: FFplayVideoOutput)
     fun detachOutput(output: FFplayVideoOutput)
@@ -216,6 +219,9 @@ private class FFplayBridgeEngine(
     override fun setMasterClock(mediaTimeUs: Long) {
         if (!closed) bridge.setMasterClock(mediaTimeUs)
     }
+
+    override suspend fun openAudio(warn: (String) -> Unit): FFplayAudioOutput? =
+        if (closed) null else bridge.openAudio()?.let { BridgeAudioOutput(it, warn) }
 
     override fun stop() {
         checkOpen()

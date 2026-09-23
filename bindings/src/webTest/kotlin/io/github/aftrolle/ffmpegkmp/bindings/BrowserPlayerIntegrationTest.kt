@@ -6,6 +6,7 @@
 
 package io.github.aftrolle.ffmpegkmp.bindings
 
+import kotlin.js.JsAny
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
@@ -126,7 +127,7 @@ class BrowserPlayerIntegrationTest {
             runCurrent()
             workers.last().listener.onFailure("Synthetic worker failure")
 
-            assertEquals(-5, secondPreparation.await())
+            assertEquals(NativePlayerError.IO, secondPreparation.await())
         } finally {
             bridge.close()
         }
@@ -176,6 +177,7 @@ private class FakeBrowserPlayerWorker(
     override fun cancel() {
         cancelled = true
     }
+    override fun post(message: JsAny, transfers: JsAny) = Unit
 }
 
 internal expect suspend fun loadBrowserPlayerTestResource(url: String): ByteArray

@@ -51,3 +51,15 @@ config.customHeaders = [
         value: "require-corp"
     }
 ];
+
+// The audio tests play through a real AudioContext, which Chrome otherwise holds until a gesture.
+config.customLaunchers = {
+    ...(config.customLaunchers || {}),
+    ChromeHeadlessAutoplay: {
+        base: "ChromeHeadless",
+        flags: ["--autoplay-policy=no-user-gesture-required"]
+    }
+};
+config.browsers = (config.browsers || []).map(browser =>
+    browser === "ChromeHeadless" ? "ChromeHeadlessAutoplay" : browser
+);

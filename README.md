@@ -120,7 +120,7 @@ The optional `player` artifact plays or decodes audio on its own with live contr
 AVAudioEngine (Apple); `AudioDecoder` gives the same mix as float PCM for your
 own pipeline. Both use FFmpeg's libraries directly rather than the command-line
 tools, so they run alongside `FFmpegClient` commands instead of queueing behind
-them. They are not available in the browser yet.
+them. They are not available in the browser yet; there `FFplayPlayer` plays audio itself.
 
 ```kotlin
 val player = AudioPlayer.open("movie.mkv")
@@ -157,7 +157,8 @@ codecs advertise P010 and the HDR10 profile.
 
 `ffplay` excludes tvOS and watchOS because Compose UI artifacts are not
 published for those targets. `player` publishes JS and Wasm artifacts so shared
-code compiles, but its audio decoder is not available in the browser yet.
+code compiles, but its decoder and player are not available in the browser yet; `ffplay` plays
+audio there through its own worker.
 
 ## Repository layout
 

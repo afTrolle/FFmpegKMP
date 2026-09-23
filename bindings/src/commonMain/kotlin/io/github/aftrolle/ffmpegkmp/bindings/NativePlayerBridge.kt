@@ -161,9 +161,48 @@ public interface NativePlayerBridge : AutoCloseable {
      * scheduling; negative clears it. Bridges without native scheduling ignore it.
      */
     public fun setMasterClock(mediaTimeUs: Long): Unit = Unit
+
+    /**
+     * Opens the prepared source's audio in the bridge itself, or returns null where the platform
+     * audio engine plays it instead. Close it before the next [prepare] or [stop].
+     */
+    public suspend fun openAudio(): NativePlayerAudio? = null
     public fun stop(): Int
     public fun cancel()
     public fun snapshot(): NativePlayerSnapshot
+}
+
+/** Where a bridge's own audio is, as reported by [NativePlayerAudio.setProgressListener]. */
+@InternalFFmpegKmpApi
+public data class NativeAudioProgress(
+    /** Media time the listener hears now. */
+    val positionMicros: Long,
+    /** Everything up to the end of the input has been played. */
+    val ended: Boolean = false,
+    /** Playback waits for a user gesture, as the browser's autoplay policy requires. */
+    val blockedByAutoplay: Boolean = false,
+    /** Set once decoding or the audio output failed; the audio then stays silent. */
+    val failure: String? = null,
+)
+
+/**
+ * Audio a bridge plays itself, mirroring [NativeAudioDecoder]'s track model. Gains apply live;
+ * track changes reach what is heard after the little audio decoded ahead.
+ */
+@InternalFFmpegKmpApi
+public interface NativePlayerAudio : AutoCloseable {
+    public val tracks: List<NativeAudioTrackInfo>
+
+    /** Negative when the input does not report a duration. */
+    public val durationMicros: Long
+    public fun isTrackEnabled(track: Int): Boolean
+    public fun setTrackEnabled(track: Int, enabled: Boolean)
+    public fun setTrackGain(track: Int, gain: Float)
+    public fun setMasterGain(gain: Float)
+    public fun play()
+    public fun pause()
+    public fun seek(positionMicros: Long)
+    public fun setProgressListener(listener: (NativeAudioProgress) -> Unit)
 }
 
 @InternalFFmpegKmpApi

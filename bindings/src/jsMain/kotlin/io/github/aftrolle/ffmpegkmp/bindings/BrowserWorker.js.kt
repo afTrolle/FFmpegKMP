@@ -3,6 +3,8 @@
 
 package io.github.aftrolle.ffmpegkmp.bindings
 
+import kotlin.js.JsAny
+
 @InternalFFmpegKmpApi
 public actual fun createPlatformExecutionBridge(): NativeExecutionBridge =
     createBrowserExecutionBridge()
@@ -31,6 +33,7 @@ internal actual fun startBrowserPlayerWorker(
         )
     }
     val onFailure: (String) -> Unit = listener::onFailure
+    val onAudio: (String, String) -> Unit = listener::onAudioEvent
     val onPlatformFrame: (dynamic) -> Boolean = { data ->
         val frameId = registerPlayerVideoFrame(data.frame)
         listener.onPlatformFrame(
@@ -42,7 +45,7 @@ internal actual fun startBrowserPlayerWorker(
         ).also { accepted -> if (!accepted) releasePlayerVideoFrame(frameId) }
     }
     return JsBrowserPlayerWorker(
-        startPlayerWorker(decoderPreference, onSnapshot, onFrame, onPlatformFrame, onFailure),
+        startPlayerWorker(decoderPreference, onSnapshot, onFrame, onPlatformFrame, onFailure, onAudio),
     )
 }
 
@@ -64,7 +67,11 @@ private class JsBrowserPlayerWorker(private val controller: dynamic) : BrowserPl
     override fun seek(positionUs: Long) = postPlayerCommand(controller, "player-seek", 0, positionUs)
     override fun stop() = postPlayerCommand(controller, "player-stop", 0, 0L)
     override fun cancel() = terminatePlayerWorker(controller)
+    override fun post(message: JsAny, transfers: JsAny) = postPlayerMessage(controller, message, transfers)
 }
+
+private fun postPlayerMessage(controller: dynamic, message: JsAny, transfers: JsAny): Unit =
+    js("controller.post(message, transfers)")
 
 private fun startPlayerWorker(
     decoderPreference: Int,
@@ -72,6 +79,7 @@ private fun startPlayerWorker(
     onFrame: (dynamic) -> Unit,
     onPlatformFrame: (dynamic) -> Boolean,
     onFailure: (String) -> Unit,
+    onAudio: (String, String) -> Unit,
 ): dynamic = js(
     """
     (() => {
@@ -109,6 +117,7 @@ private fun startPlayerWorker(
           if (!onPlatformFrame(data)) data.frame.close();
         }
         else if (data.type === 'player-failure') onFailure(data.message || 'Browser playback failed');
+        else if (data.type === 'player-audio') onAudio(data.event, data.payload);
       };
       worker.onerror = event => {
         onFailure(event.message || `Could not load the FFmpegKMP player worker at ${'$'}{workerUrl}`);
