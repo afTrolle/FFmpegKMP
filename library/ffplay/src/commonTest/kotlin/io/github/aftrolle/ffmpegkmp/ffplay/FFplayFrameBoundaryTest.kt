@@ -247,6 +247,7 @@ private class FrameBridgeHarness {
                     .also { bridge = it }
             }
         },
+        audioOpener = { null },
     )
 
     fun snapshot(): NativePlayerSnapshot = bridge.snapshot()

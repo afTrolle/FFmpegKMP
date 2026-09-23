@@ -39,16 +39,6 @@ public class FFplayPlayer internal constructor(
         configuration: FFplayConfiguration = FFplayConfiguration(),
     ) : this(configuration, ::createPlatformFFplayEngine)
 
-    internal constructor(
-        configuration: FFplayConfiguration,
-        useInMemoryEngine: Boolean,
-    ) : this(
-        configuration,
-        if (useInMemoryEngine) ::createInMemoryFFplayEngine else ::createPlatformFFplayEngine,
-        // In-memory inputs are not real media: never try to open their audio.
-        audioOpener = if (useInMemoryEngine) ({ null }) else null,
-    )
-
     private val closed = AtomicBoolean(false)
     private val closeCompleted = AtomicBoolean(false)
     private val prepareMutex = Mutex()
@@ -74,7 +64,6 @@ public class FFplayPlayer internal constructor(
 
     public val snapshot = mutableSnapshot.asStateFlow()
     public val events: Flow<FFplayEvent> = mutableEvents.asSharedFlow()
-
 
     /** The prepared source's audio tracks and levels; see [setVolume] and [selectAudioTrack]. */
     public val audio: StateFlow<FFplayAudioState> = audioPlayback.state

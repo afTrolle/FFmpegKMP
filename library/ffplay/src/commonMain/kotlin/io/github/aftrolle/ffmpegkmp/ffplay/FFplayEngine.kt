@@ -6,6 +6,7 @@
 package io.github.aftrolle.ffmpegkmp.ffplay
 
 import androidx.compose.ui.graphics.ImageBitmap
+import io.github.aftrolle.ffmpegkmp.bindings.NativePlayerError
 import io.github.aftrolle.ffmpegkmp.bindings.NativePlayerBridge
 import io.github.aftrolle.ffmpegkmp.bindings.NativePlayerConfiguration
 import io.github.aftrolle.ffmpegkmp.bindings.NativePlayerDecoderPreference
@@ -144,7 +145,6 @@ private class FFplayBridgeEngine(
     private var snapshot = FFplaySnapshot()
     private var source: FFplaySource? = null
     private var output: FFplayVideoOutput? = null
-    private var playWhenReady = false
     private var nativeQueueSerial = 0u
     private var nativeDroppedFrames = 0L
     private var outputDroppedFrames = 0L
@@ -198,13 +198,11 @@ private class FFplayBridgeEngine(
 
     override fun play() {
         checkPrepared()
-        playWhenReady = true
         requireNativeSuccess("play", bridge.play())
     }
 
     override fun pause() {
         checkPrepared()
-        playWhenReady = false
         requireNativeSuccess("pause", bridge.pause())
     }
 
@@ -221,7 +219,6 @@ private class FFplayBridgeEngine(
 
     override fun stop() {
         checkOpen()
-        playWhenReady = false
         nativeDroppedFrames = 0
         outputDroppedFrames = 0
         output?.discard()
@@ -500,8 +497,8 @@ private fun NativePlayerState.toPublic(): FFplayState = when (this) {
 }
 
 private fun nativeError(operation: String, code: Int): String = when (code) {
-    -13 -> "Unable to $operation: protected content requires a verified secure output path"
-    -22 -> "Unable to $operation: invalid native player argument"
-    -95 -> "Unable to $operation: the required decoder or output capability is unsupported"
+    NativePlayerError.ACCESS_DENIED -> "Unable to $operation: protected content requires a verified secure output path"
+    NativePlayerError.INVALID_ARGUMENT -> "Unable to $operation: invalid native player argument"
+    NativePlayerError.UNSUPPORTED -> "Unable to $operation: the required decoder or output capability is unsupported"
     else -> "Unable to $operation: native player error $code"
 }

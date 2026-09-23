@@ -127,6 +127,18 @@ public data class NativePlatformVideoFrame(
     val queueSerial: UInt,
 )
 
+/**
+ * Error codes the player bridges report themselves (negative Linux errno values). Native engines
+ * return their platform's errno, which differs on some hosts (ENOTSUP is 45 on Apple).
+ */
+@InternalFFmpegKmpApi
+public object NativePlayerError {
+    public const val IO: Int = -5
+    public const val ACCESS_DENIED: Int = -13
+    public const val INVALID_ARGUMENT: Int = -22
+    public const val UNSUPPORTED: Int = -95
+}
+
 @InternalFFmpegKmpApi
 public interface NativePlayerBridge : AutoCloseable {
     /** Clears a prior cancellation before the caller performs its final closed-state check. */
@@ -137,7 +149,7 @@ public interface NativePlayerBridge : AutoCloseable {
     public fun setOutput(capabilities: NativePlayerOutputCapabilities): Int
     /** Attaches a private platform output object before capability negotiation. */
     public fun setPlatformOutputTarget(target: Any?, secure: Boolean): Int =
-        if (target == null) 0 else -95
+        if (target == null) 0 else NativePlayerError.UNSUPPORTED
     public fun clearOutput()
     public fun play(): Int
     public fun pause(): Int
@@ -244,7 +256,7 @@ private class InMemoryNativePlayerBridge(
 
     override fun seek(positionUs: Long): Int {
         requirePrepared()
-        if (positionUs < 0) return -22
+        if (positionUs < 0) return NativePlayerError.INVALID_ARGUMENT
         current = current.copy(
             state = NativePlayerState.SEEKING,
             positionUs = positionUs,
@@ -289,10 +301,10 @@ private class InMemoryNativePlayerBridge(
     private fun validateOutput(): Int? {
         val target = output ?: return null
         return when {
-            source?.requireSecurePath == true && !target.protectedContent -> -13
+            source?.requireSecurePath == true && !target.protectedContent -> NativePlayerError.ACCESS_DENIED
             configuration.decoderPreference == NativePlayerDecoderPreference.REQUIRE_HARDWARE &&
-                !target.hardwareFrameImport -> -95
-            !target.hardwareFrameImport && !target.softwareFrameUpload -> -95
+                !target.hardwareFrameImport -> NativePlayerError.UNSUPPORTED
+            !target.hardwareFrameImport && !target.softwareFrameUpload -> NativePlayerError.UNSUPPORTED
             else -> null
         }
     }

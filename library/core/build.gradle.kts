@@ -72,9 +72,9 @@ tasks.withType<Test>().matching { it.name == "testAndroidHostTest" }.configureEa
 kotlin {
     sourceSets {
         commonMain.dependencies {
-            // Sibling modules use the opt-in mounted-I/O adapter without exposing
-            // generated platform declarations in their public APIs.
-            api(project(":bindings"))
+            // Internal: modules that use the opt-in mounted-I/O adapter (player, ffplay) depend on
+            // :bindings themselves, so apps don't get the generated declarations on their classpath.
+            implementation(project(":bindings"))
             api(libs.kotlinx.coroutines.core)
             api(libs.okio)
         }

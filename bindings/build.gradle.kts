@@ -513,6 +513,10 @@ kotlin {
             api(libs.okio)
             implementation(libs.kotlinx.serialization.json)
         }
+        // Bulk ByteArray <-> typed-array copies for the Wasm worker bridge.
+        wasmJsMain.dependencies {
+            implementation(libs.kotlinx.browser)
+        }
         jvmMain {
             // Kotlin does not support a JVM+Android intermediate source set.
             // Compile the shared JavaCPP implementation into each target while

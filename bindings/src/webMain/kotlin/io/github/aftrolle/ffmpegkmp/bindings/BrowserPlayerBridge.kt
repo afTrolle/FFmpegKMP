@@ -86,7 +86,7 @@ private class BrowserNativePlayerBridge(
 
     override fun prepare(source: NativePlayerSource): Int {
         checkOpen()
-        if (source.requireSecurePath) return fail(-95)
+        if (source.requireSecurePath) return fail(NativePlayerError.UNSUPPORTED)
         val activeWorker = worker ?: startWorker().also { worker = it }
         check(pendingPreparation?.completion?.isActive != true) {
             "A browser player preparation is already active"
@@ -117,9 +117,9 @@ private class BrowserNativePlayerBridge(
     override fun setOutput(capabilities: NativePlayerOutputCapabilities): Int {
         checkOpen()
         val validation = when {
-            capabilities.protectedContent -> -95
-            configuration.decoderPreference == NativePlayerDecoderPreference.REQUIRE_HARDWARE -> -95
-            !capabilities.softwareFrameUpload && !capabilities.hardwareFrameImport -> -95
+            capabilities.protectedContent -> NativePlayerError.UNSUPPORTED
+            configuration.decoderPreference == NativePlayerDecoderPreference.REQUIRE_HARDWARE -> NativePlayerError.UNSUPPORTED
+            !capabilities.softwareFrameUpload && !capabilities.hardwareFrameImport -> NativePlayerError.UNSUPPORTED
             else -> 0
         }
         if (validation < 0) return fail(validation)
@@ -138,7 +138,7 @@ private class BrowserNativePlayerBridge(
     override fun pause(): Int = preparedCall { it.pause() }
 
     override fun seek(positionUs: Long): Int {
-        if (positionUs < 0) return -22
+        if (positionUs < 0) return NativePlayerError.INVALID_ARGUMENT
         return preparedCall { it.seek(positionUs) }
     }
 
@@ -204,7 +204,7 @@ private class BrowserNativePlayerBridge(
                 -> pendingPreparationForGeneration()?.completion?.complete(0)
                 NativePlayerState.FAILED -> pendingPreparationForGeneration()
                     ?.completion
-                    ?.complete(current.errorCode.takeIf { it < 0 } ?: -5)
+                    ?.complete(current.errorCode.takeIf { it < 0 } ?: NativePlayerError.IO)
                 else -> Unit
             }
         }
@@ -253,9 +253,9 @@ private class BrowserNativePlayerBridge(
         override fun onFailure(message: String) {
             if (closed || generation != workerGeneration) return
             source = null
-            current = current.copy(state = NativePlayerState.FAILED, errorCode = -5)
+            current = current.copy(state = NativePlayerState.FAILED, errorCode = NativePlayerError.IO)
             update(current)
-            pendingPreparationForGeneration()?.completion?.complete(-5)
+            pendingPreparationForGeneration()?.completion?.complete(NativePlayerError.IO)
         }
 
         private fun pendingPreparationForGeneration(): PendingBrowserPreparation? =

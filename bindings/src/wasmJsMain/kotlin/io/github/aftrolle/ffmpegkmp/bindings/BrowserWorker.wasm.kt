@@ -9,6 +9,9 @@ package io.github.aftrolle.ffmpegkmp.bindings
 import kotlin.js.ExperimentalWasmJsInterop
 import kotlin.js.JsAny
 import kotlin.js.JsArray
+import org.khronos.webgl.Int8Array
+import org.khronos.webgl.toByteArray
+import org.khronos.webgl.toInt8Array
 
 @InternalFFmpegKmpApi
 public actual fun createPlatformExecutionBridge(): NativeExecutionBridge =
@@ -29,7 +32,7 @@ internal actual fun startBrowserPlayerWorker(
     val onSnapshot: (String) -> Unit = listener::onSnapshot
     val onFrame: (JsAny) -> Unit = { data ->
         listener.onFrame(
-            bytes = ByteArray(playerFrameSize(data)) { index -> playerFrameByte(data, index).toByte() },
+            bytes = playerFrameBytes(data).toByteArray(),
             width = playerFrameWidth(data),
             height = playerFrameHeight(data),
             stride = playerFrameStride(data),
@@ -166,8 +169,8 @@ private fun postPlayerCommand(
 
 private fun closePlayerWorker(controller: JsAny): Unit = js("controller.close()")
 private fun terminatePlayerWorker(controller: JsAny): Unit = js("controller.terminate()")
-private fun playerFrameSize(data: JsAny): Int = js("data.bytes.byteLength")
-private fun playerFrameByte(data: JsAny, index: Int): Int = js("data.bytes[index]")
+private fun playerFrameBytes(data: JsAny): Int8Array =
+    js("new Int8Array(data.bytes.buffer, data.bytes.byteOffset, data.bytes.byteLength)")
 private fun playerFrameWidth(data: JsAny): Int = js("data.width")
 private fun playerFrameHeight(data: JsAny): Int = js("data.height")
 private fun playerFrameStride(data: JsAny): Int = js("data.stride")
@@ -236,30 +239,25 @@ private fun startWorker(
 
 private fun terminateWorker(worker: JsAny): Unit = js("worker.terminate()")
 
-private fun ByteArray.toJsUint8Array(): JsAny {
-    val result = createUint8Array(size)
-    forEachIndexed { index, byte -> setUint8ArrayByte(result, index, byte.toInt() and 0xff) }
-    return result
-}
+/** One bulk copy out of Wasm memory, viewed unsigned as the worker expects. */
+private fun ByteArray.toJsUint8Array(): JsAny = unsignedView(toInt8Array())
+
+private fun unsignedView(bytes: Int8Array): JsAny = js("new Uint8Array(bytes.buffer, bytes.byteOffset, bytes.length)")
 
 private fun JsAny.toBrowserWorkerOutputs(): List<BrowserWorkerOutput> =
     List(outputCount(this)) { outputIndex ->
         val size = outputSize(this, outputIndex)
         BrowserWorkerOutput(
             path = outputPath(this, outputIndex),
-            bytes = ByteArray(size) { byteIndex ->
-                outputByte(this, outputIndex, byteIndex).toByte()
-            },
+            bytes = outputBytes(this, outputIndex, size).toByteArray(),
         )
     }
 
-private fun createUint8Array(size: Int): JsAny = js("new Uint8Array(size)")
-private fun setUint8ArrayByte(array: JsAny, index: Int, value: Int): Unit = js("array[index] = value")
 private fun outputCount(outputs: JsAny): Int = js("outputs.length")
 private fun outputPath(outputs: JsAny, index: Int): String = js("outputs[index].path")
 private fun outputSize(outputs: JsAny, index: Int): Int = js("outputs[index].size")
-private fun outputByte(outputs: JsAny, outputIndex: Int, byteIndex: Int): Int =
-    js("outputs[outputIndex].bytes[byteIndex]")
+private fun outputBytes(outputs: JsAny, index: Int, size: Int): Int8Array =
+    js("new Int8Array(outputs[index].bytes.buffer, outputs[index].bytes.byteOffset, size)")
 
 private const val WORKER_BOOTSTRAP: String = """
     {

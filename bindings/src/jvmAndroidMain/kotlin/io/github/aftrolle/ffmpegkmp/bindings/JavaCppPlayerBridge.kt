@@ -23,7 +23,7 @@ internal fun createJavaCppPlayerBridge(
     frame: (NativeVideoFrame) -> Unit,
     platformFrame: (NativePlatformVideoFrame) -> Boolean = { false },
     platformOutputTarget: (ffplaykmp_player, Any?, Boolean) -> Int = { _, target, _ ->
-        if (target == null) 0 else -95
+        if (target == null) 0 else NativePlayerError.UNSUPPORTED
     },
 ): NativePlayerBridge = JavaCppPlayerBridge(
     configuration,

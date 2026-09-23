@@ -113,6 +113,7 @@ class FFplayPlayerTest {
                     emit(event)
                 }
             },
+            audioOpener = { null },
         )
         player.prepare(FFplaySource("movie.mp4"))
         player.attachOutput(FakeOutput())
@@ -294,7 +295,12 @@ class FFplayPlayerTest {
 
 private fun testPlayer(
     configuration: FFplayConfiguration = FFplayConfiguration(),
-): FFplayPlayer = FFplayPlayer(configuration, useInMemoryEngine = true)
+): FFplayPlayer = FFplayPlayer(
+    configuration,
+    ::createInMemoryFFplayEngine,
+    // In-memory inputs are not real media: never try to open their audio.
+    audioOpener = { null },
+)
 
 private class FakeOutput : FFplayVideoOutput {
     override val kind: FFplayRendererKind = FFplayRendererKind.COMPOSE_CANVAS

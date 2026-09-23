@@ -31,7 +31,7 @@ internal actual fun PlatformFFplaySurface(
     contentScale: ContentScale,
     backgroundColor: Color,
 ) {
-    val output = remember(player) { WasmCanvasOutput() }
+    val output = remember(player) { WebCanvasOutput() }
     output.scaleMode = contentScale.webScaleMode()
     output.background = backgroundColor.cssColor()
     DisposableEffect(player, output) {
@@ -53,7 +53,7 @@ internal actual fun PlatformFFplaySurface(
     }
 }
 
-private class WasmCanvasOutput : FFplayVideoOutput {
+private class WebCanvasOutput : FFplayVideoOutput {
     val canvas = document.createElement("canvas") as HTMLCanvasElement
     override val kind = FFplayRendererKind.NATIVE_SURFACE
     override val frames = MutableStateFlow<FFplayFrame?>(null)
@@ -73,7 +73,7 @@ private class WasmCanvasOutput : FFplayVideoOutput {
     override fun submitNative(frame: NativeVideoFrame, video: FFplayVideoInfo?): Boolean {
         drawRgba(
             canvas,
-            frame.rgba.toJsUint8Array(),
+            frame.rgba.toCanvasBytes(),
             frame.width,
             frame.height,
             scaleMode,
@@ -112,14 +112,8 @@ private fun ContentScale.webScaleMode(): String = when (this) {
 private fun Color.cssColor(): String =
     "rgba(${(red * 255).toInt()},${(green * 255).toInt()},${(blue * 255).toInt()},$alpha)"
 
-private fun ByteArray.toJsUint8Array(): JsAny {
-    val result = createUint8Array(size)
-    forEachIndexed { index, byte -> setUint8ArrayByte(result, index, byte.toInt() and 0xff) }
-    return result
-}
-
-private fun createUint8Array(size: Int): JsAny = js("new Uint8Array(size)")
-private fun setUint8ArrayByte(array: JsAny, index: Int, value: Int): Unit = js("array[index] = value")
+/** The frame's bytes as a JS typed array for ImageData, without a per-byte copy. */
+internal expect fun ByteArray.toCanvasBytes(): JsAny
 
 private fun drawRgba(
     canvas: HTMLCanvasElement,
@@ -153,10 +147,7 @@ private fun drawRgba(
       let sx = targetWidth / displayWidth;
       let sy = targetHeight / displayHeight;
       let scale;
-      if (scaleMode === 'fill') {
-        sx = targetWidth / width;
-        sy = targetHeight / height;
-      } else {
+      if (scaleMode !== 'fill') {
         if (scaleMode === 'crop') scale = Math.max(sx, sy);
         else if (scaleMode === 'fillWidth') scale = sx;
         else if (scaleMode === 'fillHeight') scale = sy;
