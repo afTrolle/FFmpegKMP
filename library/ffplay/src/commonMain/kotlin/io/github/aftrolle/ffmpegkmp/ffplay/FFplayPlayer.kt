@@ -28,6 +28,9 @@ import kotlinx.coroutines.withContext
  *
  * The native engine is accessed through [FFplayEngine], which keeps native frame handles out of
  * the public API and lets a Compose surface attach after media preparation.
+ *
+ * Controls never wait for a [prepare] that is opening its input: calls made meanwhile are applied
+ * in order once it returns, and playback calls are dropped if it fails.
  */
 @OptIn(ExperimentalAtomicApi::class)
 public class FFplayPlayer internal constructor(
@@ -43,6 +46,17 @@ public class FFplayPlayer internal constructor(
     private val closeCompleted = AtomicBoolean(false)
     private val prepareMutex = Mutex()
     private val operationLock = FFplayOperationLock()
+
+    /**
+     * Held for a blocking native prepare, which may also present its preview frame on the attached
+     * output. Only close and releasing a native surface wait for it; other commands are queued.
+     * Always taken before [operationLock].
+     */
+    private val prepareLock = FFplayOperationLock()
+
+    /** Guarded by [operationLock]. */
+    private var preparing = false
+    private val pending = mutableListOf<PendingCommand>()
     private val mutableSnapshot = MutableStateFlow(FFplaySnapshot())
     private val mutableSecureOutputRequired = MutableStateFlow(false)
     private val mutableEvents = MutableSharedFlow<FFplayEvent>(extraBufferCapacity = 16)
@@ -111,24 +125,17 @@ public class FFplayPlayer internal constructor(
     }
 
     // Audio follows the engine's state transitions (see acceptEngineUpdate), not these calls.
-    public fun play(): Unit = operationLock.withLock {
-        checkOpen()
-        engine.play()
-    }
+    // While a source is being prepared, these are queued and applied in order once it is.
+    public fun play(): Unit = command(needsSource = true) { engine.play() }
 
-    public fun pause(): Unit = operationLock.withLock {
-        checkOpen()
-        engine.pause()
-    }
+    public fun pause(): Unit = command(needsSource = true) { engine.pause() }
 
-    public fun seekTo(position: Duration): Unit = operationLock.withLock {
-        checkOpen()
+    public fun seekTo(position: Duration) {
         require(!position.isNegative()) { "Seek position must not be negative" }
-        engine.seekTo(position)
+        command(needsSource = true) { engine.seekTo(position) }
     }
 
-    public fun stop(): Unit = operationLock.withLock {
-        checkOpen()
+    public fun stop(): Unit = command(needsSource = false) {
         audioGeneration++
         audioPlayback.close()
         engine.stop()
@@ -173,13 +180,25 @@ public class FFplayPlayer internal constructor(
         audioPlayback.setTrackEnabled(track, enabled)
     }
 
-    internal fun attachOutput(output: FFplayVideoOutput): Unit = operationLock.withLock {
-        checkOpen()
-        engine.attachOutput(output)
-    }
+    internal fun attachOutput(output: FFplayVideoOutput): Unit =
+        command(needsSource = false) { engine.attachOutput(output) }
 
-    internal fun detachOutput(output: FFplayVideoOutput): Unit = operationLock.withLock {
-        if (!closed.load()) engine.detachOutput(output)
+    internal fun detachOutput(output: FFplayVideoOutput) {
+        if (output.platformTarget == null) {
+            // Frames reach a software output through the engine, which drops them once detached.
+            operationLock.withLock {
+                when {
+                    closed.load() -> Unit
+                    preparing -> pending += PendingCommand(needsSource = false) { engine.detachOutput(output) }
+                    else -> engine.detachOutput(output)
+                }
+            }
+            return
+        }
+        // The caller releases this native surface next, and a prepare may be presenting on it.
+        prepareLock.withLock {
+            operationLock.withLock { if (!closed.load()) engine.detachOutput(output) }
+        }
     }
 
     internal fun requestClose() {
@@ -190,32 +209,44 @@ public class FFplayPlayer internal constructor(
 
     override fun close() {
         requestClose()
-        // The operation lock prevents destruction until an active native call has observed
-        // cancellation. Multiple callers may wait here, but only one destroys the engine.
-        operationLock.withLock {
-            if (!closeCompleted.compareAndSet(expectedValue = false, newValue = true)) {
-                return@withLock
-            }
-            // Audio reads the same mounted input; release it before the engine closes that input.
-            audioGeneration++
-            audioPlayback.close()
-            audioScope.cancel()
-            engine.close()
-            mutableSecureOutputRequired.value = false
-            mutableSnapshot.value = mutableSnapshot.value.copy(state = FFplayState.CLOSED)
+        // The locks prevent destruction until an active native call has observed cancellation.
+        // Multiple callers may wait here, but only one destroys the engine.
+        prepareLock.withLock { closeEngine() }
+    }
+
+    private fun closeEngine() = operationLock.withLock {
+        if (!closeCompleted.compareAndSet(expectedValue = false, newValue = true)) {
+            return@withLock
         }
+        // Audio reads the same mounted input; release it before the engine closes that input.
+        audioGeneration++
+        audioPlayback.close()
+        audioScope.cancel()
+        engine.close()
+        pending.clear()
+        mutableSecureOutputRequired.value = false
+        mutableSnapshot.value = mutableSnapshot.value.copy(state = FFplayState.CLOSED)
     }
 
     private suspend fun prepareOnWorker(source: FFplaySource): Unit = coroutineScope {
         val preparation = async(Dispatchers.Default) {
-            operationLock.withLock {
-                checkOpen()
-                engine.resetCancellation()
-                // close() may have raced the reset. Checking again guarantees its cancellation
-                // cannot be cleared immediately before entering a blocking native prepare.
-                checkOpen()
-                engine.prepare(source)
-                checkOpen()
+            prepareLock.withLock {
+                operationLock.withLock {
+                    checkOpen()
+                    engine.resetCancellation()
+                    // close() may have raced the reset. Checking again guarantees its cancellation
+                    // cannot be cleared immediately before entering a blocking native prepare.
+                    checkOpen()
+                    preparing = true
+                }
+                var prepared = false
+                try {
+                    engine.prepare(source)
+                    prepared = true
+                } finally {
+                    operationLock.withLock { finishPreparing(prepared) }
+                }
+                operationLock.withLock { checkOpen() }
             }
             engine.awaitPreparation()
             operationLock.withLock { checkOpen() }
@@ -226,6 +257,28 @@ public class FFplayPlayer internal constructor(
             engine.cancel()
             withContext(NonCancellable) { preparation.join() }
             throw cancellation
+        }
+    }
+
+    /** Runs [action] now, or queues it while a native prepare is in flight. */
+    private fun command(needsSource: Boolean, action: () -> Unit): Unit = operationLock.withLock {
+        checkOpen()
+        if (preparing) pending += PendingCommand(needsSource, action) else action()
+    }
+
+    /** Applies what was queued during the prepare; after a failed one, only output changes and stop. */
+    private fun finishPreparing(prepared: Boolean) {
+        preparing = false
+        val queued = pending.toList()
+        pending.clear()
+        if (closed.load()) return
+        for (command in queued) {
+            if (!prepared && command.needsSource) continue
+            try {
+                command.action()
+            } catch (failure: Throwable) {
+                emit(FFplayEvent.Warning("A queued command failed: ${failure.message ?: failure::class.simpleName}"))
+            }
         }
     }
 
@@ -270,3 +323,5 @@ public class FFplayPlayer internal constructor(
         check(!closed.load()) { "FFplayPlayer is closed" }
     }
 }
+
+private class PendingCommand(val needsSource: Boolean, val action: () -> Unit)
