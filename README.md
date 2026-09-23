@@ -156,8 +156,8 @@ codecs advertise P010 and the HDR10 profile.
 | `player` | ✅ | ✅ | — | — | ✅ | ✅ | ✅ | ✅ |
 
 `ffplay` excludes tvOS and watchOS because Compose UI artifacts are not
-published for those targets. `player` compiles for the browser but its audio
-decoder is not available there yet.
+published for those targets. `player` publishes JS and Wasm artifacts so shared
+code compiles, but its audio decoder is not available in the browser yet.
 
 ## Repository layout
 

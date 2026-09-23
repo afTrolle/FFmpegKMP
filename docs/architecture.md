@@ -9,24 +9,26 @@ bindings and locally generated native artifacts.
                                 │
                                 ▼
 ┌──────────────────────────────────────────────────────────────┐
-│                    Public Kotlin API                          │
-│                                                               │
-│  core        ffmpeg       ffprobe       ffplay       filters   │
-│  sessions    command DSL  metadata     playback     graph DSL │
-└───────────────────────────────┬───────────────────────────────┘
+│                      Public Kotlin API                       │
+│                                                              │
+│  core      ffmpeg     ffprobe   filters    player   ffplay   │
+│  sessions  command    metadata  graph DSL  audio    video    │
+│            DSL                                               │
+└───────────────────────────────┬──────────────────────────────┘
                                 │ internal runtime abstraction
-┌───────────────────────────────┴───────────────────────────────┐
-│                    Single :bindings module                    │
-│                                                               │
-│ Apple cinterop   shared JVM/Android JNI   JS/Wasm web adapters │
-└───────────────────────────────┬───────────────────────────────┘
                                 ▼
 ┌──────────────────────────────────────────────────────────────┐
-│        Target-specific FFmpeg local build outputs only        │
-│                                                               │
-│    Apple toolchains   Android NDK   Desktop tools   Emscripten │
-│       native-build modules: apple / android / jvm / wasm      │
-└───────────────────────────────┬───────────────────────────────┘
+│                   Single :bindings module                    │
+│                                                              │
+│  Apple cinterop    shared JVM/Android JNI   JS/Wasm adapters │
+└───────────────────────────────┬──────────────────────────────┘
+                                ▼
+┌──────────────────────────────────────────────────────────────┐
+│       Target-specific FFmpeg local build outputs only        │
+│                                                              │
+│  Apple toolchains   Android NDK   Desktop tools   Emscripten │
+│     native-build modules: apple / android / jvm / wasm       │
+└───────────────────────────────┬──────────────────────────────┘
                                 ▼
                  Pinned FFmpeg source and patches
 ```
@@ -58,45 +60,21 @@ timeline. With every track disabled, the default track keeps decoding unmixed,
 so the silence follows the real timeline. The engine holds no process-global
 state and runs concurrently with the command FIFO below.
 
-Unlike command sessions, FFplay instances do not use the process-wide command
-FIFO. Their decoder, queues, clocks, mounted I/O, and output negotiation are
-per-player so multiple videos can run independently. Compose Canvas is the
-portable software-frame fallback; native surfaces and hardware-frame import
-are selected only when a platform backend reports that capability. On Android,
-clear video can use FFmpeg's MediaCodec decoder and timed direct presentation to
-an `AndroidExternalSurface`; decoder-open failures fall back to the software
-surface renderer in `Auto` mode and fail in `RequireHardware` mode. Protected
-video remains disabled until the decoder is connected to a platform DRM session.
-On iOS, FFmpeg VideoToolbox frames cross the bridge as borrowed `CVPixelBuffer`
-handles and are retained by `CMSampleBuffer` only for asynchronous submission to
-`AVSampleBufferDisplayLayer`; software decoder fallback is drawn by the Compose
-overlay. The display-layer seam is intentionally reusable by a later iOS PiP
-controller, but it does not claim protected playback without a content-key session.
-JVM desktop prefers VideoToolbox on macOS, D3D11VA then DXVA2 on Windows, and
-VAAPI on Linux when libva was detected by the native build. Hardware frames are
-currently downloaded before the Compose renderer, and source flags prevent that
-boundary from accepting protected content. Native GPU-handle import remains an
-explicit output capability rather than being inferred from decoder selection.
-Browser Compose output uses `HtmlElementView` to host a native HTML canvas. Its
-software boundary copies RGBA into reusable canvas storage and applies the same
-fit/crop/fill policy as other surfaces. Kotlin/JS and Kotlin/Wasm both control the
-same C FFplay engine inside a dedicated Emscripten worker. Mounted input is copied
-once into worker-owned native memory, while state and the latest scheduled RGBA
-frame cross a bounded mailbox polled by the owning worker; decoder pthreads never
-invoke page JavaScript directly. For supported codecs, FFmpeg demuxes packets into
-WebCodecs and the worker schedules, draws, and closes real `VideoFrame` objects.
-Unsupported configurations fall back to the bounded Wasm software mailbox.
-Android HDR negotiation uses the attached display's advertised HDR types and
-wide-color support and applies them only to the direct-fit MediaCodec surface.
-Preparing a replacement source first cancels and joins the outgoing decode worker
-before mounted resource ids are reused. The native clock drops frames that miss
-their bounded frame interval; its counter is combined with output-rejection drops
-without being cleared by ordinary surface detach/reattach cycles.
-The player snapshot carries stream and per-frame color/HDR metadata end to end.
-HDR preservation is reported only after output capability negotiation confirms
-both the source transfer function and color space. PQ and HLG software fallbacks
-perform deterministic linear-light gamut conversion and tone mapping before an
-SDR surface reports `TONE_MAPPED`; unsupported transfer functions remain explicit.
+FFplay does not use the command FIFO either.
+`native-build/bridge/ffplaykmp_player.c` gives each player its own demux/decode
+worker, queues, clock, mounted I/O and output negotiation, so several videos run
+independently. Preparing a replacement source cancels and joins the outgoing
+worker before its mounted resource ids are reused. Compose Canvas is the portable
+software-frame fallback; native surfaces and hardware-frame import are selected
+only when a platform backend reports that capability, and `AUTO` falls back to
+software where `REQUIRE_HARDWARE` fails. Protected sources never reach a
+software boundary. On the web, Kotlin/JS and Kotlin/Wasm drive the same C engine
+inside an Emscripten worker: decoder pthreads never call page JavaScript, and
+state and the latest frame cross a bounded mailbox. When the source has audio,
+FFplay plays it through the `player` engine and reports the audible position
+back as the video worker's master clock. See
+[`library/ffplay/README.md`](../library/ffplay/README.md) for the per-platform
+decoders, renderers and HDR handling.
 
 Every `FFmpegClient` and `FFprobeClient` submits to one process-wide FIFO. This
 is intentional: FFmpeg's command tools and logging retain process-global state.

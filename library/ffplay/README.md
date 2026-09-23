@@ -2,58 +2,48 @@
 
 `ffplay` is the state-driven Compose Multiplatform playback API for FFmpegKMP.
 
-The public Kotlin API deliberately contains no SDL or native frame handles. A player can be
-prepared before a Compose output is attached, and its complete observable state is published as
+```kotlin
+val player = rememberFFplayPlayer()
+
+LaunchedEffect(source) {
+    player.prepare(FFplaySource(source))
+    player.play()
+}
+
+FFplaySurface(player, Modifier.fillMaxSize())
+```
+
+A player can be prepared before an output is attached; it publishes its whole observable state as
 one immutable `FFplaySnapshot`. Preparation opens the container and inspects its video stream, but
-does not create a decoder or expose a frame until an output has been negotiated.
+no decoder is created until an output has been negotiated. Each player runs its own native
+demux/decode worker with scheduled frames, seek/pause/stop, and replayable mounted input.
 
-The current implementation provides per-player native demux/decode, scheduled video frames,
-seek/pause/stop behavior, replayable mounted input, and a portable Compose Canvas renderer. Android
-uses `AndroidExternalSurface` by default. In `AUTO` mode it negotiates an FFmpeg MediaCodec decoder
-and presents clear-video hardware frames directly to the attached `Surface` when the codec is
-available. If MediaCodec cannot be opened, it reports a decoder fallback and uploads the
-software-decoded frame to the same surface. `COMPOSE_CANVAS` remains available as an explicit,
-color-managed fallback.
+`FFplaySnapshot.output` reports the decoder and renderer that actually became active: a hardware
+request is never reported as hardware by itself, and `REQUIRE_HARDWARE` fails when the hardware
+path cannot be opened. Frames more than one frame interval late are dropped; native drops and
+renderer rejections are summed in `FFplaySnapshot.droppedFrames`, kept across surface recreation
+and reset by a new source or `stop()`.
 
-The native clock drops a frame once it is more than one bounded frame interval late. Native decoder
-drops and renderer-boundary rejections are combined in `FFplaySnapshot.droppedFrames`; the count is
-retained across surface recreation and reset for a new source or `stop()`.
+`FFplayVideoInfo` carries pixel format, bit depth, aspect ratio, rotation, color description,
+mastering and content-light metadata, and the HDR10/HLG/HDR10+/Dolby Vision classification. HDR is
+reported as preserved only when the whole active output path advertises the source transfer and
+color space; otherwise PQ and HLG are tone mapped to BT.709 (`TONE_MAPPED`) and other HDR transfers
+are `UNSUPPORTED`.
 
-On Android, the direct `ContentScale.Fit` surface advertises PQ, HLG, BT.2020, and P3 only from the
-attached display's runtime HDR/wide-color capabilities. A scaled software path does not inherit
-those claims. This lets MediaCodec preserve HDR metadata on a capable direct surface while keeping
-fallback reporting truthful.
+## Platforms
 
-`FFplaySnapshot.output` reports the decoder and renderer that actually became active; requesting
-hardware acceleration is never reported as hardware success by itself. `REQUIRE_HARDWARE` fails
-when the negotiated hardware path cannot be opened. Demux inspection and decoded-frame updates carry
-pixel format, bit depth, aspect ratio, rotation, primaries, transfer, matrix, range, chroma location,
-mastering display data, content-light levels, and HDR10/HLG/HDR10+/Dolby Vision classification into
-`FFplayVideoInfo`. Output reporting claims HDR preservation only when the complete active output path
-advertises the source transfer and color space. When it cannot preserve PQ or HLG, the software
-boundary applies the same deterministic linear-light BT.2020-to-BT.709 tone mapper on every native
-target and reports `TONE_MAPPED`; unknown HDR transfers remain `UNSUPPORTED`. On iOS, VideoToolbox
-`CVPixelBuffer` frames remain opaque through timed
-FFplay scheduling and are wrapped in `CMSampleBuffer` objects for `AVSampleBufferDisplayLayer`.
-Decoder-open fallback uses the Compose overlay without changing the public API. JVM desktop already
-negotiates VideoToolbox on macOS, D3D11VA then DXVA2 on Windows, and VAAPI on Linux builds where
-libva is available. Until native GPU-handle import is connected, those hardware frames are
-downloaded into the reusable software-renderer boundary; `zeroCopy` therefore remains false and
-protected content is never allowed through it. Native desktop GPU-handle import remains deferred
-behind the same private output contract.
+| Target | Output | Hardware decode |
+| --- | --- | --- |
+| Android | `AndroidExternalSurface`; `COMPOSE_CANVAS` on request | MediaCodec direct to the `Surface`, software upload on fallback |
+| iOS | `AVSampleBufferDisplayLayer`; Compose overlay on fallback | VideoToolbox `CVPixelBuffer`s wrapped in `CMSampleBuffer`s |
+| JVM desktop | Compose Canvas | VideoToolbox, D3D11VA/DXVA2, VAAPI (when libva is present), downloaded to the canvas |
+| JS / Wasm | HTML canvas via `HtmlElementView` | WebCodecs `VideoFrame`s, Wasm software decode on fallback |
 
-On Kotlin/JS and Kotlin/Wasm, `FFplaySurface` hosts an HTML canvas through Compose's
-`HtmlElementView`. Software RGBA frames are copied into a reusable scratch canvas and scaled into
-the display canvas, so browser fallback frames contain the decoded pixels rather than a blank
-Compose bitmap. The per-player FFplay engine runs in the Emscripten worker and transfers scheduled
-frames through a one-frame native mailbox, so a slow UI cannot create an unbounded callback queue.
-Mounted input bytes remain owned by that player until stop/reprepare/close. When WebCodecs accepts
-the stream configuration, FFmpeg continues to demux and schedule encoded packets while the browser
-decoder produces real `VideoFrame` objects. Each frame is drawn directly to the same canvas and
-closed immediately after presentation or discard. Unsupported configurations and decoder failures
-fall back to the bounded Wasm software path. The public snapshot reports WebCodecs as hardware only
-when the browser returns a decoder configuration that explicitly confirms hardware acceleration;
-a requested preference alone is not treated as proof.
+On Android the direct `ContentScale.Fit` surface advertises PQ, HLG, BT.2020 and P3 only from the
+display's runtime capabilities. Desktop hardware frames go through the software renderer, so
+`zeroCopy` is false there and protected content is never allowed. In the browser the engine runs in
+the Emscripten worker and hands frames over through a one-frame mailbox; WebCodecs is reported as
+hardware only when the browser's decoder configuration confirms it.
 
 ## Protected content
 
@@ -115,19 +105,10 @@ audio until a secure audio path exists.
 Android PiP can wrap the existing external surface with a media session and PiP action adapter.
 iOS PiP can reuse the current `AVSampleBufferDisplayLayer` view with
 `AVPictureInPictureController.ContentSource`, plus an audio session and playback delegate. Both
-integrations must keep surface detach/reattach independent from the prepared source and must route
-remote play, pause, and seek commands through the existing `FFplayPlayer` methods.
+must keep surface detach/reattach independent from the prepared source and route remote play,
+pause, and seek commands through the existing `FFplayPlayer` methods.
 
-```kotlin
-val player = rememberFFplayPlayer()
-
-LaunchedEffect(source) {
-    player.prepare(FFplaySource(source))
-    player.play()
-}
-
-FFplaySurface(player, Modifier.fillMaxSize())
-```
+## Tests
 
 Run the shared lifecycle, scheduling, capability, surface-churn, concurrency, and protected-content
 tests on every supported target with:

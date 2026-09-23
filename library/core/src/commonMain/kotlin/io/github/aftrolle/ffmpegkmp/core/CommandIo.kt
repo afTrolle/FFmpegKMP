@@ -77,10 +77,7 @@ public class CommandIo private constructor(
     }
 }
 
-/**
- * Opens the module-internal view used by long-lived native clients such as FFplay.
- * Resources remain owned by the client for the prepared source lifetime.
- */
+/** The mounts as bindings see them, for long-lived clients such as FFplay that own them. */
 @InternalFFmpegKmpApi
 public fun CommandIo.toNativeMounts(): List<NativeMountedIo> =
     mounts.map { NativeMountedIo(it.path, it.resource) }

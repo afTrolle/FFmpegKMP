@@ -3,7 +3,7 @@ package io.github.aftrolle.ffmpegkmp.player
 
 import kotlinx.coroutines.CoroutineDispatcher
 
-/** A platform audio sink fed from the playback thread. Only [close] may come from elsewhere. */
+/** A platform audio sink. Every call, [close] included, comes from the playback thread. */
 internal interface PlatformAudioOutput : AutoCloseable {
     /** Frames the device may still hold after [write] returns: the reported position lags by this. */
     val latencyFrames: Int

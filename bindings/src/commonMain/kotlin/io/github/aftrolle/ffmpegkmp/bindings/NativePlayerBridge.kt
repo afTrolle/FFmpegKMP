@@ -141,7 +141,7 @@ public object NativePlayerError {
 
 @InternalFFmpegKmpApi
 public interface NativePlayerBridge : AutoCloseable {
-    /** Clears a prior cancellation before the caller performs its final closed-state check. */
+    /** Joins any cancelled worker and clears the cancellation before the next [prepare]. */
     public fun resetCancellation() = Unit
     public fun prepare(source: NativePlayerSource): Int
     /** Waits until an asynchronously dispatched preparation has either completed or failed. */
@@ -173,7 +173,7 @@ public expect fun createPlatformPlayerBridge(
     platformFrame: (NativePlatformVideoFrame) -> Boolean = { false },
 ): NativePlayerBridge
 
-/** Deterministic contract implementation used by web and as an unavailable-runtime fallback. */
+/** Deterministic contract implementation for tests that must not need a native runtime. */
 @InternalFFmpegKmpApi
 public fun createInMemoryPlayerBridge(
     configuration: NativePlayerConfiguration,

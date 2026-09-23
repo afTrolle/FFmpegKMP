@@ -1179,7 +1179,7 @@ cleanup:
 
 /*
  * Opens only the container and stream headers. This keeps prepare independent
- * from an output target and, importantly, never crosses the decoded-pixel
+ * from an output target and never crosses the decoded-pixel
  * boundary for protected sources.
  */
 static int ffplaykmp_inspect_source(ffplaykmp_player *player, const char *url) {
@@ -2251,8 +2251,7 @@ int ffplaykmp_web_player_set_webcodecs_output(
     pthread_mutex_lock(&player->mutex);
     player->has_output = 1;
     player->snapshot.output_flags = output_flags;
-    /* WebCodecs exposes an acceleration preference, not the selected decoder
-     * implementation. Keep this truthful instead of labelling a preference as hardware. */
+    /* WebCodecs reports an acceleration preference, not the decoder it chose. */
     player->snapshot.active_decoder = FFPLAYKMP_DECODER_UNKNOWN;
     player->snapshot.last_error = 0;
     player->snapshot.state = player->input
