@@ -139,7 +139,7 @@ private fun configuredJniPath(): String? =
  * loader failure so later client instances report the useful native-linker cause
  * instead of only `Could not initialize class ...global.bridge`.
  */
-private object JavaCppBridgeLoader {
+internal object JavaCppBridgeLoader {
     private var firstFailure: Throwable? = null
     private var loaded = false
 
@@ -226,9 +226,12 @@ private class MountedResource(private val resource: NativeIoResource) {
             is NativeFileResource -> resource.fileHandle.read(offset, bytes, 0, size)
             is NativeSourceResource -> {
                 val buffer = Buffer()
-                val read = resource.source.read(buffer, size.toLong())
-                if (read > 0L) buffer.read(bytes, 0, read.toInt())
-                read.toInt()
+                val read = resource.source.read(buffer, size.toLong()).toInt()
+                // A source may move several segments into the buffer, but Buffer.read(ByteArray)
+                // copies at most one per call: copy until every byte reported as read is in place.
+                var copied = 0
+                while (copied < read) copied += buffer.read(bytes, copied, read - copied)
+                read
             }
             is NativeSinkResource -> return IO_FAILURE
         }

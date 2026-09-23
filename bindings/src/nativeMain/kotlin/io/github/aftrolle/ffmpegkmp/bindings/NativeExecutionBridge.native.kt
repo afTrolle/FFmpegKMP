@@ -22,14 +22,18 @@ import kotlinx.cinterop.CPointer
 import kotlinx.cinterop.CPointerVar
 import kotlinx.cinterop.StableRef
 import kotlinx.cinterop.UByteVar
+import kotlinx.cinterop.addressOf
 import kotlinx.cinterop.allocArray
 import kotlinx.cinterop.asStableRef
+import kotlinx.cinterop.convert
 import kotlinx.cinterop.cstr
 import kotlinx.cinterop.memScoped
 import kotlinx.cinterop.ptr
 import kotlinx.cinterop.readBytes
 import kotlinx.cinterop.set
 import kotlinx.cinterop.staticCFunction
+import kotlinx.cinterop.usePinned
+import platform.posix.memcpy
 import kotlin.concurrent.atomics.AtomicBoolean
 import okio.Buffer
 
@@ -186,14 +190,17 @@ private class NativeMountedResource(private val resource: NativeIoResource) {
             is NativeFileResource -> resource.fileHandle.read(offset, bytes, 0, size)
             is NativeSourceResource -> {
                 val buffer = Buffer()
-                val read = resource.source.read(buffer, size.toLong())
-                if (read > 0L) buffer.read(bytes, 0, read.toInt())
-                read.toInt()
+                val read = resource.source.read(buffer, size.toLong()).toInt()
+                // A source may move several segments into the buffer, but Buffer.read(ByteArray)
+                // copies at most one per call: copy until every byte reported as read is in place.
+                var copied = 0
+                while (copied < read) copied += buffer.read(bytes, copied, read - copied)
+                read
             }
             is NativeSinkResource -> return IO_FAILURE
         }
         if (count <= 0) return 0L
-        repeat(count) { index -> data[index] = bytes[index].toUByte() }
+        bytes.usePinned { pinned -> memcpy(data, pinned.addressOf(0), count.convert()) }
         return count.toLong()
     }
 
