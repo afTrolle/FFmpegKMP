@@ -13,7 +13,8 @@ import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.long
 import okio.Buffer
 
-internal interface BrowserPlayerWorker : AutoCloseable {
+/** A player running in its own Web Worker; [cancel] terminates the worker. */
+internal interface BrowserPlayerWorker {
     fun prepare(source: NativePlayerSource, mountBytes: Array<ByteArray>)
     fun setOutput(flags: Int)
     fun clearOutput()

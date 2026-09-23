@@ -176,7 +176,6 @@ private class FakeBrowserPlayerWorker(
     override fun cancel() {
         cancelled = true
     }
-    override fun close() = Unit
 }
 
 internal expect suspend fun loadBrowserPlayerTestResource(url: String): ByteArray

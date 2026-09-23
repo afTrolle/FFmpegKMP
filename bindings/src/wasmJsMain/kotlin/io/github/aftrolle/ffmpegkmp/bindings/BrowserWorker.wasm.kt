@@ -75,7 +75,6 @@ private class WasmBrowserPlayerWorker(private val controller: JsAny) : BrowserPl
         postPlayerCommand(controller, "player-seek", 0, positionUs.toString())
     override fun stop() = postPlayerCommand(controller, "player-stop", 0, "0")
     override fun cancel() = terminatePlayerWorker(controller)
-    override fun close() = closePlayerWorker(controller)
 }
 
 private fun startPlayerWorker(
@@ -100,12 +99,6 @@ private fun startPlayerWorker(
           if (closed) return;
           if (!ready && message.type !== 'player-init') pending.push([message, transfers]);
           else worker.postMessage({ ...message, moduleUrl }, transfers);
-        },
-        close() {
-          if (closed) return;
-          closed = true;
-          if (ready) worker.postMessage({ type: 'player-close', moduleUrl });
-          else worker.terminate();
         },
         terminate() {
           if (closed) return;
@@ -167,7 +160,6 @@ private fun postPlayerCommand(
     positionUs: String,
 ): Unit = js("controller.post({ type, flags, positionUs })")
 
-private fun closePlayerWorker(controller: JsAny): Unit = js("controller.close()")
 private fun terminatePlayerWorker(controller: JsAny): Unit = js("controller.terminate()")
 private fun playerFrameBytes(data: JsAny): Int8Array =
     js("new Int8Array(data.bytes.buffer, data.bytes.byteOffset, data.bytes.byteLength)")

@@ -1,5 +1,3 @@
-@file:OptIn(org.jetbrains.kotlin.gradle.plugin.mpp.KotlinNativeCacheApi::class)
-
 package io.github.aftrolle.ffmpegkmp.buildlogic
 
 import org.gradle.api.Project

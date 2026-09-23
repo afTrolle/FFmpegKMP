@@ -64,7 +64,6 @@ private class JsBrowserPlayerWorker(private val controller: dynamic) : BrowserPl
     override fun seek(positionUs: Long) = postPlayerCommand(controller, "player-seek", 0, positionUs)
     override fun stop() = postPlayerCommand(controller, "player-stop", 0, 0L)
     override fun cancel() = terminatePlayerWorker(controller)
-    override fun close() = closePlayerWorker(controller)
 }
 
 private fun startPlayerWorker(
@@ -89,12 +88,6 @@ private fun startPlayerWorker(
           if (closed) return;
           if (!ready && message.type !== 'player-init') pending.push([message, transfers]);
           else worker.postMessage({ ...message, moduleUrl }, transfers);
-        },
-        close() {
-          if (closed) return;
-          closed = true;
-          if (ready) worker.postMessage({ type: 'player-close', moduleUrl });
-          else worker.terminate();
         },
         terminate() {
           if (closed) return;
@@ -182,7 +175,6 @@ private fun postPlayerCommand(
     "controller.post({ type, flags, positionUs: positionUs.toString() })",
 )
 
-private fun closePlayerWorker(controller: dynamic): Unit = js("controller.close()")
 private fun terminatePlayerWorker(controller: dynamic): Unit = js("controller.terminate()")
 
 private fun playerFrameBytes(data: dynamic): ByteArray = js(

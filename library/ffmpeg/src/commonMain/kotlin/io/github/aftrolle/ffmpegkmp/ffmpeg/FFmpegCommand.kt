@@ -64,23 +64,23 @@ public class FFmpegCommand private constructor(
          * chain with [AudioLevel.toFilter] instead.
          */
         public fun audioLevel(level: AudioLevel, outputTrack: Int? = null) {
-            require(outputTrack == null || outputTrack >= 0) { "Audio track index must not be negative" }
-            option(specified("-filter:a", outputTrack?.toString()), level.toFilter())
+            option(audioOption("-filter", outputTrack), level.toFilter())
         }
 
-        public fun audioBitrate(bitrate: String, streamSpecifier: String? = null) {
+        /** Audio bitrate such as `128k`, for one output audio track or (`null`) all of them. */
+        public fun audioBitrate(bitrate: String, outputTrack: Int? = null) {
             require(bitrate.isNotBlank()) { "Audio bitrate must not be blank" }
-            option(specified("-b:a", streamSpecifier), bitrate)
+            option(audioOption("-b", outputTrack), bitrate)
         }
 
-        public fun audioSampleRate(hertz: Int, streamSpecifier: String? = null) {
+        public fun audioSampleRate(hertz: Int, outputTrack: Int? = null) {
             require(hertz > 0) { "Audio sample rate must be positive" }
-            option(specified("-ar", streamSpecifier?.let { "a:$it" }), hertz.toString())
+            option(audioOption("-ar", outputTrack), hertz.toString())
         }
 
-        public fun audioChannels(count: Int, streamSpecifier: String? = null) {
+        public fun audioChannels(count: Int, outputTrack: Int? = null) {
             require(count > 0) { "Audio channel count must be positive" }
-            option(specified("-ac", streamSpecifier?.let { "a:$it" }), count.toString())
+            option(audioOption("-ac", outputTrack), count.toString())
         }
 
         public fun metadata(key: String, value: String, streamSpecifier: String? = null) {
@@ -121,6 +121,12 @@ public class FFmpegCommand private constructor(
         }
 
         internal fun build(): FFmpegCommand = FFmpegCommand(arguments.toList())
+
+        /** `-opt:a` for every output audio track, or `-opt:a:N` for audio track [outputTrack]. */
+        private fun audioOption(option: String, outputTrack: Int?): String {
+            require(outputTrack == null || outputTrack >= 0) { "Audio track index must not be negative" }
+            return "$option:a" + (outputTrack?.let { ":$it" } ?: "")
+        }
 
         private fun specified(option: String, streamSpecifier: String?): String =
             if (streamSpecifier.isNullOrBlank()) option else "$option:$streamSpecifier"

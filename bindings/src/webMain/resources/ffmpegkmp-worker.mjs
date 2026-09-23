@@ -361,219 +361,196 @@ function allocateArguments(module, arguments_) {
   return { argv, strings };
 }
 
-self.onmessage = async ({ data }) => {
-  if (data.type.startsWith('player-') && !data.__ffplaySerialized) {
-    playerMessageTail = playerMessageTail.then(() => self.onmessage({
-      data: { ...data, __ffplaySerialized: true },
-    }));
-    return;
-  }
-  if (data.type.startsWith('player-')) {
-    let module;
-    try {
-      module = await loadModule(data.moduleUrl || './ffmpegkmp.mjs');
-      if (data.type === 'player-init') {
-        if (playerHandle) throw new Error('The browser player is already initialized');
-        playerDecoderPreference = data.decoderPreference;
-        playerStateCallback = module.addFunction((opaque, json, size) => {
+// Player commands run one at a time, in arrival order: each awaits the module and native calls.
+async function handlePlayerMessage(data) {
+  let module;
+  try {
+    module = await loadModule(data.moduleUrl || './ffmpegkmp.mjs');
+    if (data.type === 'player-init') {
+      if (playerHandle) throw new Error('The browser player is already initialized');
+      playerDecoderPreference = data.decoderPreference;
+      playerStateCallback = module.addFunction((opaque, json, size) => {
+        self.postMessage({
+          type: 'player-snapshot',
+          snapshot: decodeUtf8(module.HEAPU8, json, Number(size)),
+        });
+      }, 'viii');
+      playerFrameCallback = module.addFunction(
+        (opaque, rgba, size, width, height, stride, presentationTimeUs, queueSerial) => {
+          const copied = module.HEAPU8.slice(rgba, rgba + Number(size));
           self.postMessage({
-            type: 'player-snapshot',
-            snapshot: decodeUtf8(module.HEAPU8, json, Number(size)),
-          });
-        }, 'viii');
-        playerFrameCallback = module.addFunction(
-          (opaque, rgba, size, width, height, stride, presentationTimeUs, queueSerial) => {
-            const copied = module.HEAPU8.slice(rgba, rgba + Number(size));
-            self.postMessage({
-              type: 'player-frame',
-              bytes: copied,
-              width,
-              height,
-              stride,
-              presentationTimeUs: Number(presentationTimeUs),
-              queueSerial,
-            }, [copied.buffer]);
-          },
-          'viiiiiiji',
-        );
-        playerDecoderConfigCallback = module.addFunction(
-          (opaque, codec, description, descriptionSize, width, height, primaries, transfer, matrix) => {
-            const config = {
-              codec: decodeCString(module.HEAPU8, codec),
-              codedWidth: width,
-              codedHeight: height,
-              hardwareAcceleration: 'prefer-hardware',
-              optimizeForLatency: true,
-            };
-            if (descriptionSize > 0) {
-              config.description = module.HEAPU8.slice(
-                description,
-                description + Number(descriptionSize),
-              );
-            }
-            const colorSpace = webColorSpace(primaries, transfer, matrix);
-            if (colorSpace) config.colorSpace = colorSpace;
-            webCodecsConfig = config;
-          },
-          'viiiiiiiii',
-        );
-        playerPacketCallback = module.addFunction(
-          (opaque, bytes, size, timestampUs, durationUs, keyFrame, queueSerial) => {
-            webCodecsQueueSerial = queueSerial;
-            const copied = module.HEAPU8.slice(bytes, bytes + Number(size));
-            const init = {
-              type: keyFrame ? 'key' : 'delta',
-              timestamp: Number(timestampUs),
-              data: copied,
-            };
-            if (Number(durationUs) > 0) init.duration = Number(durationUs);
-            webCodecsDecoder.decode(new EncodedVideoChunk(init));
-          },
-          'viiijjii',
-        );
-        playerHandle = module._ffplaykmp_web_player_create(
-          data.decoderPreference,
-          playerStateCallback,
-          playerFrameCallback,
-          0,
-        );
-        if (!playerHandle) throw new Error('FFmpegKMP browser player allocation failed');
-        playerPollTimer = setInterval(() => {
-          if (playerHandle) module._ffplaykmp_web_player_poll(playerHandle);
-        }, 8);
-        self.postMessage({ type: 'player-ready' });
-        return;
+            type: 'player-frame',
+            bytes: copied,
+            width,
+            height,
+            stride,
+            presentationTimeUs: Number(presentationTimeUs),
+            queueSerial,
+          }, [copied.buffer]);
+        },
+        'viiiiiiji',
+      );
+      playerDecoderConfigCallback = module.addFunction(
+        (opaque, codec, description, descriptionSize, width, height, primaries, transfer, matrix) => {
+          const config = {
+            codec: decodeCString(module.HEAPU8, codec),
+            codedWidth: width,
+            codedHeight: height,
+            hardwareAcceleration: 'prefer-hardware',
+            optimizeForLatency: true,
+          };
+          if (descriptionSize > 0) {
+            config.description = module.HEAPU8.slice(
+              description,
+              description + Number(descriptionSize),
+            );
+          }
+          const colorSpace = webColorSpace(primaries, transfer, matrix);
+          if (colorSpace) config.colorSpace = colorSpace;
+          webCodecsConfig = config;
+        },
+        'viiiiiiiii',
+      );
+      playerPacketCallback = module.addFunction(
+        (opaque, bytes, size, timestampUs, durationUs, keyFrame, queueSerial) => {
+          webCodecsQueueSerial = queueSerial;
+          const copied = module.HEAPU8.slice(bytes, bytes + Number(size));
+          const init = {
+            type: keyFrame ? 'key' : 'delta',
+            timestamp: Number(timestampUs),
+            data: copied,
+          };
+          if (Number(durationUs) > 0) init.duration = Number(durationUs);
+          webCodecsDecoder.decode(new EncodedVideoChunk(init));
+        },
+        'viiijjii',
+      );
+      playerHandle = module._ffplaykmp_web_player_create(
+        data.decoderPreference,
+        playerStateCallback,
+        playerFrameCallback,
+        0,
+      );
+      if (!playerHandle) throw new Error('FFmpegKMP browser player allocation failed');
+      playerPollTimer = setInterval(() => {
+        if (playerHandle) module._ffplaykmp_web_player_poll(playerHandle);
+      }, 8);
+      self.postMessage({ type: 'player-ready' });
+      return;
+    }
+    if (!playerHandle) throw new Error('The browser player is not initialized');
+    let result = 0;
+    if (data.type === 'player-prepare') {
+      resetWebCodecs(module, true);
+      const mount = (data.mounts || []).find(candidate => candidate.path === data.input);
+      if (!mount?.bytes?.length) {
+        throw new Error('Browser playback requires a non-empty mounted input');
       }
-      if (!playerHandle) throw new Error('The browser player is not initialized');
-      let result = 0;
-      if (data.type === 'player-prepare') {
-        resetWebCodecs(module, true);
-        const mount = (data.mounts || []).find(candidate => candidate.path === data.input);
-        if (!mount?.bytes?.length) {
-          throw new Error('Browser playback requires a non-empty mounted input');
-        }
-        const extension = mount.path.match(/\.([A-Za-z0-9]+)$/)?.[1] || '';
-        const extensionPointer = module.stringToNewUTF8(extension);
-        const inputPointer = module._malloc(mount.bytes.length);
-        try {
-          module.HEAPU8.set(mount.bytes, inputPointer);
-          result = module._ffplaykmp_web_player_prepare_bytes(
-            playerHandle,
-            inputPointer,
-            mount.bytes.length,
-            extensionPointer,
-            data.requireSecurePath ? 1 : 0,
-          );
-        } finally {
-          module._free(inputPointer);
-          module._free(extensionPointer);
-        }
-      } else if (data.type === 'player-set-output') {
-        const canTryWebCodecs = playerDecoderPreference !== 2 && (data.flags & 1) !== 0;
-        if (canTryWebCodecs && await configureWebCodecs(module, data.flags)) {
-          result = 0;
-        } else {
-          result = module._ffplaykmp_web_player_set_output(playerHandle, data.flags & ~1);
-        }
-      } else if (data.type === 'player-clear-output') {
-        resetWebCodecs(module, true);
-        module._ffplaykmp_player_clear_output(playerHandle);
-      } else if (data.type === 'player-play') {
-        if (webCodecsActive) {
-          if (webCodecsNeedsResumeSeek) {
-            clearWebCodecsPresentations();
-            webCodecsDecoder.reset();
-            webCodecsDecoder.configure(webCodecsConfig);
-            webCodecsEof = false;
-            result = module._ffplaykmp_web_player_webcodecs_seek(
-              playerHandle,
-              BigInt(webCodecsPositionUs),
-            );
-            webCodecsNeedsResumeSeek = false;
-          }
-          webCodecsPlaying = true;
-          webCodecsPreviewing = false;
-          webCodecsEof = false;
-          webCodecsClockOriginMs = performance.now() - webCodecsPositionUs / 1000;
-          if (result >= 0) result = module._ffplaykmp_web_player_webcodecs_play(playerHandle);
-          pumpWebCodecs(module);
-        } else {
-          result = module._ffplaykmp_player_play(playerHandle);
-        }
-      } else if (data.type === 'player-pause') {
-        if (webCodecsActive) {
-          webCodecsPlaying = false;
-          webCodecsPreviewing = false;
+      const extension = mount.path.match(/\.([A-Za-z0-9]+)$/)?.[1] || '';
+      const extensionPointer = module.stringToNewUTF8(extension);
+      const inputPointer = module._malloc(mount.bytes.length);
+      try {
+        module.HEAPU8.set(mount.bytes, inputPointer);
+        result = module._ffplaykmp_web_player_prepare_bytes(
+          playerHandle,
+          inputPointer,
+          mount.bytes.length,
+          extensionPointer,
+          data.requireSecurePath ? 1 : 0,
+        );
+      } finally {
+        module._free(inputPointer);
+        module._free(extensionPointer);
+      }
+    } else if (data.type === 'player-set-output') {
+      const canTryWebCodecs = playerDecoderPreference !== 2 && (data.flags & 1) !== 0;
+      if (canTryWebCodecs && await configureWebCodecs(module, data.flags)) {
+        result = 0;
+      } else {
+        result = module._ffplaykmp_web_player_set_output(playerHandle, data.flags & ~1);
+      }
+    } else if (data.type === 'player-clear-output') {
+      resetWebCodecs(module, true);
+      module._ffplaykmp_player_clear_output(playerHandle);
+    } else if (data.type === 'player-play') {
+      if (webCodecsActive) {
+        if (webCodecsNeedsResumeSeek) {
           clearWebCodecsPresentations();
           webCodecsDecoder.reset();
           webCodecsDecoder.configure(webCodecsConfig);
           webCodecsEof = false;
-          result = module._ffplaykmp_web_player_webcodecs_pause(playerHandle);
-          if (result >= 0) {
-            result = module._ffplaykmp_web_player_webcodecs_seek(
-              playerHandle,
-              BigInt(webCodecsPositionUs),
-            );
-          }
-          webCodecsNeedsResumeSeek = false;
-        } else {
-          result = module._ffplaykmp_player_pause(playerHandle);
-        }
-      } else if (data.type === 'player-seek') {
-        if (webCodecsActive) {
-          clearWebCodecsPresentations();
-          webCodecsDecoder.reset();
-          webCodecsDecoder.configure(webCodecsConfig);
-          webCodecsEof = false;
-          webCodecsPositionUs = Number(data.positionUs);
-          webCodecsNeedsResumeSeek = false;
           result = module._ffplaykmp_web_player_webcodecs_seek(
             playerHandle,
-            BigInt(data.positionUs),
+            BigInt(webCodecsPositionUs),
           );
-          webCodecsClockOriginMs = performance.now() - webCodecsPositionUs / 1000;
-          webCodecsPreviewing = !webCodecsPlaying;
-          pumpWebCodecs(module, !webCodecsPlaying);
-        } else {
-          result = module._ffplaykmp_player_seek(playerHandle, BigInt(data.positionUs));
+          webCodecsNeedsResumeSeek = false;
         }
-      } else if (data.type === 'player-stop') {
-        resetWebCodecs(module, true);
-        result = module._ffplaykmp_player_stop(playerHandle);
-      } else if (data.type === 'player-cancel') {
-        resetWebCodecs(module, true);
-        module._ffplaykmp_player_cancel(playerHandle);
-      } else if (data.type === 'player-close') {
-        if (playerPollTimer) clearInterval(playerPollTimer);
-        playerPollTimer = 0;
-        resetWebCodecs(module, true);
-        module._ffplaykmp_web_player_poll(playerHandle);
-        module._ffplaykmp_web_player_destroy(playerHandle);
-        playerHandle = 0;
-        if (playerFrameCallback) module.removeFunction(playerFrameCallback);
-        if (playerStateCallback) module.removeFunction(playerStateCallback);
-        if (playerDecoderConfigCallback) module.removeFunction(playerDecoderConfigCallback);
-        if (playerPacketCallback) module.removeFunction(playerPacketCallback);
-        playerFrameCallback = 0;
-        playerStateCallback = 0;
-        playerDecoderConfigCallback = 0;
-        playerPacketCallback = 0;
-        self.postMessage({ type: 'player-closed' });
-        self.close();
-        return;
+        webCodecsPlaying = true;
+        webCodecsPreviewing = false;
+        webCodecsEof = false;
+        webCodecsClockOriginMs = performance.now() - webCodecsPositionUs / 1000;
+        if (result >= 0) result = module._ffplaykmp_web_player_webcodecs_play(playerHandle);
+        pumpWebCodecs(module);
+      } else {
+        result = module._ffplaykmp_player_play(playerHandle);
       }
-      self.postMessage({ type: 'player-result', operation: data.type, result });
-    } catch (error) {
-      // Emscripten throws this sentinel on the owning worker while transferring
-      // control to a pthread. The pthread callback or its forwarded ErrorEvent
-      // supplies the actual completion/failure signal.
-      if (error !== 'unwind') {
-        self.postMessage({
-          type: 'player-failure',
-          message: String(error?.stack ?? error),
-        });
+    } else if (data.type === 'player-pause') {
+      if (webCodecsActive) {
+        webCodecsPlaying = false;
+        webCodecsPreviewing = false;
+        clearWebCodecsPresentations();
+        webCodecsDecoder.reset();
+        webCodecsDecoder.configure(webCodecsConfig);
+        webCodecsEof = false;
+        result = module._ffplaykmp_web_player_webcodecs_pause(playerHandle);
+        if (result >= 0) {
+          result = module._ffplaykmp_web_player_webcodecs_seek(
+            playerHandle,
+            BigInt(webCodecsPositionUs),
+          );
+        }
+        webCodecsNeedsResumeSeek = false;
+      } else {
+        result = module._ffplaykmp_player_pause(playerHandle);
       }
+    } else if (data.type === 'player-seek') {
+      if (webCodecsActive) {
+        clearWebCodecsPresentations();
+        webCodecsDecoder.reset();
+        webCodecsDecoder.configure(webCodecsConfig);
+        webCodecsEof = false;
+        webCodecsPositionUs = Number(data.positionUs);
+        webCodecsNeedsResumeSeek = false;
+        result = module._ffplaykmp_web_player_webcodecs_seek(
+          playerHandle,
+          BigInt(data.positionUs),
+        );
+        webCodecsClockOriginMs = performance.now() - webCodecsPositionUs / 1000;
+        webCodecsPreviewing = !webCodecsPlaying;
+        pumpWebCodecs(module, !webCodecsPlaying);
+      } else {
+        result = module._ffplaykmp_player_seek(playerHandle, BigInt(data.positionUs));
+      }
+    } else if (data.type === 'player-stop') {
+      resetWebCodecs(module, true);
+      result = module._ffplaykmp_player_stop(playerHandle);
     }
+  } catch (error) {
+    // Emscripten throws this sentinel on the owning worker while transferring
+    // control to a pthread. The pthread callback or its forwarded ErrorEvent
+    // supplies the actual completion/failure signal.
+    if (error !== 'unwind') {
+      self.postMessage({
+        type: 'player-failure',
+        message: String(error?.stack ?? error),
+      });
+    }
+  }
+}
+
+self.onmessage = async ({ data }) => {
+  if (data.type.startsWith('player-')) {
+    playerMessageTail = playerMessageTail.then(() => handlePlayerMessage(data));
     return;
   }
   if (data.type === 'cancel') {

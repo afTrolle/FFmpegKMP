@@ -13,6 +13,7 @@ pluginManager.apply("ffmpegkmp.multiplatform-library-base")
 
 configureLibraryAppleTargets(includeTvosAndWatchos = false)
 
+// Compose UI tests on the web need a webpack-bundled executable to load Skiko (CMP-4906).
 extensions.configure<KotlinMultiplatformExtension> {
     js {
         binaries.executable()

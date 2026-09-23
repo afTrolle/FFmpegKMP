@@ -117,20 +117,16 @@ public class AudioDecoder internal constructor(
      * is still decoded, so un-muting is instant.
      */
     public fun setTrackEnabled(track: Int, enabled: Boolean) {
-        requireTrack(track)
-        if (enabled) {
-            require(tracks[track].isDecodable) { "No decoder for audio track $track (${tracks[track].codec})" }
-        }
+        if (enabled) requireDecodable(track) else requireTrack(track)
         decoding("enable audio track $track") { native.setTrackEnabled(track, enabled) }
     }
 
     /** Mixes exactly [selected], e.g. `selectTracks(setOf(2))` to switch language. */
     public fun selectTracks(selected: Set<Int>) {
-        selected.forEach(::requireTrack)
-        selected.forEach { track ->
-            require(tracks[track].isDecodable) { "No decoder for audio track $track (${tracks[track].codec})" }
+        selected.forEach(::requireDecodable)
+        decoding("select audio tracks $selected") {
+            tracks.indices.forEach { track -> native.setTrackEnabled(track, track in selected) }
         }
-        tracks.indices.forEach { track -> native.setTrackEnabled(track, track in selected) }
     }
 
     /** Seeks so the next [read] starts at [position], sample-accurately. */
@@ -156,6 +152,11 @@ public class AudioDecoder internal constructor(
 
     internal fun abort() {
         native.abort()
+    }
+
+    private fun requireDecodable(track: Int) {
+        requireTrack(track)
+        require(tracks[track].isDecodable) { "No decoder for audio track $track (${tracks[track].codec})" }
     }
 
     private fun requireTrack(track: Int): Int {
