@@ -766,6 +766,14 @@ static void ffplaykmp_invalidate_master_clock(ffplaykmp_player *player) {
     pthread_mutex_unlock(&player->mutex);
 }
 
+/*
+ * Media time is measured from the container start, as the audio engine does,
+ * so audio and video clocks agree when their streams start at different times.
+ */
+static int64_t ffplaykmp_media_start_us(const AVFormatContext *format) {
+    return format->start_time == AV_NOPTS_VALUE ? 0 : format->start_time;
+}
+
 static int ffplaykmp_wait_until(
         ffplaykmp_player *player,
         int64_t presentation_time_us,
@@ -795,14 +803,14 @@ static int ffplaykmp_present_decoded_frame(
         ffplaykmp_player *player,
         const AVFrame *frame,
         AVRational time_base,
-        int64_t stream_start_time_us,
+        int64_t media_start_us,
         int64_t start_position_us,
         int continuous,
         int64_t *clock_origin_us) {
     int64_t presentation_time_us = frame->best_effort_timestamp == AV_NOPTS_VALUE
             ? start_position_us
             : av_rescale_q(frame->best_effort_timestamp, time_base, AV_TIME_BASE_Q) -
-                    stream_start_time_us;
+                    media_start_us;
     int64_t duration_us = frame->duration > 0
             ? av_rescale_q(frame->duration, time_base, AV_TIME_BASE_Q)
             : 40000;
@@ -895,7 +903,7 @@ static int ffplaykmp_decode_frames(
     int decoded_frames = 0;
     int retry_software = 0;
     int64_t clock_origin_us = AV_NOPTS_VALUE;
-    int64_t stream_start_time_us = 0;
+    int64_t media_start_us = 0;
     int hardware_requested = 0;
     int hardware_active = 0;
 #if defined(__ANDROID__)
@@ -961,12 +969,7 @@ static int ffplaykmp_decode_frames(
         result = video_stream;
         goto cleanup;
     }
-    if (format->streams[video_stream]->start_time != AV_NOPTS_VALUE) {
-        stream_start_time_us = av_rescale_q(
-                format->streams[video_stream]->start_time,
-                format->streams[video_stream]->time_base,
-                AV_TIME_BASE_Q);
-    }
+    media_start_us = ffplaykmp_media_start_us(format);
 #if defined(__ANDROID__)
     software_codec = codec;
     pthread_mutex_lock(&player->mutex);
@@ -1135,11 +1138,9 @@ static int ffplaykmp_decode_frames(
     }
     if (start_position_us > 0) {
         int64_t target = av_rescale_q(
-                start_position_us,
+                media_start_us + start_position_us,
                 AV_TIME_BASE_Q,
                 format->streams[video_stream]->time_base);
-        if (format->streams[video_stream]->start_time != AV_NOPTS_VALUE)
-            target += format->streams[video_stream]->start_time;
         result = avformat_seek_file(
                 format, video_stream, INT64_MIN, target, INT64_MAX, AVSEEK_FLAG_BACKWARD);
         if (result < 0)
@@ -1174,13 +1175,15 @@ static int ffplaykmp_decode_frames(
                         player,
                         frame,
                         format->streams[video_stream]->time_base,
-                        stream_start_time_us,
+                        media_start_us,
                         start_position_us,
                         continuous,
                         &clock_origin_us);
                 av_frame_unref(frame);
-                if (presented < 0)
+                if (presented < 0) {
+                    result = presented;
                     goto cleanup;
+                }
                 if (presented > 0) {
                     result = 0;
                     av_packet_unref(packet);
@@ -1219,13 +1222,15 @@ static int ffplaykmp_decode_frames(
                     player,
                     frame,
                     format->streams[video_stream]->time_base,
-                    stream_start_time_us,
+                    media_start_us,
                     start_position_us,
                     continuous,
                     &clock_origin_us);
             av_frame_unref(frame);
-            if (presented < 0)
+            if (presented < 0) {
+                result = presented;
                 goto cleanup;
+            }
             if (presented > 0) {
                 result = 0;
                 goto cleanup;
@@ -1464,6 +1469,31 @@ static int ffplaykmp_require_prepared(ffplaykmp_player *player) {
     return 0;
 }
 
+/*
+ * Whether this player can decode and present frames itself through an output
+ * with these capabilities. Desktop hardware decoding downloads frames into the
+ * software-upload path, so every desktop preference needs that path.
+ */
+static int ffplaykmp_can_decode(const ffplaykmp_player *player, uint32_t flags) {
+    const int preference = player->configuration.decoder_preference;
+    if (player->source_flags & FFPLAYKMP_SOURCE_REQUIRE_SECURE_PATH)
+        return 0;
+#if defined(__ANDROID__)
+    if ((flags & FFPLAYKMP_OUTPUT_HARDWARE_FRAME_IMPORT) &&
+            preference != FFPLAYKMP_DECODER_SOFTWARE && player->android_surface)
+        return 1;
+    return (flags & FFPLAYKMP_OUTPUT_SOFTWARE_FRAME_UPLOAD) &&
+            preference != FFPLAYKMP_DECODER_REQUIRE_HARDWARE;
+#elif defined(__APPLE__)
+    if (flags & FFPLAYKMP_OUTPUT_SOFTWARE_FRAME_UPLOAD)
+        return 1;
+    return (flags & FFPLAYKMP_OUTPUT_HARDWARE_FRAME_IMPORT) &&
+            preference != FFPLAYKMP_DECODER_SOFTWARE;
+#else
+    return (flags & FFPLAYKMP_OUTPUT_SOFTWARE_FRAME_UPLOAD) != 0;
+#endif
+}
+
 static int ffplaykmp_validate_output(
         const ffplaykmp_player *player,
         uint32_t output_flags) {
@@ -1471,11 +1501,13 @@ static int ffplaykmp_validate_output(
             !(output_flags & FFPLAYKMP_OUTPUT_PROTECTED_CONTENT))
         return -EACCES;
     if (player->configuration.decoder_preference == FFPLAYKMP_DECODER_REQUIRE_HARDWARE &&
-#if defined(__APPLE__)
+#if defined(__ANDROID__)
+            !(output_flags & FFPLAYKMP_OUTPUT_HARDWARE_FRAME_IMPORT))
+#elif defined(__APPLE__)
             !(output_flags & (FFPLAYKMP_OUTPUT_HARDWARE_FRAME_IMPORT |
                     FFPLAYKMP_OUTPUT_SOFTWARE_FRAME_UPLOAD)))
 #else
-            !(output_flags & FFPLAYKMP_OUTPUT_HARDWARE_FRAME_IMPORT))
+            !(output_flags & FFPLAYKMP_OUTPUT_SOFTWARE_FRAME_UPLOAD))
 #endif
         return -ENOTSUP;
     if (!(output_flags & (FFPLAYKMP_OUTPUT_HARDWARE_FRAME_IMPORT |
@@ -1667,19 +1699,7 @@ int ffplaykmp_player_prepare(
             return result;
         }
     }
-    if (!(source_flags & FFPLAYKMP_SOURCE_REQUIRE_SECURE_PATH) && has_output &&
-            (((output_flags & FFPLAYKMP_OUTPUT_SOFTWARE_FRAME_UPLOAD) &&
-              player->configuration.decoder_preference != FFPLAYKMP_DECODER_REQUIRE_HARDWARE)
-#if defined(__ANDROID__)
-             || ((output_flags & FFPLAYKMP_OUTPUT_HARDWARE_FRAME_IMPORT) &&
-                 player->configuration.decoder_preference != FFPLAYKMP_DECODER_SOFTWARE &&
-                 player->android_surface)
-#elif defined(__APPLE__)
-             || ((output_flags & (FFPLAYKMP_OUTPUT_HARDWARE_FRAME_IMPORT |
-                                  FFPLAYKMP_OUTPUT_SOFTWARE_FRAME_UPLOAD)) &&
-                 player->configuration.decoder_preference != FFPLAYKMP_DECODER_SOFTWARE)
-#endif
-            )) {
+    if (has_output && ffplaykmp_can_decode(player, output_flags)) {
         result = ffplaykmp_decode_frames(player, input, 0, 0);
         if (result < 0) {
             pthread_mutex_lock(&player->mutex);
@@ -1711,7 +1731,6 @@ int ffplaykmp_player_set_output(
     uint32_t source_flags;
     int64_t position_us;
     int play_when_ready;
-    int software_playback;
     int native_playback;
     if (!player || !capabilities || capabilities->size < sizeof(*capabilities))
         return -EINVAL;
@@ -1733,24 +1752,7 @@ int ffplaykmp_player_set_output(
     source_flags = player->source_flags;
     position_us = player->snapshot.position_us;
     play_when_ready = player->play_when_ready;
-    software_playback = input &&
-            !(source_flags & FFPLAYKMP_SOURCE_REQUIRE_SECURE_PATH) &&
-            (capabilities->flags & FFPLAYKMP_OUTPUT_SOFTWARE_FRAME_UPLOAD) &&
-            player->configuration.decoder_preference != FFPLAYKMP_DECODER_REQUIRE_HARDWARE;
-    native_playback = software_playback;
-#if defined(__ANDROID__)
-    if (input && !(source_flags & FFPLAYKMP_SOURCE_REQUIRE_SECURE_PATH) &&
-            (capabilities->flags & FFPLAYKMP_OUTPUT_HARDWARE_FRAME_IMPORT) &&
-            player->configuration.decoder_preference != FFPLAYKMP_DECODER_SOFTWARE &&
-            player->android_surface)
-        native_playback = 1;
-#elif defined(__APPLE__)
-    if (input && !(source_flags & FFPLAYKMP_SOURCE_REQUIRE_SECURE_PATH) &&
-            (capabilities->flags & (FFPLAYKMP_OUTPUT_HARDWARE_FRAME_IMPORT |
-                                    FFPLAYKMP_OUTPUT_SOFTWARE_FRAME_UPLOAD)) &&
-            player->configuration.decoder_preference != FFPLAYKMP_DECODER_SOFTWARE)
-        native_playback = 1;
-#endif
+    native_playback = input && ffplaykmp_can_decode(player, capabilities->flags);
     pthread_mutex_unlock(&player->mutex);
     if (native_playback) {
         result = ffplaykmp_decode_frames(player, input, position_us, 0);
@@ -1800,7 +1802,6 @@ void ffplaykmp_player_clear_output(ffplaykmp_player *player) {
 
 int ffplaykmp_player_play(ffplaykmp_player *player) {
     int result = ffplaykmp_require_prepared(player);
-    int software_playback;
     int native_playback;
     if (result < 0)
         return result;
@@ -1818,26 +1819,8 @@ int ffplaykmp_player_play(ffplaykmp_player *player) {
     player->snapshot.state = player->has_output
             ? FFPLAYKMP_STATE_PLAYING
             : FFPLAYKMP_STATE_WAITING_FOR_OUTPUT;
-    software_playback = player->has_output &&
-            !(player->source_flags & FFPLAYKMP_SOURCE_REQUIRE_SECURE_PATH) &&
-            (player->snapshot.output_flags & FFPLAYKMP_OUTPUT_SOFTWARE_FRAME_UPLOAD) &&
-            player->configuration.decoder_preference != FFPLAYKMP_DECODER_REQUIRE_HARDWARE;
-    native_playback = software_playback;
-#if defined(__ANDROID__)
-    if (player->has_output &&
-            !(player->source_flags & FFPLAYKMP_SOURCE_REQUIRE_SECURE_PATH) &&
-            (player->snapshot.output_flags & FFPLAYKMP_OUTPUT_HARDWARE_FRAME_IMPORT) &&
-            player->configuration.decoder_preference != FFPLAYKMP_DECODER_SOFTWARE &&
-            player->android_surface)
-        native_playback = 1;
-#elif defined(__APPLE__)
-    if (player->has_output &&
-            !(player->source_flags & FFPLAYKMP_SOURCE_REQUIRE_SECURE_PATH) &&
-            (player->snapshot.output_flags & (FFPLAYKMP_OUTPUT_HARDWARE_FRAME_IMPORT |
-                                              FFPLAYKMP_OUTPUT_SOFTWARE_FRAME_UPLOAD)) &&
-            player->configuration.decoder_preference != FFPLAYKMP_DECODER_SOFTWARE)
-        native_playback = 1;
-#endif
+    native_playback = player->has_output &&
+            ffplaykmp_can_decode(player, player->snapshot.output_flags);
     pthread_mutex_unlock(&player->mutex);
     ffplaykmp_publish(player);
     if (native_playback) {
@@ -1871,7 +1854,6 @@ int ffplaykmp_player_pause(ffplaykmp_player *player) {
 int ffplaykmp_player_seek(ffplaykmp_player *player, int64_t position_us) {
     int result = ffplaykmp_require_prepared(player);
     int play_when_ready;
-    int software_playback;
     int native_playback;
     const char *input;
     if (result < 0)
@@ -1886,26 +1868,8 @@ int ffplaykmp_player_seek(ffplaykmp_player *player, int64_t position_us) {
     player->snapshot.queue_serial++;
     play_when_ready = player->play_when_ready;
     input = player->input;
-    software_playback = player->has_output &&
-            !(player->source_flags & FFPLAYKMP_SOURCE_REQUIRE_SECURE_PATH) &&
-            (player->snapshot.output_flags & FFPLAYKMP_OUTPUT_SOFTWARE_FRAME_UPLOAD) &&
-            player->configuration.decoder_preference != FFPLAYKMP_DECODER_REQUIRE_HARDWARE;
-    native_playback = software_playback;
-#if defined(__ANDROID__)
-    if (player->has_output &&
-            !(player->source_flags & FFPLAYKMP_SOURCE_REQUIRE_SECURE_PATH) &&
-            (player->snapshot.output_flags & FFPLAYKMP_OUTPUT_HARDWARE_FRAME_IMPORT) &&
-            player->configuration.decoder_preference != FFPLAYKMP_DECODER_SOFTWARE &&
-            player->android_surface)
-        native_playback = 1;
-#elif defined(__APPLE__)
-    if (player->has_output &&
-            !(player->source_flags & FFPLAYKMP_SOURCE_REQUIRE_SECURE_PATH) &&
-            (player->snapshot.output_flags & (FFPLAYKMP_OUTPUT_HARDWARE_FRAME_IMPORT |
-                                              FFPLAYKMP_OUTPUT_SOFTWARE_FRAME_UPLOAD)) &&
-            player->configuration.decoder_preference != FFPLAYKMP_DECODER_SOFTWARE)
-        native_playback = 1;
-#endif
+    native_playback = player->has_output &&
+            ffplaykmp_can_decode(player, player->snapshot.output_flags);
     pthread_mutex_unlock(&player->mutex);
     ffplaykmp_publish(player);
     if (native_playback) {
@@ -2461,9 +2425,8 @@ int ffplaykmp_web_player_read_packet(
         timestamp = packet->pts != AV_NOPTS_VALUE ? packet->pts : packet->dts;
         if (timestamp == AV_NOPTS_VALUE)
             timestamp = 0;
-        if (stream->start_time != AV_NOPTS_VALUE)
-            timestamp -= stream->start_time;
-        timestamp = av_rescale_q(timestamp, stream->time_base, AV_TIME_BASE_Q);
+        timestamp = av_rescale_q(timestamp, stream->time_base, AV_TIME_BASE_Q) -
+                ffplaykmp_media_start_us(reader->format);
         if (timestamp < 0)
             timestamp = 0;
         duration = packet->duration > 0
@@ -2555,9 +2518,10 @@ int ffplaykmp_web_player_webcodecs_seek(
     if (!reader || !reader->format)
         return -EPERM;
     stream = reader->format->streams[reader->video_stream];
-    target = av_rescale_q(position_us, AV_TIME_BASE_Q, stream->time_base);
-    if (stream->start_time != AV_NOPTS_VALUE)
-        target += stream->start_time;
+    target = av_rescale_q(
+            ffplaykmp_media_start_us(reader->format) + position_us,
+            AV_TIME_BASE_Q,
+            stream->time_base);
     pthread_mutex_lock(&player->mutex);
     play_when_ready = player->play_when_ready;
     player->snapshot.state = FFPLAYKMP_STATE_SEEKING;

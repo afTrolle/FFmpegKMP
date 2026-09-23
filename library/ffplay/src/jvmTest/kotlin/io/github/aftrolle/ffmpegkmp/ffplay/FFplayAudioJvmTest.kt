@@ -116,8 +116,32 @@ class FFplayAudioJvmTest {
         }
     }
 
+    @Test
+    fun videoTimestampsAreOnTheSameTimelineAsAudio() = runBlocking {
+        // Video that starts 0.4 s after the audio must report its time on the shared (container)
+        // timeline the audio master clock uses.
+        val media = encodeAudioVideoFixture(videoOffsetSeconds = 0.4)
+        val fileHandle = FileSystem.SYSTEM.openReadOnly(media)
+        val presented = CopyOnWriteArrayList<Long>()
+        try {
+            createPlatformPlayerBridge(
+                NativePlayerConfiguration(NativePlayerDecoderPreference.SOFTWARE),
+                update = {},
+                frame = { frame: NativeVideoFrame -> presented += frame.presentationTimeUs },
+            ).use { bridge ->
+                val io = CommandIo { input(AV_FIXTURE, fileHandle) }
+                assertEquals(0, bridge.setOutput(NativePlayerOutputCapabilities()))
+                assertEquals(0, bridge.prepare(NativePlayerSource(AV_FIXTURE, io.toNativeMounts())))
+            }
+        } finally {
+            fileHandle.close()
+        }
+        val first = presented.first()
+        assertTrue(first in 380_000..420_000, "First video frame at ${first}us; expected ~400000")
+    }
+
     /** One second of 25 fps MPEG-4 video with a PCM audio track, encoded by FFmpeg itself. */
-    private suspend fun encodeAudioVideoFixture(): okio.Path {
+    private suspend fun encodeAudioVideoFixture(videoOffsetSeconds: Double = 0.0): okio.Path {
         val width = 64
         val height = 48
         val frames = Buffer().apply {
@@ -138,11 +162,12 @@ class FFplayAudioJvmTest {
             client.execute(
                 listOf(
                     "-y",
+                    "-itsoffset", videoOffsetSeconds.toString(),
                     "-f", "rawvideo", "-pixel_format", "rgb24", "-video_size", "${width}x$height",
                     "-framerate", "25", "-i", "frames.rgb",
                     "-f", "f32le", "-ar", "48000", "-ch_layout", "stereo", "-i", "audio.f32",
                     "-c:v", "mpeg4", "-pix_fmt", "yuv420p", "-c:a", "pcm_s16le",
-                    "-f", "matroska", AV_FIXTURE,
+                    "-f", "nut", AV_FIXTURE,
                 ),
                 CommandIo {
                     input("frames.rgb", frames)

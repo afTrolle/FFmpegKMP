@@ -9,6 +9,9 @@ package io.github.aftrolle.ffmpegkmp.ffplay
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
+import androidx.compose.runtime.key
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -76,15 +79,16 @@ internal actual fun PlatformFFplaySurface(
 
     val output = remember(player) { IOSSampleBufferOutput() }
     val softwareFrame by output.frames.collectAsState()
-    val playback by player.snapshot.collectAsState()
-    output.updateVideoInfo(playback.video)
+    // Only the stream's display metadata matters here; the full snapshot changes every frame.
+    val video by remember(player) { player.snapshot.map { it.video }.distinctUntilChanged() }
+        .collectAsState(player.snapshot.value.video)
+    output.updateVideoInfo(video)
 
-    LaunchedEffect(output, playback.video) {
+    LaunchedEffect(output, video) {
         player.attachOutput(output)
     }
 
     DisposableEffect(player, output) {
-        player.attachOutput(output)
         onDispose {
             player.detachOutput(output)
             output.release()
@@ -92,22 +96,25 @@ internal actual fun PlatformFFplaySurface(
     }
 
     Box(modifier) {
-        UIKitView(
-            factory = {
-                SampleBufferVideoView().also(output::attach)
-            },
-            modifier = Modifier.fillMaxSize(),
-            update = { view ->
-                view.backgroundColor = UIColor.colorWithRed(
-                    red = backgroundColor.red.toDouble(),
-                    green = backgroundColor.green.toDouble(),
-                    blue = backgroundColor.blue.toDouble(),
-                    alpha = backgroundColor.alpha.toDouble(),
-                )
-                view.videoGravity = contentScale.toVideoGravity()
-            },
-            onRelease = { view -> output.detach(view) },
-        )
+        // The view is bound to this player's output when created; a new player needs a new view.
+        key(player) {
+            UIKitView(
+                factory = {
+                    SampleBufferVideoView().also(output::attach)
+                },
+                modifier = Modifier.fillMaxSize(),
+                update = { view ->
+                    view.backgroundColor = UIColor.colorWithRed(
+                        red = backgroundColor.red.toDouble(),
+                        green = backgroundColor.green.toDouble(),
+                        blue = backgroundColor.blue.toDouble(),
+                        alpha = backgroundColor.alpha.toDouble(),
+                    )
+                    view.videoGravity = contentScale.toVideoGravity()
+                },
+                onRelease = { view -> output.detach(view) },
+            )
+        }
 
         // The overlay is transparent while VideoToolbox is active. If hardware
         // negotiation falls back to software, scheduled RGBA frames remain visible.

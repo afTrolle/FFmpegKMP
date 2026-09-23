@@ -6,6 +6,7 @@
 
 package io.github.aftrolle.ffmpegkmp.ffplay
 
+import androidx.compose.runtime.key
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.remember
@@ -34,16 +35,19 @@ internal actual fun PlatformFFplaySurface(
         player.attachOutput(output)
         onDispose { player.detachOutput(output) }
     }
-    HtmlElementView(
-        factory = { output.canvas },
-        modifier = modifier,
-        update = { canvas ->
-            canvas.style.width = "100%"
-            canvas.style.height = "100%"
-            canvas.style.backgroundColor = output.background
-        },
-        onRelease = { output.discard() },
-    )
+    // The element is bound to this player's canvas when created; a new player needs a new one.
+    key(player) {
+        HtmlElementView(
+            factory = { output.canvas },
+            modifier = modifier,
+            update = { canvas ->
+                canvas.style.width = "100%"
+                canvas.style.height = "100%"
+                canvas.style.backgroundColor = output.background
+            },
+            onRelease = { output.discard() },
+        )
+    }
 }
 
 private class JsCanvasOutput : FFplayVideoOutput {

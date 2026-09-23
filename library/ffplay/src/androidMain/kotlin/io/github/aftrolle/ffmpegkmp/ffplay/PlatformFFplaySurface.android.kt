@@ -12,6 +12,7 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Size
@@ -21,6 +22,8 @@ import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalView
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
 
 @Composable
 internal actual fun PlatformFFplaySurface(
@@ -35,18 +38,21 @@ internal actual fun PlatformFFplaySurface(
     }
 
     val secureOutputRequired by player.secureOutputRequired.collectAsState()
-    val playback by player.snapshot.collectAsState()
+    // Only the stream's display metadata matters here; the full snapshot changes every frame.
+    val video by remember(player) { player.snapshot.map { it.video }.distinctUntilChanged() }
+        .collectAsState(player.snapshot.value.video)
     val hostView = LocalView.current
-    val output = remember(player, contentScale) {
-        AndroidSurfaceOutput(contentScale, backgroundColor.toArgb())
-    }
+    // One output per player: presentation changes are applied to it, not by replacing it, since
+    // the external surface below is bound to the output it was created with.
+    val output = remember(player) { AndroidSurfaceOutput(contentScale, backgroundColor.toArgb()) }
     output.updatePresentation(contentScale, backgroundColor.toArgb())
-    output.updateVideoInfo(playback.video)
-    output.updateDisplayCapabilities(hostView.display)
+    output.updateVideoInfo(video)
+    remember(output, hostView.display) { output.updateDisplayCapabilities(hostView.display) }
 
-    LaunchedEffect(output, playback.video) {
-        // Re-negotiate once stream display metadata is known. Transformed streams deliberately
-        // use the software path because a raw MediaCodec Surface cannot apply FFmpeg's matrix.
+    LaunchedEffect(output, video, contentScale) {
+        // Re-negotiate once stream display metadata is known, and when the scale decides whether
+        // direct presentation is possible. Transformed streams deliberately use the software path
+        // because a raw MediaCodec Surface cannot apply FFmpeg's matrix.
         player.attachOutput(output)
     }
 
@@ -57,20 +63,22 @@ internal actual fun PlatformFFplaySurface(
         }
     }
 
-    AndroidExternalSurface(
-        modifier = modifier,
-        isOpaque = true,
-        isSecure = secureOutputRequired,
-    ) {
-        onSurface { surface, width, height ->
-            output.attachSurface(surface, width, height)
-            player.attachOutput(output)
-            surface.onChanged { changedWidth, changedHeight ->
-                output.resize(changedWidth, changedHeight)
-            }
-            surface.onDestroyed {
-                player.detachOutput(output)
-                output.detachSurface(this)
+    key(player) {
+        AndroidExternalSurface(
+            modifier = modifier,
+            isOpaque = true,
+            isSecure = secureOutputRequired,
+        ) {
+            onSurface { surface, width, height ->
+                output.attachSurface(surface, width, height)
+                player.attachOutput(output)
+                surface.onChanged { changedWidth, changedHeight ->
+                    output.resize(changedWidth, changedHeight)
+                }
+                surface.onDestroyed {
+                    player.detachOutput(output)
+                    output.detachSurface(this)
+                }
             }
         }
     }
