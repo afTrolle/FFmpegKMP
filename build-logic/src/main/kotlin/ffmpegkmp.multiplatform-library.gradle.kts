@@ -156,8 +156,10 @@ tasks.matching { it.name == "tvosSimulatorArm64Test" }.configureEach {
     // The tvOS SDK can be installed without a runnable tvOS simulator runtime.
     // Keep compiling and linking its test executable in allTests, but make
     // simulator execution an explicit opt-in for suitably provisioned hosts.
+    // Copy to a local so the stored spec doesn't capture the script object.
+    val runTests = runTvosSimulatorTests
     onlyIf("-Pffmpegkmp.runTvosSimulatorTests=true was supplied") {
-        runTvosSimulatorTests.get()
+        runTests.get()
     }
 }
 

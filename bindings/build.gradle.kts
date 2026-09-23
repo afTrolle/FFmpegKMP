@@ -35,12 +35,14 @@ val hostArchitecture = providers.systemProperty("os.arch").map { architecture ->
     }
 }
 val hostMachine = hostOperatingSystem.zip(hostArchitecture) { os, architecture -> "$os-$architecture" }
-val prepareHostFfmpegHeaders = selectedNativeProfileTaskSuffix.zip(hostMachine) { profileSuffix, machine ->
+val hostFfmpegTaskSuffix = selectedNativeProfileTaskSuffix.zip(hostMachine) { profileSuffix, machine ->
     val machineSuffix = machine.split('-', '_').joinToString("") { part ->
         part.replaceFirstChar(Char::titlecase)
     }
-    ":native-build:jvm:prepareFfmpeg${profileSuffix}${machineSuffix}Headers"
+    "$profileSuffix$machineSuffix"
 }
+val prepareHostFfmpegHeaders = hostFfmpegTaskSuffix.map { ":native-build:jvm:prepareFfmpeg${it}Headers" }
+val buildHostFfmpeg = hostFfmpegTaskSuffix.map { ":native-build:jvm:buildFfmpeg$it" }
 val javaCppGenerator = configurations.create("javaCppGenerator")
 val androidApiLevel = libs.versions.android.minSdk
 val androidNdkVersion = libs.versions.android.ndk
@@ -192,7 +194,9 @@ tasks.withType<Jar>().matching { it.name != "javaCppDeclarationsJar" }.configure
 tasks.named<Jar>("jvmJar") {
     dependsOn(javaCppDeclarationsJar)
     duplicatesStrategy = DuplicatesStrategy.EXCLUDE
-    from(javaCppDeclarationsJar.flatMap { it.archiveFile }.map(::zipTree)) {
+    // zipTree resolves the provider lazily; a `.map(::zipTree)` lambda would capture the
+    // build script object, which the configuration cache cannot serialize.
+    from(zipTree(javaCppDeclarationsJar.flatMap { it.archiveFile })) {
         exclude("META-INF/MANIFEST.MF")
     }
 }
@@ -210,6 +214,8 @@ val buildJavaCppHostBindings = javaCppFamilies.map { family ->
         group = "ffmpeg bindings"
         description = "Builds the local JavaCPP JNI library for ${family.lowercase()} on the host"
         dependsOn(verifyJavaCppBindings)
+        // The JNI shims compile against and link to the installed FFmpeg, not just its headers.
+        dependsOn(buildHostFfmpeg.get())
         classpath = javaCppGenerator + files(
             verifyJavaCppBindings.map { it.destinationDirectory },
             compileJavaCppPresets.map { it.destinationDirectory },
