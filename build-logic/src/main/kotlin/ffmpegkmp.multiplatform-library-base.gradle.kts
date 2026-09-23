@@ -44,7 +44,10 @@ extensions.configure<KotlinMultiplatformExtension> {
         compileSdk = androidCompileSdk
         minSdk = androidMinSdk
 
-        withHostTest {}
+        withHostTest {
+            // Shared tests run through libraries (the Compose runtime) that log via android.util.Log.
+            isReturnDefaultValues = true
+        }
 
         withDeviceTestBuilder {
             sourceSetTreeName = "test"
