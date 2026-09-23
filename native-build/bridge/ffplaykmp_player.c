@@ -52,6 +52,14 @@ struct ffplaykmp_player {
     /* Host-reported media time (normally the audible audio position) and when
      * it was reported. While valid it replaces the wall clock for scheduling;
      * between reports it is extrapolated. Guarded by mutex. */
+    /* Frame conversion scratch, reused across frames. Only the decode thread
+     * touches it, and synchronous decodes run only while no worker does. */
+    struct SwsContext *rgba_scaler;
+    struct SwsContext *float_scaler;
+    uint8_t *rgba_buffer;
+    int rgba_capacity;
+    uint8_t *float_buffer;
+    int float_capacity;
     int master_clock_valid;
     int64_t master_clock_media_us;
     int64_t master_clock_stamp_us;
@@ -63,13 +71,7 @@ struct ffplaykmp_player {
 
 static void ffplaykmp_publish(ffplaykmp_player *player);
 
-static int ffplaykmp_decode_frames(
-        ffplaykmp_player *player,
-        const char *input,
-        int64_t start_position_us,
-        int continuous);
 
-static int ffplaykmp_inspect_source(ffplaykmp_player *player, const char *input);
 
 static int ffplaykmp_pixel_bit_depth(int pixel_format) {
     const AVPixFmtDescriptor *descriptor = av_pix_fmt_desc_get(pixel_format);
@@ -380,6 +382,73 @@ static int64_t ffplaykmp_avio_seek(void *opaque, int64_t offset, int whence) {
     return position;
 }
 
+#define FFPLAYKMP_IO_BUFFER_SIZE 32768
+#define FFPLAYKMP_IO_CAP_SEEK 4
+
+/* A demuxer over a URL or a host-mounted ("ffmpegkmp:<id>") resource. */
+typedef struct ffplaykmp_input {
+    AVFormatContext *format;
+    AVIOContext *avio;
+    ffplaykmp_avio *io;
+    int64_t resource_id;
+    int resource_opened;
+} ffplaykmp_input;
+
+static void ffplaykmp_close_input(ffplaykmp_player *player, ffplaykmp_input *input) {
+    avformat_close_input(&input->format);
+    if (input->avio) {
+        av_freep(&input->avio->buffer);
+        avio_context_free(&input->avio);
+    }
+    if (input->resource_opened && player->io_callback)
+        player->io_callback(player->io_opaque, input->resource_id, FFPLAYKMP_IO_CLOSE, 0, NULL, 0);
+    input->resource_opened = 0;
+    av_freep(&input->io);
+}
+
+/* Opens and probes `url`; on failure the caller still closes `input`. */
+static int ffplaykmp_open_input(ffplaykmp_player *player, const char *url, ffplaykmp_input *input) {
+    int mounted = ffplaykmp_parse_resource_id(url, &input->resource_id);
+    int result;
+    if (mounted < 0)
+        return mounted;
+    input->format = avformat_alloc_context();
+    if (!input->format)
+        return AVERROR(ENOMEM);
+    input->format->interrupt_callback.callback = ffplaykmp_interrupt;
+    input->format->interrupt_callback.opaque = player;
+    if (mounted) {
+        uint8_t *buffer;
+        int64_t capabilities;
+        if (!player->io_callback)
+            return AVERROR(ENOSYS);
+        capabilities = player->io_callback(
+                player->io_opaque, input->resource_id, FFPLAYKMP_IO_OPEN, 1, NULL, 0);
+        if (capabilities < 0)
+            return AVERROR(EIO);
+        input->resource_opened = 1;
+        input->io = av_mallocz(sizeof(*input->io));
+        buffer = av_malloc(FFPLAYKMP_IO_BUFFER_SIZE);
+        if (input->io && buffer) {
+            input->io->player = player;
+            input->io->resource_id = input->resource_id;
+            input->avio = avio_alloc_context(
+                    buffer, FFPLAYKMP_IO_BUFFER_SIZE, 0, input->io, ffplaykmp_avio_read, NULL,
+                    (capabilities & FFPLAYKMP_IO_CAP_SEEK) ? ffplaykmp_avio_seek : NULL);
+        }
+        if (!input->avio) {
+            av_free(buffer);
+            return AVERROR(ENOMEM);
+        }
+        input->format->pb = input->avio;
+        input->format->flags |= AVFMT_FLAG_CUSTOM_IO;
+        result = avformat_open_input(&input->format, NULL, NULL, NULL);
+    } else {
+        result = avformat_open_input(&input->format, url, NULL, NULL);
+    }
+    return result < 0 ? result : avformat_find_stream_info(input->format, NULL);
+}
+
 static float ffplaykmp_clamp_unit(double value) {
     if (!isfinite(value) || value <= 0.0)
         return 0.0f;
@@ -458,18 +527,27 @@ static void ffplaykmp_configure_scaler_colors(
     }
 }
 
+/* Grows *buffer to at least size bytes, keeping it for later frames. */
+static uint8_t *ffplaykmp_scratch(uint8_t **buffer, int *capacity, int size) {
+    if (size > *capacity) {
+        av_freep(buffer);
+        *buffer = av_malloc((size_t)size);
+        *capacity = *buffer ? size : 0;
+    }
+    return *buffer;
+}
+
 static int ffplaykmp_tone_map_hdr_frame(
+        ffplaykmp_player *player,
         const AVFrame *decoded,
         uint8_t *rgba,
         int rgba_stride) {
-    struct SwsContext *scaler = NULL;
-    uint8_t *float_pixels = NULL;
+    uint8_t *float_pixels;
     uint8_t *planes[4] = { NULL };
     int strides[4] = { 0 };
     int float_size;
     int x;
     int y;
-    int result = AVERROR(EINVAL);
     enum AVColorTransferCharacteristic transfer = decoded->color_trc;
     if (transfer != AVCOL_TRC_SMPTE2084 && transfer != AVCOL_TRC_ARIB_STD_B67)
         return AVERROR(ENOSYS);
@@ -477,7 +555,7 @@ static int ffplaykmp_tone_map_hdr_frame(
             AV_PIX_FMT_GBRPF32LE, decoded->width, decoded->height, 1);
     if (float_size <= 0)
         return AVERROR(EINVAL);
-    float_pixels = av_malloc((size_t)float_size);
+    float_pixels = ffplaykmp_scratch(&player->float_buffer, &player->float_capacity, float_size);
     if (!float_pixels)
         return AVERROR(ENOMEM);
     if (av_image_fill_arrays(
@@ -488,8 +566,9 @@ static int ffplaykmp_tone_map_hdr_frame(
             decoded->width,
             decoded->height,
             1) < 0)
-        goto cleanup;
-    scaler = sws_getContext(
+        return AVERROR(EINVAL);
+    player->float_scaler = sws_getCachedContext(
+            player->float_scaler,
             decoded->width,
             decoded->height,
             decoded->format,
@@ -500,18 +579,18 @@ static int ffplaykmp_tone_map_hdr_frame(
             NULL,
             NULL,
             NULL);
-    if (!scaler)
-        goto cleanup;
-    ffplaykmp_configure_scaler_colors(scaler, decoded);
+    if (!player->float_scaler)
+        return AVERROR(EINVAL);
+    ffplaykmp_configure_scaler_colors(player->float_scaler, decoded);
     if (sws_scale(
-            scaler,
+            player->float_scaler,
             (const uint8_t *const *)decoded->data,
             decoded->linesize,
             0,
             decoded->height,
             planes,
             strides) != decoded->height)
-        goto cleanup;
+        return AVERROR(EINVAL);
     for (y = 0; y < decoded->height; y++) {
         const float *green_row = (const float *)(planes[0] + y * strides[0]);
         const float *blue_row = (const float *)(planes[1] + y * strides[1]);
@@ -541,20 +620,15 @@ static int ffplaykmp_tone_map_hdr_frame(
             output[x * 4 + 3] = 255;
         }
     }
-    result = 0;
-cleanup:
-    sws_freeContext(scaler);
-    av_free(float_pixels);
-    return result;
+    return 0;
 }
 
 static void ffplaykmp_emit_video_frame(
         ffplaykmp_player *player,
         const AVFrame *decoded,
-        AVRational time_base) {
-    struct SwsContext *scaler = NULL;
+        int64_t presentation_time_us) {
     ffplaykmp_video_frame frame;
-    uint8_t *rgba = NULL;
+    uint8_t *rgba;
     uint8_t *planes[4] = { NULL };
     int strides[4] = { 0 };
     int size;
@@ -578,38 +652,29 @@ static void ffplaykmp_emit_video_frame(
     size = av_image_get_buffer_size(AV_PIX_FMT_RGBA, decoded->width, decoded->height, 1);
     if (size <= 0)
         return;
-    rgba = av_malloc((size_t)size);
-    if (!rgba)
-        return;
-    if (av_image_fill_arrays(
+    rgba = ffplaykmp_scratch(&player->rgba_buffer, &player->rgba_capacity, size);
+    if (!rgba || av_image_fill_arrays(
             planes, strides, rgba, AV_PIX_FMT_RGBA, decoded->width, decoded->height, 1) < 0)
-        goto cleanup;
-    if (tone_map_hdr && ffplaykmp_tone_map_hdr_frame(decoded, rgba, strides[0]) == 0)
-        goto emit;
-    scaler = sws_getContext(
-            decoded->width,
-            decoded->height,
-            decoded->format,
-            decoded->width,
-            decoded->height,
-            AV_PIX_FMT_RGBA,
-            SWS_BILINEAR,
-            NULL,
-            NULL,
-            NULL);
-    if (!scaler)
-        goto cleanup;
-    ffplaykmp_configure_scaler_colors(scaler, decoded);
-    if (sws_scale(
-            scaler,
-            (const uint8_t *const *)decoded->data,
-            decoded->linesize,
-            0,
-            decoded->height,
-            planes,
-            strides) != decoded->height)
-        goto cleanup;
-emit:
+        return;
+    if (!tone_map_hdr || ffplaykmp_tone_map_hdr_frame(player, decoded, rgba, strides[0]) != 0) {
+        player->rgba_scaler = sws_getCachedContext(
+                player->rgba_scaler,
+                decoded->width, decoded->height, decoded->format,
+                decoded->width, decoded->height, AV_PIX_FMT_RGBA,
+                SWS_BILINEAR, NULL, NULL, NULL);
+        if (!player->rgba_scaler)
+            return;
+        ffplaykmp_configure_scaler_colors(player->rgba_scaler, decoded);
+        if (sws_scale(
+                player->rgba_scaler,
+                (const uint8_t *const *)decoded->data,
+                decoded->linesize,
+                0,
+                decoded->height,
+                planes,
+                strides) != decoded->height)
+            return;
+    }
     memset(&frame, 0, sizeof(frame));
     frame.size = sizeof(frame);
     frame.rgba = rgba;
@@ -617,14 +682,9 @@ emit:
     frame.width = decoded->width;
     frame.height = decoded->height;
     frame.stride = strides[0];
-    frame.presentation_time_us = decoded->best_effort_timestamp == AV_NOPTS_VALUE
-            ? 0
-            : av_rescale_q(decoded->best_effort_timestamp, time_base, AV_TIME_BASE_Q);
+    frame.presentation_time_us = presentation_time_us;
     frame.queue_serial = queue_serial;
     callback(callback_opaque, &frame);
-cleanup:
-    sws_freeContext(scaler);
-    av_free(rgba);
 }
 
 static int ffplaykmp_is_hardware_frame(const AVFrame *frame) {
@@ -636,19 +696,16 @@ static int ffplaykmp_is_hardware_frame(const AVFrame *frame) {
 }
 
 #if !defined(__ANDROID__)
-typedef struct ffplaykmp_hardware_selection {
-    enum AVPixelFormat pixel_format;
-} ffplaykmp_hardware_selection;
-
+/* get_format for hardware decoding; context->opaque points at the wanted format. */
 static enum AVPixelFormat ffplaykmp_hardware_format(
         AVCodecContext *context,
         const enum AVPixelFormat *formats) {
-    const ffplaykmp_hardware_selection *selection = context->opaque;
+    const enum AVPixelFormat *wanted = context->opaque;
     const enum AVPixelFormat *format;
-    if (!selection)
+    if (!wanted)
         return AV_PIX_FMT_NONE;
     for (format = formats; *format != AV_PIX_FMT_NONE; format++) {
-        if (*format == selection->pixel_format)
+        if (*format == *wanted)
             return *format;
     }
     return AV_PIX_FMT_NONE;
@@ -725,7 +782,7 @@ static int ffplaykmp_emit_platform_video_frame(
 static int ffplaykmp_emit_downloaded_video_frame(
         ffplaykmp_player *player,
         const AVFrame *hardware_frame,
-        AVRational time_base) {
+        int64_t presentation_time_us) {
     AVFrame *software_frame;
     int can_download;
     int result;
@@ -743,7 +800,7 @@ static int ffplaykmp_emit_downloaded_video_frame(
     if (result >= 0)
         result = av_frame_copy_props(software_frame, hardware_frame);
     if (result >= 0)
-        ffplaykmp_emit_video_frame(player, software_frame, time_base);
+        ffplaykmp_emit_video_frame(player, software_frame, presentation_time_us);
     av_frame_free(&software_frame);
     return result;
 }
@@ -859,19 +916,19 @@ static int ffplaykmp_present_decoded_frame(
         schedule_result = ffplaykmp_emit_platform_video_frame(
                 player, frame, presentation_time_us);
         if (schedule_result == AVERROR(ENOSYS))
-            schedule_result = ffplaykmp_emit_downloaded_video_frame(player, frame, time_base);
+            schedule_result = ffplaykmp_emit_downloaded_video_frame(player, frame, presentation_time_us);
         if (schedule_result < 0 && schedule_result != AVERROR(EAGAIN))
             return schedule_result;
     } else
 #else
     if (ffplaykmp_is_hardware_frame(frame)) {
-        schedule_result = ffplaykmp_emit_downloaded_video_frame(player, frame, time_base);
+        schedule_result = ffplaykmp_emit_downloaded_video_frame(player, frame, presentation_time_us);
         if (schedule_result < 0)
             return schedule_result;
     } else
 #endif
     {
-        ffplaykmp_emit_video_frame(player, frame, time_base);
+        ffplaykmp_emit_video_frame(player, frame, presentation_time_us);
     }
     if (!continuous)
         return 1;
@@ -882,254 +939,169 @@ static int ffplaykmp_present_decoded_frame(
     return 0;
 }
 
+/*
+ * Presents every frame the decoder has ready. Returns 1 once a preview frame
+ * (non-continuous) was shown, 0 when the decoder needs more input, or a
+ * negative error. Undecodable data is skipped, as ffplay does.
+ */
+static int ffplaykmp_present_ready_frames(
+        ffplaykmp_player *player,
+        AVCodecContext *decoder,
+        AVFrame *frame,
+        const AVStream *stream,
+        int64_t media_start_us,
+        int64_t start_position_us,
+        int continuous,
+        int require_hardware,
+        int *decoded_frames,
+        int64_t *clock_origin_us) {
+    int result;
+    while ((result = avcodec_receive_frame(decoder, frame)) >= 0) {
+        int frame_is_hardware = ffplaykmp_is_hardware_frame(frame);
+        (*decoded_frames)++;
+        if (require_hardware && !frame_is_hardware) {
+            av_frame_unref(frame);
+            return AVERROR(ENOTSUP);
+        }
+        pthread_mutex_lock(&player->mutex);
+        player->snapshot.active_decoder = frame_is_hardware
+                ? FFPLAYKMP_DECODER_HARDWARE
+                : FFPLAYKMP_DECODER_SOFTWARE_ACTIVE;
+        pthread_mutex_unlock(&player->mutex);
+        result = ffplaykmp_present_decoded_frame(
+                player, frame, stream->time_base, media_start_us,
+                start_position_us, continuous, clock_origin_us);
+        av_frame_unref(frame);
+        if (result != 0)
+            return result;
+    }
+    return 0;
+}
+
+/*
+ * Opens `url` and decodes its video: one preview frame at `start_position_us`,
+ * or (continuous) every frame on the playback clock. A hardware attempt under
+ * AUTO that fails before decoding anything is retried once in software.
+ */
 static int ffplaykmp_decode_frames(
         ffplaykmp_player *player,
-        const char *input,
+        const char *url,
         int64_t start_position_us,
-        int continuous) {
-    AVFormatContext *format = NULL;
+        int continuous,
+        ffplaykmp_decoder_preference preference) {
+    ffplaykmp_input input = { 0 };
     AVCodecContext *decoder = NULL;
     const AVCodec *codec;
+    const AVStream *stream;
     AVPacket *packet = NULL;
     AVFrame *frame = NULL;
-    AVIOContext *avio = NULL;
-    ffplaykmp_avio *io = NULL;
-    uint8_t *avio_buffer = NULL;
-    int64_t resource_id = 0;
-    int resource_opened = 0;
     int video_stream;
     int result;
-    int presented;
     int decoded_frames = 0;
-    int retry_software = 0;
     int64_t clock_origin_us = AV_NOPTS_VALUE;
-    int64_t media_start_us = 0;
-    int hardware_requested = 0;
+    int64_t media_start_us;
     int hardware_active = 0;
+    const int require_hardware = preference == FFPLAYKMP_DECODER_REQUIRE_HARDWARE;
 #if defined(__ANDROID__)
-    const AVCodec *software_codec = NULL;
     AVMediaCodecContext *mediacodec_context = NULL;
     jobject android_surface = NULL;
 #else
-    const AVCodec *software_codec = NULL;
     AVBufferRef *hardware_device = NULL;
     enum AVHWDeviceType hardware_device_type = AV_HWDEVICE_TYPE_NONE;
-    ffplaykmp_hardware_selection hardware_selection = { AV_PIX_FMT_NONE };
+    enum AVPixelFormat hardware_format = AV_PIX_FMT_NONE;
 #endif
-    int mounted = ffplaykmp_parse_resource_id(input, &resource_id);
-    if (mounted < 0)
-        return mounted;
-    format = avformat_alloc_context();
-    if (!format)
-        return AVERROR(ENOMEM);
-    format->interrupt_callback.callback = ffplaykmp_interrupt;
-    format->interrupt_callback.opaque = player;
-    if (mounted) {
-        int64_t capabilities;
-        if (!player->io_callback) {
-            result = AVERROR(ENOSYS);
-            goto cleanup;
-        }
-        capabilities = player->io_callback(
-                player->io_opaque, resource_id, FFPLAYKMP_IO_OPEN, 1, NULL, 0);
-        if (capabilities < 0) {
-            result = AVERROR(EIO);
-            goto cleanup;
-        }
-        resource_opened = 1;
-        io = av_mallocz(sizeof(*io));
-        avio_buffer = av_malloc(32768);
-        if (!io || !avio_buffer) {
-            result = AVERROR(ENOMEM);
-            goto cleanup;
-        }
-        io->player = player;
-        io->resource_id = resource_id;
-        avio = avio_alloc_context(
-                avio_buffer, 32768, 0, io, ffplaykmp_avio_read, NULL,
-                (capabilities & 4) ? ffplaykmp_avio_seek : NULL);
-        if (!avio) {
-            result = AVERROR(ENOMEM);
-            goto cleanup;
-        }
-        avio_buffer = NULL;
-        format->pb = avio;
-        format->flags |= AVFMT_FLAG_CUSTOM_IO;
-        result = avformat_open_input(&format, NULL, NULL, NULL);
-    } else {
-        result = avformat_open_input(&format, input, NULL, NULL);
-    }
-    if (result < 0)
+    if ((result = ffplaykmp_open_input(player, url, &input)) < 0)
         goto cleanup;
-    result = avformat_find_stream_info(format, NULL);
-    if (result < 0)
-        goto cleanup;
-    video_stream = av_find_best_stream(format, AVMEDIA_TYPE_VIDEO, -1, -1, &codec, 0);
+    video_stream = av_find_best_stream(input.format, AVMEDIA_TYPE_VIDEO, -1, -1, &codec, 0);
     if (video_stream < 0) {
         result = video_stream;
         goto cleanup;
     }
-    media_start_us = ffplaykmp_media_start_us(format);
+    stream = input.format->streams[video_stream];
+    media_start_us = ffplaykmp_media_start_us(input.format);
+
+    if (preference != FFPLAYKMP_DECODER_SOFTWARE) {
+        pthread_mutex_lock(&player->mutex);
 #if defined(__ANDROID__)
-    software_codec = codec;
-    pthread_mutex_lock(&player->mutex);
-    hardware_requested = player->configuration.decoder_preference != FFPLAYKMP_DECODER_SOFTWARE &&
-            player->has_output &&
-            (player->snapshot.output_flags & FFPLAYKMP_OUTPUT_HARDWARE_FRAME_IMPORT) &&
-            player->android_surface;
-    android_surface = player->android_surface;
-    pthread_mutex_unlock(&player->mutex);
-    if (hardware_requested) {
-        char decoder_name[96];
-        const char *software_name = codec->name;
-        if (snprintf(decoder_name, sizeof(decoder_name), "%s_mediacodec", software_name) > 0) {
-            const AVCodec *hardware_codec = avcodec_find_decoder_by_name(decoder_name);
-            if (hardware_codec)
-                codec = hardware_codec;
-        }
-        hardware_active = strstr(codec->name, "_mediacodec") != NULL;
-        if (!hardware_active &&
-                player->configuration.decoder_preference == FFPLAYKMP_DECODER_REQUIRE_HARDWARE) {
-            result = AVERROR(ENOTSUP);
-            goto cleanup;
-        }
-    }
+        android_surface = player->android_surface;
+        hardware_active = player->has_output && android_surface &&
+                (player->snapshot.output_flags & FFPLAYKMP_OUTPUT_HARDWARE_FRAME_IMPORT);
 #else
-    software_codec = codec;
-    pthread_mutex_lock(&player->mutex);
-    hardware_requested = player->configuration.decoder_preference != FFPLAYKMP_DECODER_SOFTWARE &&
-            player->has_output &&
-            (player->snapshot.output_flags & FFPLAYKMP_OUTPUT_SOFTWARE_FRAME_UPLOAD
+        hardware_active = player->has_output &&
+                (player->snapshot.output_flags & (FFPLAYKMP_OUTPUT_SOFTWARE_FRAME_UPLOAD
 #if defined(__APPLE__)
-                    || (player->snapshot.output_flags & FFPLAYKMP_OUTPUT_HARDWARE_FRAME_IMPORT)
+                        | FFPLAYKMP_OUTPUT_HARDWARE_FRAME_IMPORT
 #endif
-            );
-    pthread_mutex_unlock(&player->mutex);
-    if (hardware_requested) {
-        hardware_active = ffplaykmp_select_hardware_config(
-                codec, &hardware_device_type, &hardware_selection.pixel_format) >= 0;
-        if (!hardware_active &&
-                player->configuration.decoder_preference == FFPLAYKMP_DECODER_REQUIRE_HARDWARE) {
-            result = AVERROR(ENOTSUP);
-            goto cleanup;
-        }
+                ));
+#endif
+        pthread_mutex_unlock(&player->mutex);
     }
+    if (hardware_active) {
+#if defined(__ANDROID__)
+        char decoder_name[96];
+        const AVCodec *hardware_codec = NULL;
+        if (snprintf(decoder_name, sizeof(decoder_name), "%s_mediacodec", codec->name) > 0)
+            hardware_codec = avcodec_find_decoder_by_name(decoder_name);
+        if (hardware_codec)
+            codec = hardware_codec;
+        else
+            hardware_active = 0;
+#else
+        hardware_active = ffplaykmp_select_hardware_config(
+                codec, &hardware_device_type, &hardware_format) >= 0;
 #endif
+    }
+    if (require_hardware && !hardware_active) {
+        result = AVERROR(ENOTSUP);
+        goto cleanup;
+    }
+
     decoder = avcodec_alloc_context3(codec);
     if (!decoder) {
         result = AVERROR(ENOMEM);
         goto cleanup;
     }
-    result = avcodec_parameters_to_context(decoder, format->streams[video_stream]->codecpar);
-    if (result < 0)
+    if ((result = avcodec_parameters_to_context(decoder, stream->codecpar)) < 0)
         goto cleanup;
-#if defined(__ANDROID__)
     if (hardware_active) {
+#if defined(__ANDROID__)
         mediacodec_context = av_mediacodec_alloc_context();
         if (!mediacodec_context) {
             result = AVERROR(ENOMEM);
             goto cleanup;
         }
-        result = av_mediacodec_default_init(decoder, mediacodec_context, android_surface);
-        if (result < 0 &&
-                player->configuration.decoder_preference == FFPLAYKMP_DECODER_AUTO) {
+        if ((result = av_mediacodec_default_init(decoder, mediacodec_context, android_surface)) < 0) {
+            /* Not attached to the decoder, so av_mediacodec_default_free won't free it. */
             av_freep(&mediacodec_context);
-            avcodec_free_context(&decoder);
-            codec = software_codec;
-            hardware_active = 0;
-            decoder = avcodec_alloc_context3(codec);
-            if (!decoder) {
-                result = AVERROR(ENOMEM);
-                goto cleanup;
-            }
-            result = avcodec_parameters_to_context(
-                    decoder, format->streams[video_stream]->codecpar);
-        }
-        if (result < 0)
             goto cleanup;
-    }
+        }
 #else
-    if (hardware_active) {
-        result = av_hwdevice_ctx_create(
-                &hardware_device, hardware_device_type, NULL, NULL, 0);
-        if (result >= 0) {
-            decoder->hw_device_ctx = av_buffer_ref(hardware_device);
-            if (!decoder->hw_device_ctx)
-                result = AVERROR(ENOMEM);
-            decoder->opaque = &hardware_selection;
-            decoder->get_format = ffplaykmp_hardware_format;
-        }
-        if (result < 0 &&
-                player->configuration.decoder_preference == FFPLAYKMP_DECODER_AUTO) {
-            av_buffer_unref(&hardware_device);
-            avcodec_free_context(&decoder);
-            codec = software_codec;
-            hardware_active = 0;
-            decoder = avcodec_alloc_context3(codec);
-            if (!decoder) {
-                result = AVERROR(ENOMEM);
-                goto cleanup;
-            }
-            result = avcodec_parameters_to_context(
-                    decoder, format->streams[video_stream]->codecpar);
-        }
-        if (result < 0)
+        if ((result = av_hwdevice_ctx_create(
+                &hardware_device, hardware_device_type, NULL, NULL, 0)) < 0)
             goto cleanup;
-    }
-#endif
-    result = avcodec_open2(decoder, codec, NULL);
-#if defined(__ANDROID__)
-    if (result < 0 && hardware_active &&
-            player->configuration.decoder_preference == FFPLAYKMP_DECODER_AUTO) {
-        av_mediacodec_default_free(decoder);
-        mediacodec_context = NULL;
-        avcodec_free_context(&decoder);
-        codec = software_codec;
-        hardware_active = 0;
-        decoder = avcodec_alloc_context3(codec);
-        if (!decoder) {
+        decoder->hw_device_ctx = av_buffer_ref(hardware_device);
+        if (!decoder->hw_device_ctx) {
             result = AVERROR(ENOMEM);
             goto cleanup;
         }
-        result = avcodec_parameters_to_context(
-                decoder, format->streams[video_stream]->codecpar);
-        if (result >= 0)
-            result = avcodec_open2(decoder, codec, NULL);
-    }
-#else
-    if (result < 0 && hardware_active &&
-            player->configuration.decoder_preference == FFPLAYKMP_DECODER_AUTO) {
-        av_buffer_unref(&hardware_device);
-        avcodec_free_context(&decoder);
-        codec = software_codec;
-        hardware_active = 0;
-        decoder = avcodec_alloc_context3(codec);
-        if (!decoder) {
-            result = AVERROR(ENOMEM);
-            goto cleanup;
-        }
-        result = avcodec_parameters_to_context(
-                decoder, format->streams[video_stream]->codecpar);
-        if (result >= 0)
-            result = avcodec_open2(decoder, codec, NULL);
-    }
+        decoder->opaque = &hardware_format;
+        decoder->get_format = ffplaykmp_hardware_format;
 #endif
-    if (result < 0)
+    }
+    if ((result = avcodec_open2(decoder, codec, NULL)) < 0)
         goto cleanup;
+
     pthread_mutex_lock(&player->mutex);
-    // A configured device is not proof that a platform decoder produced a hardware frame.
-    // Publish the active decoder only after the first decoded frame crosses this boundary.
+    /* A configured device is not proof of hardware decoding: the first frame decides. */
     player->snapshot.active_decoder = FFPLAYKMP_DECODER_UNKNOWN;
-    pthread_mutex_unlock(&player->mutex);
     if (!continuous) {
-        pthread_mutex_lock(&player->mutex);
         player->snapshot.video_width = decoder->width;
         player->snapshot.video_height = decoder->height;
-        player->snapshot.duration_us = format->duration == AV_NOPTS_VALUE
+        player->snapshot.duration_us = input.format->duration == AV_NOPTS_VALUE
                 ? -1
-                : format->duration;
-        pthread_mutex_unlock(&player->mutex);
+                : input.format->duration;
     }
+    pthread_mutex_unlock(&player->mutex);
     packet = av_packet_alloc();
     frame = av_frame_alloc();
     if (!packet || !frame) {
@@ -1138,60 +1110,37 @@ static int ffplaykmp_decode_frames(
     }
     if (start_position_us > 0) {
         int64_t target = av_rescale_q(
-                media_start_us + start_position_us,
-                AV_TIME_BASE_Q,
-                format->streams[video_stream]->time_base);
+                media_start_us + start_position_us, AV_TIME_BASE_Q, stream->time_base);
         result = avformat_seek_file(
-                format, video_stream, INT64_MIN, target, INT64_MAX, AVSEEK_FLAG_BACKWARD);
+                input.format, video_stream, INT64_MIN, target, INT64_MAX, AVSEEK_FLAG_BACKWARD);
         if (result < 0)
             goto cleanup;
         avcodec_flush_buffers(decoder);
     }
-    while (!ffplaykmp_is_aborted(player) && (result = av_read_frame(format, packet)) >= 0) {
+    while (!ffplaykmp_is_aborted(player) && (result = av_read_frame(input.format, packet)) >= 0) {
         if (packet->stream_index == video_stream) {
-            result = avcodec_send_packet(decoder, packet);
-            if (result < 0 && result != AVERROR(EAGAIN)) {
-                // Match ffplay's resilience: a damaged packet is dropped without
-                // terminating the whole player when later packets may recover.
-                av_packet_unref(packet);
-                continue;
-            }
-            while ((result = avcodec_receive_frame(decoder, frame)) >= 0) {
-                int frame_is_hardware = ffplaykmp_is_hardware_frame(frame);
-                decoded_frames++;
-                if (hardware_active && !frame_is_hardware &&
-                        player->configuration.decoder_preference ==
-                                FFPLAYKMP_DECODER_REQUIRE_HARDWARE) {
-                    result = AVERROR(ENOTSUP);
-                    av_frame_unref(frame);
-                    goto cleanup;
-                }
-                pthread_mutex_lock(&player->mutex);
-                player->snapshot.active_decoder = frame_is_hardware
-                        ? FFPLAYKMP_DECODER_HARDWARE
-                        : FFPLAYKMP_DECODER_SOFTWARE_ACTIVE;
-                pthread_mutex_unlock(&player->mutex);
-                presented = ffplaykmp_present_decoded_frame(
-                        player,
-                        frame,
-                        format->streams[video_stream]->time_base,
-                        media_start_us,
-                        start_position_us,
-                        continuous,
-                        &clock_origin_us);
-                av_frame_unref(frame);
-                if (presented < 0) {
-                    result = presented;
-                    goto cleanup;
-                }
-                if (presented > 0) {
-                    result = 0;
+            int sent = avcodec_send_packet(decoder, packet);
+            if (sent == AVERROR(EAGAIN)) {
+                /* The decoder wants its ready frames taken first; then it accepts the packet. */
+                result = ffplaykmp_present_ready_frames(
+                        player, decoder, frame, stream, media_start_us, start_position_us,
+                        continuous, require_hardware, &decoded_frames, &clock_origin_us);
+                if (result != 0) {
                     av_packet_unref(packet);
-                    goto cleanup;
+                    goto finish;
+                }
+                sent = avcodec_send_packet(decoder, packet);
+            }
+            /* Like ffplay, a damaged packet is dropped; later packets may recover. */
+            if (sent >= 0) {
+                result = ffplaykmp_present_ready_frames(
+                        player, decoder, frame, stream, media_start_us, start_position_us,
+                        continuous, require_hardware, &decoded_frames, &clock_origin_us);
+                if (result != 0) {
+                    av_packet_unref(packet);
+                    goto finish;
                 }
             }
-            if (result != AVERROR(EAGAIN) && result != AVERROR_EOF)
-                avcodec_flush_buffers(decoder);
         }
         av_packet_unref(packet);
     }
@@ -1200,51 +1149,17 @@ static int ffplaykmp_decode_frames(
         goto cleanup;
     }
     if (result == AVERROR_EOF) {
-        result = avcodec_send_packet(decoder, NULL);
-        if (result < 0 && result != AVERROR_EOF)
-            goto cleanup;
-        while ((result = avcodec_receive_frame(decoder, frame)) >= 0) {
-            int frame_is_hardware = ffplaykmp_is_hardware_frame(frame);
-            decoded_frames++;
-            if (hardware_active && !frame_is_hardware &&
-                    player->configuration.decoder_preference ==
-                            FFPLAYKMP_DECODER_REQUIRE_HARDWARE) {
-                result = AVERROR(ENOTSUP);
-                av_frame_unref(frame);
-                goto cleanup;
-            }
-            pthread_mutex_lock(&player->mutex);
-            player->snapshot.active_decoder = frame_is_hardware
-                    ? FFPLAYKMP_DECODER_HARDWARE
-                    : FFPLAYKMP_DECODER_SOFTWARE_ACTIVE;
-            pthread_mutex_unlock(&player->mutex);
-            presented = ffplaykmp_present_decoded_frame(
-                    player,
-                    frame,
-                    format->streams[video_stream]->time_base,
-                    media_start_us,
-                    start_position_us,
-                    continuous,
-                    &clock_origin_us);
-            av_frame_unref(frame);
-            if (presented < 0) {
-                result = presented;
-                goto cleanup;
-            }
-            if (presented > 0) {
-                result = 0;
-                goto cleanup;
-            }
-        }
-        if (result == AVERROR_EOF || result == AVERROR(EAGAIN))
-            result = 0;
+        avcodec_send_packet(decoder, NULL);
+        result = ffplaykmp_present_ready_frames(
+                player, decoder, frame, stream, media_start_us, start_position_us,
+                continuous, require_hardware, &decoded_frames, &clock_origin_us);
     }
-    if (result >= 0 && decoded_frames == 0)
+finish:
+    if (result > 0)
+        result = 0;  /* The preview frame was presented. */
+    else if (result >= 0 && decoded_frames == 0)
         result = AVERROR_INVALIDDATA;
 cleanup:
-    retry_software = result < 0 && hardware_active && decoded_frames == 0 &&
-            !ffplaykmp_is_aborted(player) &&
-            player->configuration.decoder_preference == FFPLAYKMP_DECODER_AUTO;
     av_packet_free(&packet);
     av_frame_free(&frame);
 #if defined(__ANDROID__)
@@ -1254,21 +1169,11 @@ cleanup:
     av_buffer_unref(&hardware_device);
 #endif
     avcodec_free_context(&decoder);
-    avformat_close_input(&format);
-    if (avio) {
-        av_freep(&avio->buffer);
-        avio_context_free(&avio);
-    }
-    av_free(avio_buffer);
-    if (resource_opened && player->io_callback)
-        player->io_callback(player->io_opaque, resource_id, FFPLAYKMP_IO_CLOSE, 0, NULL, 0);
-    av_free(io);
-    if (retry_software) {
-        int original_preference = player->configuration.decoder_preference;
-        player->configuration.decoder_preference = FFPLAYKMP_DECODER_SOFTWARE;
-        result = ffplaykmp_decode_frames(player, input, start_position_us, continuous);
-        player->configuration.decoder_preference = original_preference;
-    }
+    ffplaykmp_close_input(player, &input);
+    if (result < 0 && hardware_active && decoded_frames == 0 &&
+            preference == FFPLAYKMP_DECODER_AUTO && !ffplaykmp_is_aborted(player))
+        return ffplaykmp_decode_frames(player, url, start_position_us, continuous,
+                FFPLAYKMP_DECODER_SOFTWARE);
     return result;
 }
 
@@ -1277,87 +1182,26 @@ cleanup:
  * from an output target and, importantly, never crosses the decoded-pixel
  * boundary for protected sources.
  */
-static int ffplaykmp_inspect_source(ffplaykmp_player *player, const char *input) {
-    AVFormatContext *format = NULL;
-    AVIOContext *avio = NULL;
-    ffplaykmp_avio *io = NULL;
-    uint8_t *avio_buffer = NULL;
-    int64_t resource_id = 0;
-    int resource_opened = 0;
-    int mounted = ffplaykmp_parse_resource_id(input, &resource_id);
-    int video_stream;
-    int result;
-    if (mounted < 0)
-        return mounted;
-    format = avformat_alloc_context();
-    if (!format)
-        return AVERROR(ENOMEM);
-    format->interrupt_callback.callback = ffplaykmp_interrupt;
-    format->interrupt_callback.opaque = player;
-    if (mounted) {
-        int64_t capabilities;
-        if (!player->io_callback) {
-            result = AVERROR(ENOSYS);
-            goto cleanup;
-        }
-        capabilities = player->io_callback(
-                player->io_opaque, resource_id, FFPLAYKMP_IO_OPEN, 1, NULL, 0);
-        if (capabilities < 0) {
-            result = AVERROR(EIO);
-            goto cleanup;
-        }
-        resource_opened = 1;
-        io = av_mallocz(sizeof(*io));
-        avio_buffer = av_malloc(32768);
-        if (!io || !avio_buffer) {
-            result = AVERROR(ENOMEM);
-            goto cleanup;
-        }
-        io->player = player;
-        io->resource_id = resource_id;
-        avio = avio_alloc_context(
-                avio_buffer, 32768, 0, io, ffplaykmp_avio_read, NULL,
-                (capabilities & 4) ? ffplaykmp_avio_seek : NULL);
-        if (!avio) {
-            result = AVERROR(ENOMEM);
-            goto cleanup;
-        }
-        avio_buffer = NULL;
-        format->pb = avio;
-        format->flags |= AVFMT_FLAG_CUSTOM_IO;
-        result = avformat_open_input(&format, NULL, NULL, NULL);
-    } else {
-        result = avformat_open_input(&format, input, NULL, NULL);
+static int ffplaykmp_inspect_source(ffplaykmp_player *player, const char *url) {
+    ffplaykmp_input input = { 0 };
+    int video_stream = -1;
+    int result = ffplaykmp_open_input(player, url, &input);
+    if (result >= 0) {
+        video_stream = av_find_best_stream(input.format, AVMEDIA_TYPE_VIDEO, -1, -1, NULL, 0);
+        result = video_stream < 0 ? video_stream : 0;
     }
-    if (result < 0)
-        goto cleanup;
-    result = avformat_find_stream_info(format, NULL);
-    if (result < 0)
-        goto cleanup;
-    video_stream = av_find_best_stream(format, AVMEDIA_TYPE_VIDEO, -1, -1, NULL, 0);
-    if (video_stream < 0) {
-        result = video_stream;
-        goto cleanup;
+    if (result >= 0) {
+        const AVStream *stream = input.format->streams[video_stream];
+        pthread_mutex_lock(&player->mutex);
+        player->snapshot.video_width = stream->codecpar->width;
+        player->snapshot.video_height = stream->codecpar->height;
+        ffplaykmp_read_stream_metadata(&player->snapshot, stream);
+        player->snapshot.duration_us = input.format->duration == AV_NOPTS_VALUE
+                ? -1
+                : input.format->duration;
+        pthread_mutex_unlock(&player->mutex);
     }
-    pthread_mutex_lock(&player->mutex);
-    player->snapshot.video_width = format->streams[video_stream]->codecpar->width;
-    player->snapshot.video_height = format->streams[video_stream]->codecpar->height;
-    ffplaykmp_read_stream_metadata(&player->snapshot, format->streams[video_stream]);
-    player->snapshot.duration_us = format->duration == AV_NOPTS_VALUE
-            ? -1
-            : format->duration;
-    pthread_mutex_unlock(&player->mutex);
-    result = 0;
-cleanup:
-    avformat_close_input(&format);
-    if (avio) {
-        av_freep(&avio->buffer);
-        avio_context_free(&avio);
-    }
-    av_free(avio_buffer);
-    if (resource_opened && player->io_callback)
-        player->io_callback(player->io_opaque, resource_id, FFPLAYKMP_IO_CLOSE, 0, NULL, 0);
-    av_free(io);
+    ffplaykmp_close_input(player, &input);
     return result;
 }
 
@@ -1404,6 +1248,16 @@ static void ffplaykmp_publish(ffplaykmp_player *player) {
         callback(opaque, &snapshot);
 }
 
+/* Records a failure, publishes it, and returns it. */
+static int ffplaykmp_fail(ffplaykmp_player *player, int error) {
+    pthread_mutex_lock(&player->mutex);
+    player->snapshot.last_error = error;
+    player->snapshot.state = FFPLAYKMP_STATE_FAILED;
+    pthread_mutex_unlock(&player->mutex);
+    ffplaykmp_publish(player);
+    return error;
+}
+
 static void *ffplaykmp_playback_worker(void *opaque) {
     ffplaykmp_player *player = opaque;
     const char *input;
@@ -1413,7 +1267,8 @@ static void *ffplaykmp_playback_worker(void *opaque) {
     input = player->input;
     start_position_us = player->snapshot.position_us;
     pthread_mutex_unlock(&player->mutex);
-    result = ffplaykmp_decode_frames(player, input, start_position_us, 1);
+    result = ffplaykmp_decode_frames(player, input, start_position_us, 1,
+                player->configuration.decoder_preference);
     if (ffplaykmp_is_aborted(player))
         return NULL;
     ffplaykmp_invalidate_master_clock(player);
@@ -1452,7 +1307,6 @@ static void ffplaykmp_stop_worker(ffplaykmp_player *player) {
 static int ffplaykmp_start_worker(ffplaykmp_player *player) {
     int result;
     ffplaykmp_stop_worker(player);
-    atomic_store(&player->worker_abort, 0);
     pthread_mutex_lock(&player->mutex);
     result = pthread_create(&player->worker, NULL, ffplaykmp_playback_worker, player);
     if (result == 0)
@@ -1475,7 +1329,9 @@ static int ffplaykmp_require_prepared(ffplaykmp_player *player) {
  * software-upload path, so every desktop preference needs that path.
  */
 static int ffplaykmp_can_decode(const ffplaykmp_player *player, uint32_t flags) {
+#if defined(__ANDROID__) || defined(__APPLE__)
     const int preference = player->configuration.decoder_preference;
+#endif
     if (player->source_flags & FFPLAYKMP_SOURCE_REQUIRE_SECURE_PATH)
         return 0;
 #if defined(__ANDROID__)
@@ -1633,6 +1489,10 @@ void ffplaykmp_player_destroy(ffplaykmp_player *player) {
     ffplaykmp_release_android_surface(player);
 #endif
     free(player->input);
+    sws_freeContext(player->rgba_scaler);
+    sws_freeContext(player->float_scaler);
+    av_free(player->rgba_buffer);
+    av_free(player->float_buffer);
     pthread_mutex_destroy(&player->mutex);
     free(player);
 }
@@ -1700,7 +1560,8 @@ int ffplaykmp_player_prepare(
         }
     }
     if (has_output && ffplaykmp_can_decode(player, output_flags)) {
-        result = ffplaykmp_decode_frames(player, input, 0, 0);
+        result = ffplaykmp_decode_frames(player, input, 0, 0,
+                player->configuration.decoder_preference);
         if (result < 0) {
             pthread_mutex_lock(&player->mutex);
             free(player->input);
@@ -1728,7 +1589,6 @@ int ffplaykmp_player_set_output(
         const ffplaykmp_output_capabilities *capabilities) {
     int result;
     const char *input;
-    uint32_t source_flags;
     int64_t position_us;
     int play_when_ready;
     int native_playback;
@@ -1736,34 +1596,22 @@ int ffplaykmp_player_set_output(
         return -EINVAL;
     ffplaykmp_stop_worker(player);
     result = ffplaykmp_validate_output(player, capabilities->flags);
-    if (result < 0) {
-        pthread_mutex_lock(&player->mutex);
-        player->snapshot.last_error = result;
-        player->snapshot.state = FFPLAYKMP_STATE_FAILED;
-        pthread_mutex_unlock(&player->mutex);
-        ffplaykmp_publish(player);
-        return result;
-    }
+    if (result < 0)
+        return ffplaykmp_fail(player, result);
     pthread_mutex_lock(&player->mutex);
     player->has_output = 1;
     player->snapshot.output_flags = capabilities->flags;
     player->snapshot.active_decoder = FFPLAYKMP_DECODER_UNKNOWN;
     input = player->input;
-    source_flags = player->source_flags;
     position_us = player->snapshot.position_us;
     play_when_ready = player->play_when_ready;
     native_playback = input && ffplaykmp_can_decode(player, capabilities->flags);
     pthread_mutex_unlock(&player->mutex);
     if (native_playback) {
-        result = ffplaykmp_decode_frames(player, input, position_us, 0);
-        if (result < 0) {
-            pthread_mutex_lock(&player->mutex);
-            player->snapshot.last_error = result;
-            player->snapshot.state = FFPLAYKMP_STATE_FAILED;
-            pthread_mutex_unlock(&player->mutex);
-            ffplaykmp_publish(player);
-            return result;
-        }
+        result = ffplaykmp_decode_frames(player, input, position_us, 0,
+                player->configuration.decoder_preference);
+        if (result < 0)
+            return ffplaykmp_fail(player, result);
     }
     pthread_mutex_lock(&player->mutex);
     if (input)
@@ -1774,14 +1622,8 @@ int ffplaykmp_player_set_output(
     ffplaykmp_publish(player);
     if (play_when_ready && native_playback) {
         result = ffplaykmp_start_worker(player);
-        if (result < 0) {
-            pthread_mutex_lock(&player->mutex);
-            player->snapshot.last_error = result;
-            player->snapshot.state = FFPLAYKMP_STATE_FAILED;
-            pthread_mutex_unlock(&player->mutex);
-            ffplaykmp_publish(player);
-            return result;
-        }
+        if (result < 0)
+            return ffplaykmp_fail(player, result);
     }
     return 0;
 }
@@ -1825,14 +1667,8 @@ int ffplaykmp_player_play(ffplaykmp_player *player) {
     ffplaykmp_publish(player);
     if (native_playback) {
         result = ffplaykmp_start_worker(player);
-        if (result < 0) {
-            pthread_mutex_lock(&player->mutex);
-            player->snapshot.last_error = result;
-            player->snapshot.state = FFPLAYKMP_STATE_FAILED;
-            pthread_mutex_unlock(&player->mutex);
-            ffplaykmp_publish(player);
-            return result;
-        }
+        if (result < 0)
+            return ffplaykmp_fail(player, result);
     }
     return 0;
 }
@@ -1873,15 +1709,10 @@ int ffplaykmp_player_seek(ffplaykmp_player *player, int64_t position_us) {
     pthread_mutex_unlock(&player->mutex);
     ffplaykmp_publish(player);
     if (native_playback) {
-        result = ffplaykmp_decode_frames(player, input, position_us, 0);
-        if (result < 0) {
-            pthread_mutex_lock(&player->mutex);
-            player->snapshot.last_error = result;
-            player->snapshot.state = FFPLAYKMP_STATE_FAILED;
-            pthread_mutex_unlock(&player->mutex);
-            ffplaykmp_publish(player);
-            return result;
-        }
+        result = ffplaykmp_decode_frames(player, input, position_us, 0,
+                player->configuration.decoder_preference);
+        if (result < 0)
+            return ffplaykmp_fail(player, result);
     }
     pthread_mutex_lock(&player->mutex);
     player->snapshot.state = !player->has_output
@@ -1954,11 +1785,7 @@ int ffplaykmp_player_get_snapshot(
 }
 
 typedef struct ffplaykmp_web_packet_reader {
-    AVFormatContext *format;
-    AVIOContext *avio;
-    ffplaykmp_avio *io;
-    uint8_t *avio_buffer;
-    int resource_opened;
+    ffplaykmp_input input;
     int video_stream;
 } ffplaykmp_web_packet_reader;
 
@@ -1996,15 +1823,7 @@ static void ffplaykmp_web_close_packet_reader(ffplaykmp_player *player) {
     callbacks->packet_reader = NULL;
     if (!reader)
         return;
-    avformat_close_input(&reader->format);
-    if (reader->avio) {
-        av_freep(&reader->avio->buffer);
-        avio_context_free(&reader->avio);
-    }
-    av_free(reader->avio_buffer);
-    if (reader->resource_opened && player->io_callback)
-        player->io_callback(player->io_opaque, 1, FFPLAYKMP_IO_CLOSE, 0, NULL, 0);
-    av_free(reader->io);
+    ffplaykmp_close_input(player, &reader->input);
     free(reader);
 }
 
@@ -2319,7 +2138,6 @@ int ffplaykmp_web_player_open_packets(
     ffplaykmp_web_packet_reader *reader;
     const AVCodecParameters *parameters;
     char codec[64];
-    int64_t capabilities;
     int result;
     if (!player || !callback)
         return -EINVAL;
@@ -2330,50 +2148,17 @@ int ffplaykmp_web_player_open_packets(
     reader = calloc(1, sizeof(*reader));
     if (!reader)
         return AVERROR(ENOMEM);
-    reader->format = avformat_alloc_context();
-    reader->io = av_mallocz(sizeof(*reader->io));
-    reader->avio_buffer = av_malloc(32768);
-    if (!reader->format || !reader->io || !reader->avio_buffer) {
-        result = AVERROR(ENOMEM);
-        goto fail;
-    }
-    capabilities = player->io_callback(
-            player->io_opaque, 1, FFPLAYKMP_IO_OPEN, 1, NULL, 0);
-    if (capabilities < 0) {
-        result = AVERROR(EIO);
-        goto fail;
-    }
-    reader->resource_opened = 1;
-    reader->io->player = player;
-    reader->io->resource_id = 1;
-    reader->avio = avio_alloc_context(
-            reader->avio_buffer,
-            32768,
-            0,
-            reader->io,
-            ffplaykmp_avio_read,
-            NULL,
-            (capabilities & 4) ? ffplaykmp_avio_seek : NULL);
-    if (!reader->avio) {
-        result = AVERROR(ENOMEM);
-        goto fail;
-    }
-    reader->avio_buffer = NULL;
-    reader->format->pb = reader->avio;
-    reader->format->flags |= AVFMT_FLAG_CUSTOM_IO;
-    result = avformat_open_input(&reader->format, NULL, NULL, NULL);
-    if (result < 0)
-        goto fail;
-    result = avformat_find_stream_info(reader->format, NULL);
+    /* The worker mounts the prepared bytes as resource 1. */
+    result = ffplaykmp_open_input(player, "ffmpegkmp:1", &reader->input);
     if (result < 0)
         goto fail;
     reader->video_stream = av_find_best_stream(
-            reader->format, AVMEDIA_TYPE_VIDEO, -1, -1, NULL, 0);
+            reader->input.format, AVMEDIA_TYPE_VIDEO, -1, -1, NULL, 0);
     if (reader->video_stream < 0) {
         result = reader->video_stream;
         goto fail;
     }
-    parameters = reader->format->streams[reader->video_stream]->codecpar;
+    parameters = reader->input.format->streams[reader->video_stream]->codecpar;
     result = ffplaykmp_web_codec_string(parameters, codec, sizeof(codec));
     if (result < 0)
         goto fail;
@@ -2411,22 +2196,22 @@ int ffplaykmp_web_player_read_packet(
         return -EINVAL;
     callbacks = player->opaque;
     reader = callbacks ? callbacks->packet_reader : NULL;
-    if (!reader || !reader->format)
+    if (!reader || !reader->input.format)
         return -EPERM;
     packet = av_packet_alloc();
     if (!packet)
         return AVERROR(ENOMEM);
-    while ((result = av_read_frame(reader->format, packet)) >= 0) {
+    while ((result = av_read_frame(reader->input.format, packet)) >= 0) {
         if (packet->stream_index != reader->video_stream) {
             av_packet_unref(packet);
             continue;
         }
-        stream = reader->format->streams[reader->video_stream];
+        stream = reader->input.format->streams[reader->video_stream];
         timestamp = packet->pts != AV_NOPTS_VALUE ? packet->pts : packet->dts;
         if (timestamp == AV_NOPTS_VALUE)
             timestamp = 0;
         timestamp = av_rescale_q(timestamp, stream->time_base, AV_TIME_BASE_Q) -
-                ffplaykmp_media_start_us(reader->format);
+                ffplaykmp_media_start_us(reader->input.format);
         if (timestamp < 0)
             timestamp = 0;
         duration = packet->duration > 0
@@ -2515,11 +2300,11 @@ int ffplaykmp_web_player_webcodecs_seek(
         return -EINVAL;
     callbacks = player->opaque;
     reader = callbacks ? callbacks->packet_reader : NULL;
-    if (!reader || !reader->format)
+    if (!reader || !reader->input.format)
         return -EPERM;
-    stream = reader->format->streams[reader->video_stream];
+    stream = reader->input.format->streams[reader->video_stream];
     target = av_rescale_q(
-            ffplaykmp_media_start_us(reader->format) + position_us,
+            ffplaykmp_media_start_us(reader->input.format) + position_us,
             AV_TIME_BASE_Q,
             stream->time_base);
     pthread_mutex_lock(&player->mutex);
@@ -2530,7 +2315,7 @@ int ffplaykmp_web_player_webcodecs_seek(
     pthread_mutex_unlock(&player->mutex);
     ffplaykmp_publish(player);
     result = avformat_seek_file(
-            reader->format,
+            reader->input.format,
             reader->video_stream,
             INT64_MIN,
             target,

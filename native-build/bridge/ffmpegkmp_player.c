@@ -2,10 +2,8 @@
 /*
  * Audio playback engine: demuxes one input, decodes any subset of its audio
  * tracks, resamples each to the host's output format and mixes them with live
- * per-track and master gains into interleaved float PCM.
- *
- * It uses the libav* APIs directly rather than fftools, so it holds none of the
- * process-global CLI state and runs alongside ffmpeg/ffprobe commands.
+ * per-track and master gains into interleaved float PCM. See ffmpegkmp_bridge.h
+ * for the API and its threading contract.
  */
 #include "ffmpegkmp_bridge.h"
 
@@ -18,7 +16,6 @@
 #include "libavformat/avformat.h"
 #include "libavutil/audio_fifo.h"
 #include "libavutil/channel_layout.h"
-#include "libavutil/opt.h"
 #include "libswresample/swresample.h"
 
 /* Memory bound on decoded audio one track may queue while another starves.
@@ -156,16 +153,21 @@ static int activate_track(ffmpegkmp_player *player, player_track *track) {
 
 static void apply_track_requests(ffmpegkmp_player *player) {
     int any_requested = 0;
-    for (int i = 0; i < player->track_count; i++)
-        any_requested |= atomic_load(&player->tracks[i].requested_enabled);
+    /* One snapshot per call, so concurrent toggles can't split the decision. */
+    for (int i = 0; i < player->track_count; i++) {
+        player->tracks[i].mixed = atomic_load(&player->tracks[i].requested_enabled);
+        any_requested |= player->tracks[i].mixed;
+    }
     for (int i = 0; i < player->track_count; i++) {
         player_track *track = &player->tracks[i];
-        track->mixed = atomic_load(&track->requested_enabled);
         int wanted = track->mixed || (!any_requested && i == player->clock_track);
         if (wanted && !track->active) {
             if (activate_track(player, track) < 0) {
                 atomic_store(&track->requested_enabled, 0);
                 track->mixed = 0;
+                /* An undecodable clock track would otherwise be retried on every read. */
+                if (i == player->clock_track)
+                    player->clock_track = -1;
             }
         } else if (!wanted && track->active) {
             deactivate_track(track);
@@ -291,7 +293,11 @@ static int drain_decoder(ffmpegkmp_player *player, player_track *track) {
 
 static int io_read(void *opaque, uint8_t *buffer, int size) {
     ffmpegkmp_player *player = opaque;
-    int64_t count = player->io_callback(
+    int64_t count;
+    /* Custom I/O bypasses the interrupt callback, so honour abort here. */
+    if (atomic_load(&player->abort_requested))
+        return AVERROR_EXIT;
+    count = player->io_callback(
             player->io_opaque, player->io_resource, FFMPEGKMP_IO_READ,
             player->io_position, buffer, (uint64_t) size);
     if (count < 0 || count > size)
@@ -651,8 +657,8 @@ int ffmpegkmp_player_read(ffmpegkmp_player *player, float *pcm, int frames) {
             most = FFMAX(most, size);
             decoded_most = FFMAX(decoded_most, av_audio_fifo_size(player->tracks[i].fifo));
         }
-        /* With every track disabled nothing needs decoding; demuxing on would
-         * only run the input to EOF and leave nothing for a re-enabled track. */
+        /* active == 0 only when nothing is decodable (the clock track keeps
+         * decoding otherwise); demuxing on would just run the input to EOF. */
         if (active == 0 || player->demux_eof || fewest >= frames || decoded_most >= max_buffered)
             break;
         if (atomic_load(&player->abort_requested))
@@ -696,6 +702,10 @@ int ffmpegkmp_player_read(ffmpegkmp_player *player, float *pcm, int frames) {
         int count = av_audio_fifo_read(track->fifo, planes, available - silent);
         if (count < 0)
             return count;
+        /* A starved track played short; realign it on its next frame instead of
+         * letting it run late from here on. */
+        if (count < available - silent && !player->demux_eof)
+            track->aligned = 0;
         const float gain = bits_float(atomic_load(&track->gain_bits));
         float *destination = pcm + (size_t) silent * channels;
         const int values = count * channels;
