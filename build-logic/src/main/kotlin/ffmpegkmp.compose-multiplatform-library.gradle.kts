@@ -10,6 +10,8 @@ import org.jetbrains.kotlin.gradle.dsl.KotlinMultiplatformExtension
  * tvOS or watchOS. This convention owns that target set explicitly.
  */
 pluginManager.apply("ffmpegkmp.multiplatform-library-base")
+pluginManager.apply("org.jetbrains.compose")
+pluginManager.apply("org.jetbrains.kotlin.plugin.compose")
 
 configureLibraryAppleTargets(includeTvosAndWatchos = false)
 

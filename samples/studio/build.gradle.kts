@@ -4,8 +4,8 @@ plugins {
     id("ffmpegkmp.project")
     id("org.jetbrains.kotlin.multiplatform")
     id("com.android.kotlin.multiplatform.library")
-    alias(libs.plugins.jetbrains.compose)
-    alias(libs.plugins.kotlin.compose.compiler)
+    id("org.jetbrains.compose")
+    id("org.jetbrains.kotlin.plugin.compose")
 }
 
 description = "Shared Compose Multiplatform multi-clip editor sample"

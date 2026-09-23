@@ -4,10 +4,7 @@ import org.gradle.api.tasks.testing.Test
 plugins {
     id("ffmpegkmp.compose-multiplatform-library")
     id("ffmpegkmp.shared-media-test-fixtures")
-    alias(libs.plugins.jetbrains.compose)
-    alias(libs.plugins.kotlin.compose.compiler)
 }
-
 
 tasks.named<Test>("jvmTest") { useHostNativeRuntime() }
 

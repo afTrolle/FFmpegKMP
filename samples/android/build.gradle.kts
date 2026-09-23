@@ -2,7 +2,7 @@ import org.gradle.api.tasks.Sync
 
 plugins {
     id("com.android.application")
-    alias(libs.plugins.kotlin.compose.compiler)
+    id("org.jetbrains.kotlin.plugin.compose")
 }
 
 description = "Android launcher for the FFmpegKMP Studio sample"
