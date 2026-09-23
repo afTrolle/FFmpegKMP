@@ -322,7 +322,7 @@ static int ffplaykmp_parse_resource_id(const char *input, int64_t *resource_id) 
         return 0;
     parsed = strtoll(input + sizeof(prefix) - 1, &end, 10);
     if (parsed <= 0 || end == input + sizeof(prefix) - 1)
-        return -EINVAL;
+        return FFPLAYKMP_ERROR_INVALID_ARGUMENT;
     *resource_id = (int64_t)parsed;
     return 1;
 }
@@ -961,7 +961,7 @@ static int ffplaykmp_present_ready_frames(
         (*decoded_frames)++;
         if (require_hardware && !frame_is_hardware) {
             av_frame_unref(frame);
-            return AVERROR(ENOTSUP);
+            return FFPLAYKMP_ERROR_UNSUPPORTED;
         }
         pthread_mutex_lock(&player->mutex);
         player->snapshot.active_decoder = frame_is_hardware
@@ -1052,7 +1052,7 @@ static int ffplaykmp_decode_frames(
 #endif
     }
     if (require_hardware && !hardware_active) {
-        result = AVERROR(ENOTSUP);
+        result = FFPLAYKMP_ERROR_UNSUPPORTED;
         goto cleanup;
     }
 
@@ -1317,9 +1317,9 @@ static int ffplaykmp_start_worker(ffplaykmp_player *player) {
 
 static int ffplaykmp_require_prepared(ffplaykmp_player *player) {
     if (!player)
-        return -EINVAL;
+        return FFPLAYKMP_ERROR_INVALID_ARGUMENT;
     if (!player->input)
-        return -EPERM;
+        return FFPLAYKMP_ERROR_INVALID_STATE;
     return 0;
 }
 
@@ -1355,7 +1355,7 @@ static int ffplaykmp_validate_output(
         uint32_t output_flags) {
     if ((player->source_flags & FFPLAYKMP_SOURCE_REQUIRE_SECURE_PATH) &&
             !(output_flags & FFPLAYKMP_OUTPUT_PROTECTED_CONTENT))
-        return -EACCES;
+        return FFPLAYKMP_ERROR_ACCESS_DENIED;
     if (player->configuration.decoder_preference == FFPLAYKMP_DECODER_REQUIRE_HARDWARE &&
 #if defined(__ANDROID__)
             !(output_flags & FFPLAYKMP_OUTPUT_HARDWARE_FRAME_IMPORT))
@@ -1365,10 +1365,10 @@ static int ffplaykmp_validate_output(
 #else
             !(output_flags & FFPLAYKMP_OUTPUT_SOFTWARE_FRAME_UPLOAD))
 #endif
-        return -ENOTSUP;
+        return FFPLAYKMP_ERROR_UNSUPPORTED;
     if (!(output_flags & (FFPLAYKMP_OUTPUT_HARDWARE_FRAME_IMPORT |
             FFPLAYKMP_OUTPUT_SOFTWARE_FRAME_UPLOAD)))
-        return -ENOTSUP;
+        return FFPLAYKMP_ERROR_UNSUPPORTED;
     return 0;
 }
 
@@ -1448,23 +1448,23 @@ int ffplaykmp_player_set_android_surface(
     jobject previous;
     JavaVM *vm = NULL;
     if (!env || !player)
-        return -EINVAL;
+        return FFPLAYKMP_ERROR_INVALID_ARGUMENT;
     (void)owner;
     /* A secure Surface alone is not a DRM session. Never claim a protected
      * path until MediaCrypto/secure-input integration is supplied. */
     if (secure)
-        return -ENOTSUP;
+        return FFPLAYKMP_ERROR_UNSUPPORTED;
     if (surface) {
         retained = (*env)->NewGlobalRef(env, surface);
         if (!retained)
             return -ENOMEM;
         if ((*env)->GetJavaVM(env, &vm) != JNI_OK) {
             (*env)->DeleteGlobalRef(env, retained);
-            return -EIO;
+            return FFPLAYKMP_ERROR_IO;
         }
         if (av_jni_set_java_vm(vm, NULL) < 0) {
             (*env)->DeleteGlobalRef(env, retained);
-            return -EIO;
+            return FFPLAYKMP_ERROR_IO;
         }
     }
     ffplaykmp_stop_worker(player);
@@ -1506,7 +1506,7 @@ int ffplaykmp_player_prepare(
     int has_output;
     int result;
     if (!player || !input || !*input)
-        return -EINVAL;
+        return FFPLAYKMP_ERROR_INVALID_ARGUMENT;
     owned_input = malloc(strlen(input) + 1);
     if (!owned_input)
         return -ENOMEM;
@@ -1593,7 +1593,7 @@ int ffplaykmp_player_set_output(
     int play_when_ready;
     int native_playback;
     if (!player || !capabilities || capabilities->size < sizeof(*capabilities))
-        return -EINVAL;
+        return FFPLAYKMP_ERROR_INVALID_ARGUMENT;
     ffplaykmp_stop_worker(player);
     result = ffplaykmp_validate_output(player, capabilities->flags);
     if (result < 0)
@@ -1695,7 +1695,7 @@ int ffplaykmp_player_seek(ffplaykmp_player *player, int64_t position_us) {
     if (result < 0)
         return result;
     if (position_us < 0)
-        return -EINVAL;
+        return FFPLAYKMP_ERROR_INVALID_ARGUMENT;
     ffplaykmp_stop_worker(player);
     ffplaykmp_invalidate_master_clock(player);
     pthread_mutex_lock(&player->mutex);
@@ -1730,7 +1730,7 @@ int ffplaykmp_player_seek(ffplaykmp_player *player, int64_t position_us) {
 
 int ffplaykmp_player_stop(ffplaykmp_player *player) {
     if (!player)
-        return -EINVAL;
+        return FFPLAYKMP_ERROR_INVALID_ARGUMENT;
     ffplaykmp_stop_worker(player);
     ffplaykmp_invalidate_master_clock(player);
     pthread_mutex_lock(&player->mutex);
@@ -1777,7 +1777,7 @@ int ffplaykmp_player_get_snapshot(
         const ffplaykmp_player *player,
         ffplaykmp_snapshot *snapshot) {
     if (!player || !snapshot || snapshot->size < sizeof(*snapshot))
-        return -EINVAL;
+        return FFPLAYKMP_ERROR_INVALID_ARGUMENT;
     pthread_mutex_lock((pthread_mutex_t *)&player->mutex);
     *snapshot = player->snapshot;
     pthread_mutex_unlock((pthread_mutex_t *)&player->mutex);
@@ -1857,7 +1857,7 @@ static int ffplaykmp_web_codec_string(
                 parameters->bits_per_raw_sample > 8 ? "av01.0.08M.10" : "av01.0.08M.08") > 0
                 ? 0 : AVERROR(EINVAL);
     default:
-        return AVERROR(ENOTSUP);
+        return FFPLAYKMP_ERROR_UNSUPPORTED;
     }
 }
 
@@ -2058,10 +2058,10 @@ int ffplaykmp_web_player_prepare_bytes(
     char safe_extension[17];
     size_t index = 0;
     if (!player || !bytes || size == 0)
-        return -EINVAL;
+        return FFPLAYKMP_ERROR_INVALID_ARGUMENT;
     callbacks = player->opaque;
     if (!callbacks)
-        return -EINVAL;
+        return FFPLAYKMP_ERROR_INVALID_ARGUMENT;
     ffplaykmp_player_reset_cancel(player);
     ffplaykmp_web_close_packet_reader(player);
     copied = malloc(size);
@@ -2140,10 +2140,10 @@ int ffplaykmp_web_player_open_packets(
     char codec[64];
     int result;
     if (!player || !callback)
-        return -EINVAL;
+        return FFPLAYKMP_ERROR_INVALID_ARGUMENT;
     callbacks = player->opaque;
     if (!callbacks || !callbacks->input || callbacks->input_size == 0)
-        return -EPERM;
+        return FFPLAYKMP_ERROR_INVALID_STATE;
     ffplaykmp_web_close_packet_reader(player);
     reader = calloc(1, sizeof(*reader));
     if (!reader)
@@ -2193,11 +2193,11 @@ int ffplaykmp_web_player_read_packet(
     uint32_t queue_serial;
     int result;
     if (!player || !callback)
-        return -EINVAL;
+        return FFPLAYKMP_ERROR_INVALID_ARGUMENT;
     callbacks = player->opaque;
     reader = callbacks ? callbacks->packet_reader : NULL;
     if (!reader || !reader->input.format)
-        return -EPERM;
+        return FFPLAYKMP_ERROR_INVALID_STATE;
     packet = av_packet_alloc();
     if (!packet)
         return AVERROR(ENOMEM);
@@ -2244,7 +2244,7 @@ int ffplaykmp_web_player_set_webcodecs_output(
         uint32_t output_flags) {
     int result;
     if (!player)
-        return -EINVAL;
+        return FFPLAYKMP_ERROR_INVALID_ARGUMENT;
     result = ffplaykmp_validate_output(player, output_flags);
     if (result < 0)
         return result;
@@ -2264,7 +2264,7 @@ int ffplaykmp_web_player_set_webcodecs_output(
 
 int ffplaykmp_web_player_webcodecs_play(ffplaykmp_player *player) {
     if (ffplaykmp_require_prepared(player) < 0)
-        return -EPERM;
+        return FFPLAYKMP_ERROR_INVALID_STATE;
     pthread_mutex_lock(&player->mutex);
     player->play_when_ready = 1;
     player->snapshot.state = player->has_output
@@ -2277,7 +2277,7 @@ int ffplaykmp_web_player_webcodecs_play(ffplaykmp_player *player) {
 
 int ffplaykmp_web_player_webcodecs_pause(ffplaykmp_player *player) {
     if (ffplaykmp_require_prepared(player) < 0)
-        return -EPERM;
+        return FFPLAYKMP_ERROR_INVALID_STATE;
     pthread_mutex_lock(&player->mutex);
     player->play_when_ready = 0;
     player->snapshot.state = FFPLAYKMP_STATE_PAUSED;
@@ -2296,11 +2296,11 @@ int ffplaykmp_web_player_webcodecs_seek(
     int play_when_ready;
     int result;
     if (!player || position_us < 0 || ffplaykmp_require_prepared(player) < 0)
-        return -EINVAL;
+        return FFPLAYKMP_ERROR_INVALID_ARGUMENT;
     callbacks = player->opaque;
     reader = callbacks ? callbacks->packet_reader : NULL;
     if (!reader || !reader->input.format)
-        return -EPERM;
+        return FFPLAYKMP_ERROR_INVALID_STATE;
     stream = reader->input.format->streams[reader->video_stream];
     target = av_rescale_q(
             ffplaykmp_media_start_us(reader->input.format) + position_us,
@@ -2340,11 +2340,11 @@ int ffplaykmp_web_player_webcodecs_presented(
         uint32_t queue_serial,
         int32_t dropped) {
     if (!player)
-        return -EINVAL;
+        return FFPLAYKMP_ERROR_INVALID_ARGUMENT;
     pthread_mutex_lock(&player->mutex);
     if (queue_serial != player->snapshot.queue_serial) {
         pthread_mutex_unlock(&player->mutex);
-        return -ESTALE;
+        return FFPLAYKMP_ERROR_STALE;
     }
     player->snapshot.position_us = position_us;
     if (dropped)

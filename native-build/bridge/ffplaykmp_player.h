@@ -54,6 +54,20 @@ typedef enum ffplaykmp_hdr_type {
     FFPLAYKMP_HDR_UNKNOWN = 5,
 } ffplaykmp_hdr_type;
 
+/*
+ * Errors the player reports itself. errno numbering differs between hosts
+ * (Apple's ENOTSUP is 45, Emscripten follows WASI), so these fixed values sit
+ * outside the errno range. Any other negative result is an FFmpeg AVERROR.
+ */
+typedef enum ffplaykmp_error {
+    FFPLAYKMP_ERROR_INVALID_ARGUMENT = -1001,
+    FFPLAYKMP_ERROR_INVALID_STATE = -1002,
+    FFPLAYKMP_ERROR_ACCESS_DENIED = -1003,
+    FFPLAYKMP_ERROR_UNSUPPORTED = -1004,
+    FFPLAYKMP_ERROR_IO = -1005,
+    FFPLAYKMP_ERROR_STALE = -1006,
+} ffplaykmp_error;
+
 typedef enum ffplaykmp_source_flags {
     FFPLAYKMP_SOURCE_REQUIRE_SECURE_PATH = 1u << 0,
 } ffplaykmp_source_flags;

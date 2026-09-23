@@ -128,15 +128,16 @@ public data class NativePlatformVideoFrame(
 )
 
 /**
- * Error codes the player bridges report themselves (negative Linux errno values). Native engines
- * return their platform's errno, which differs on some hosts (ENOTSUP is 45 on Apple).
+ * Errors the player reports itself, mirroring `ffplaykmp_error`: fixed values, because errno
+ * numbering differs between hosts. Any other negative code is an FFmpeg AVERROR.
  */
 @InternalFFmpegKmpApi
 public object NativePlayerError {
-    public const val IO: Int = -5
-    public const val ACCESS_DENIED: Int = -13
-    public const val INVALID_ARGUMENT: Int = -22
-    public const val UNSUPPORTED: Int = -95
+    public const val INVALID_ARGUMENT: Int = -1001
+    public const val INVALID_STATE: Int = -1002
+    public const val ACCESS_DENIED: Int = -1003
+    public const val UNSUPPORTED: Int = -1004
+    public const val IO: Int = -1005
 }
 
 @InternalFFmpegKmpApi

@@ -14,6 +14,7 @@ import io.github.aftrolle.ffmpegkmp.bindings.NativePlayerSource
 import io.github.aftrolle.ffmpegkmp.bindings.NativePlatformVideoFrame
 import io.github.aftrolle.ffmpegkmp.bindings.NativePlatformVideoFrameKind
 import io.github.aftrolle.ffmpegkmp.bindings.NativeVideoFrame
+import io.github.aftrolle.ffmpegkmp.bindings.NativePlayerError
 import io.github.aftrolle.ffmpegkmp.bindings.createInMemoryPlayerBridge
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -316,7 +317,7 @@ private class ControllablePlayerBridge(
         return delegate.setOutput(capabilities)
     }
     override fun setPlatformOutputTarget(target: Any?, secure: Boolean): Int {
-        if (rejectedPlatformTarget != null && target === rejectedPlatformTarget) return -95
+        if (rejectedPlatformTarget != null && target === rejectedPlatformTarget) return NativePlayerError.UNSUPPORTED
         platformTarget = target
         return 0
     }

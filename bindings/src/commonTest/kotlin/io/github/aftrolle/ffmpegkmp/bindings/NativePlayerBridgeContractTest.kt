@@ -50,9 +50,9 @@ class NativePlayerBridgeContractTest {
         val bridge = createInMemoryPlayerBridge(NativePlayerConfiguration()) {}
         bridge.prepare(NativePlayerSource("protected.mpd", requireSecurePath = true))
 
-        assertEquals(-13, bridge.setOutput(NativePlayerOutputCapabilities()))
+        assertEquals(NativePlayerError.ACCESS_DENIED, bridge.setOutput(NativePlayerOutputCapabilities()))
         assertEquals(NativePlayerState.FAILED, bridge.snapshot().state)
-        assertEquals(-13, bridge.snapshot().errorCode)
+        assertEquals(NativePlayerError.ACCESS_DENIED, bridge.snapshot().errorCode)
 
         assertEquals(
             0,
@@ -76,7 +76,7 @@ class NativePlayerBridgeContractTest {
         ) {}
         bridge.prepare(NativePlayerSource("movie.mp4"))
 
-        assertEquals(-95, bridge.setOutput(NativePlayerOutputCapabilities()))
+        assertEquals(NativePlayerError.UNSUPPORTED, bridge.setOutput(NativePlayerOutputCapabilities()))
         assertEquals(NativePlayerState.FAILED, bridge.snapshot().state)
         bridge.close()
     }
@@ -87,7 +87,7 @@ class NativePlayerBridgeContractTest {
         bridge.setOutput(NativePlayerOutputCapabilities())
 
         assertEquals(
-            -13,
+            NativePlayerError.ACCESS_DENIED,
             bridge.prepare(NativePlayerSource("protected.mpd", requireSecurePath = true)),
         )
         assertEquals(NativePlayerState.FAILED, bridge.snapshot().state)

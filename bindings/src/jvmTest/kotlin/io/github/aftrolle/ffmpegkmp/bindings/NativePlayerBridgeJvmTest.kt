@@ -36,7 +36,7 @@ class NativePlayerBridgeJvmTest {
                 assertEquals(0, first.prepare(clearVideoSource(requireSecurePath = true)))
                 assertEquals(0, second.prepare(clearVideoSource()))
 
-                assertEquals(-13, first.setOutput(NativePlayerOutputCapabilities()))
+                assertEquals(NativePlayerError.ACCESS_DENIED, first.setOutput(NativePlayerOutputCapabilities()))
                 assertEquals(0, second.setOutput(NativePlayerOutputCapabilities()))
                 assertEquals(NativePlayerState.FAILED, first.snapshot().state)
                 assertEquals(NativePlayerState.READY, second.snapshot().state)
@@ -309,7 +309,7 @@ class NativePlayerBridgeJvmTest {
     fun failedSecurePrepareCannotBeRevivedByReplacingTheOutput() {
         createPlatformPlayerBridge(NativePlayerConfiguration(), update = {}).use { bridge ->
             assertEquals(0, bridge.setOutput(NativePlayerOutputCapabilities()))
-            assertEquals(-13, bridge.prepare(clearVideoSource(requireSecurePath = true)))
+            assertEquals(NativePlayerError.ACCESS_DENIED, bridge.prepare(clearVideoSource(requireSecurePath = true)))
 
             assertEquals(
                 0,
