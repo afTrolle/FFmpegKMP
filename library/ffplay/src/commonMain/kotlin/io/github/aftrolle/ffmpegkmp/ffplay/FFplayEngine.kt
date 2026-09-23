@@ -143,6 +143,8 @@ private class FFplayBridgeEngine(
     private var snapshot = FFplaySnapshot()
     private var source: FFplaySource? = null
     private var output: FFplayVideoOutput? = null
+    /** What [output] was attached with, after [FFplayConfiguration.hdrPolicy] is applied. */
+    private var negotiated = FFplayOutputCapabilities()
     private var nativeQueueSerial = 0u
     private var nativeDroppedFrames = 0L
     private var outputDroppedFrames = 0L
@@ -232,7 +234,8 @@ private class FFplayBridgeEngine(
         // platform object first so a rejected or failed replacement can never leave an old native
         // surface reachable behind a snapshot that reports no active output.
         clearBridgeOutput()
-        val negotiationFailure = output.negotiationFailure()
+        val capabilities = output.capabilities.applyHdrPolicy(snapshot.video)
+        val negotiationFailure = output.negotiationFailure(capabilities)
         if (negotiationFailure != null) {
             this.output = null
             val failure = FFplayFailure(negotiationFailure)
@@ -246,6 +249,7 @@ private class FFplayBridgeEngine(
             return
         }
         this.output = output
+        negotiated = capabilities
         val targetResult = bridge.setPlatformOutputTarget(
             output.platformTarget,
             output.securePlatformTarget,
@@ -263,7 +267,7 @@ private class FFplayBridgeEngine(
             emit(FFplayEvent.Fatal(message))
             return
         }
-        val result = bridge.setOutput(output.capabilities.toNative())
+        val result = bridge.setOutput(capabilities.toNative())
         if (result < 0) {
             this.output = null
             clearBridgeOutput()
@@ -316,7 +320,7 @@ private class FFplayBridgeEngine(
         nativeDroppedFrames = native.droppedFrames
         if (!decoderFallbackEmitted &&
             configuration.decoderPreference == FFplayDecoderPreference.AUTO &&
-            output?.capabilities?.hardwareFrameImport == true &&
+            output != null && negotiated.hardwareFrameImport &&
             native.activeDecoder == NativePlayerDecoderKind.SOFTWARE
         ) {
             decoderFallbackEmitted = true
@@ -364,7 +368,7 @@ private class FFplayBridgeEngine(
             return
         }
         val target = output ?: return
-        if (!target.capabilities.softwareFrameUpload) return
+        if (!negotiated.softwareFrameUpload) return
         val accepted = try {
             target.submitNative(native, snapshot.video)
         } catch (failure: Throwable) {
@@ -386,7 +390,7 @@ private class FFplayBridgeEngine(
     private fun acceptPlatformFrame(native: NativePlatformVideoFrame): Boolean {
         if (closed || native.queueSerial != nativeQueueSerial) return false
         val target = output ?: return false
-        if (!target.capabilities.hardwareFrameImport) return false
+        if (!negotiated.hardwareFrameImport) return false
         val accepted = try {
             target.submitPlatform(native, snapshot.video)
         } catch (failure: Throwable) {
@@ -410,6 +414,7 @@ private class FFplayBridgeEngine(
         activeDecoder: NativePlayerDecoderKind,
         video: FFplayVideoInfo?,
     ): FFplayOutputInfo {
+        val capabilities = negotiated
         val color = decideColorOutput(video, capabilities, configuration.hdrPolicy)
         return FFplayOutputInfo(
             decoder = when (activeDecoder) {
@@ -426,7 +431,23 @@ private class FFplayBridgeEngine(
         )
     }
 
-    private fun FFplayVideoOutput.negotiationFailure(): String? = when {
+    /**
+     * [FFplayHdrPolicy.FORCE_SDR] must not reach a path that would display this source as HDR, so
+     * such an output is negotiated as software upload only, which the native player tone maps.
+     */
+    private fun FFplayOutputCapabilities.applyHdrPolicy(video: FFplayVideoInfo?): FFplayOutputCapabilities =
+        if (configuration.hdrPolicy == FFplayHdrPolicy.FORCE_SDR && video?.colorTransfer in hdrTransfers) {
+            copy(
+                hardwareFrameImport = false,
+                zeroCopy = false,
+                hdrTransfers = emptySet(),
+                colorSpaces = setOf("sRGB"),
+            )
+        } else {
+            this
+        }
+
+    private fun FFplayVideoOutput.negotiationFailure(capabilities: FFplayOutputCapabilities): String? = when {
         source?.protection == FFplayContentProtection.REQUIRE_SECURE_PATH &&
             !capabilities.protectedContent ->
             "Protected content requires a verified secure decoder and native output surface"
@@ -436,6 +457,9 @@ private class FFplayBridgeEngine(
         configuration.outputPreference == FFplayOutputPreference.NATIVE_SURFACE &&
             kind == FFplayRendererKind.COMPOSE_CANVAS ->
             "A native video surface was required, but only the Compose Canvas output is available"
+        configuration.decoderPreference == FFplayDecoderPreference.REQUIRE_HARDWARE &&
+            !capabilities.hardwareFrameImport && this.capabilities.hardwareFrameImport ->
+            "FORCE_SDR must tone map this HDR source in software, but hardware decoding was required"
         configuration.decoderPreference == FFplayDecoderPreference.REQUIRE_HARDWARE &&
             !capabilities.hardwareFrameImport ->
             "Hardware decoding was required, but the attached output cannot import hardware frames"

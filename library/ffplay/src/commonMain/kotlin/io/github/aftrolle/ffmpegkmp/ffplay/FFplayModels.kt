@@ -27,7 +27,17 @@ public enum class FFplayContentProtection {
 
 public enum class FFplayDecoderPreference { AUTO, REQUIRE_HARDWARE, SOFTWARE }
 public enum class FFplayOutputPreference { AUTO, NATIVE_SURFACE, COMPOSE_CANVAS }
-public enum class FFplayHdrPolicy { PRESERVE_OR_TONE_MAP, FORCE_SDR }
+public enum class FFplayHdrPolicy {
+    /** Shows HDR as HDR where the whole output path can, and tone maps it elsewhere. */
+    PRESERVE_OR_TONE_MAP,
+
+    /**
+     * Always shows SDR. An HDR source that a direct surface would present as HDR is decoded to
+     * software frames and tone mapped instead, so it fails under
+     * [FFplayDecoderPreference.REQUIRE_HARDWARE].
+     */
+    FORCE_SDR,
+}
 
 public data class FFplayConfiguration(
     val decoderPreference: FFplayDecoderPreference = FFplayDecoderPreference.AUTO,

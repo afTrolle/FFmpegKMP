@@ -28,7 +28,8 @@ and reset by a new source or `stop()`.
 mastering and content-light metadata, and the HDR10/HLG/HDR10+/Dolby Vision classification. HDR is
 reported as preserved only when the whole active output path advertises the source transfer and
 color space; otherwise PQ and HLG are tone mapped to BT.709 (`TONE_MAPPED`) and other HDR transfers
-are `UNSUPPORTED`.
+are `UNSUPPORTED`. `FFplayHdrPolicy.FORCE_SDR` keeps HDR sources off the direct surfaces and tone maps
+them in software.
 
 ## Platforms
 
