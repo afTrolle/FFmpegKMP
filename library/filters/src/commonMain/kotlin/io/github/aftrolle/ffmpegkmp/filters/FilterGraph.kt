@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 package io.github.aftrolle.ffmpegkmp.filters
 
+import io.github.aftrolle.ffmpegkmp.core.AudioLevel
 import io.github.aftrolle.ffmpegkmp.ffmpeg.FFmpegCommand
 
 public class FilterPad internal constructor(internal val expression: String) {
@@ -61,6 +62,26 @@ public sealed interface FilterOperation {
 
     public data class Volume(val factor: Double) : FilterOperation {
         override fun render(): String = "volume=${factor.ffmpegNumber()}"
+    }
+
+    /**
+     * Sums several audio inputs into one (`amix`). [normalize] is off by default so each input
+     * keeps exactly the level it was given — the same sum the player produces live. Enable it
+     * to have FFmpeg scale inputs down by their count instead.
+     */
+    public data class AudioMix(
+        val inputCount: Int,
+        val duration: Duration = Duration.LONGEST,
+        val normalize: Boolean = false,
+    ) : FilterOperation {
+        public enum class Duration(internal val value: String) {
+            LONGEST("longest"),
+            SHORTEST("shortest"),
+            FIRST("first"),
+        }
+
+        override fun render(): String =
+            "amix=inputs=$inputCount:duration=${duration.value}:normalize=${if (normalize) 1 else 0}"
     }
 
     public data class Fade(
@@ -127,6 +148,12 @@ public class FilterGraph private constructor(
             return FilterPad("[$fileIndex:$stream]")
         }
 
+        /** Audio track [track] of input [fileIndex], by audio-relative index (`a:N`). */
+        public fun audioTrack(fileIndex: Int, track: Int = 0): FilterPad {
+            require(track >= 0) { "Audio track index must not be negative" }
+            return input(fileIndex, "a:$track")
+        }
+
         public fun trim(input: FilterPad, startSeconds: Double? = null, endSeconds: Double? = null, label: String? = null): FilterPad =
             node(listOf(input), FilterOperation.Trim(startSeconds, endSeconds), label)
 
@@ -169,6 +196,28 @@ public class FilterGraph private constructor(
 
         public fun volume(input: FilterPad, factor: Double, label: String? = null): FilterPad =
             node(listOf(input), FilterOperation.Volume(factor), label)
+
+        /** Applies [level]; a muted level renders `volume=0` so the track keeps its timing. */
+        public fun volume(input: FilterPad, level: AudioLevel, label: String? = null): FilterPad =
+            node(listOf(input), FilterOperation.Volume(level.effectiveVolume), label)
+
+        /**
+         * Mixes several audio tracks into one, each at its own [AudioLevel]. Unchanged levels
+         * skip the extra `volume` node; a single track becomes just its `volume` node.
+         */
+        public fun mixAudio(
+            tracks: List<Pair<FilterPad, AudioLevel>>,
+            duration: FilterOperation.AudioMix.Duration = FilterOperation.AudioMix.Duration.LONGEST,
+            normalize: Boolean = false,
+            label: String? = null,
+        ): FilterPad {
+            require(tracks.isNotEmpty()) { "An audio mix requires at least one track" }
+            tracks.singleOrNull()?.let { (pad, level) -> return volume(pad, level, label) }
+            val leveled = tracks.map { (pad, level) ->
+                if (level == AudioLevel.Unchanged) pad else volume(pad, level, null)
+            }
+            return node(leveled, FilterOperation.AudioMix(leveled.size, duration, normalize), label)
+        }
 
         public fun fade(
             input: FilterPad,

@@ -39,7 +39,23 @@ The `library` modules provide the platform-neutral API:
   and errors;
 - `ffmpeg` provides typed command construction and a raw-argument escape hatch;
 - `ffprobe` exposes typed media-inspection models; and
-- `filters` provides the optional filter-graph DSL.
+- `filters` provides the optional filter-graph DSL; and
+- `player` provides audio decoding and playback with live volume, mute, and
+  track controls.
+
+`AudioLevel` in `core` is the one loudness model shared by the command DSL
+(`audioLevel`), the filter DSL (`volume`, `mixAudio`) and the player, so a
+preview and an export apply identical gains.
+
+The player does not use fftools. `native-build/bridge/ffmpegkmp_player.c` demuxes
+with libavformat, decodes each enabled audio track with libavcodec, resamples
+it with libswresample into a per-track FIFO, and mixes the FIFOs with atomic
+per-track and master gains. Each track is aligned to the playback position by
+its first frame's timestamp after an open, a seek, or being enabled. That makes
+seeking sample-accurate and lets a track join mid-playback without shifting the
+timeline. With every track disabled, the default track keeps decoding unmixed,
+so the silence follows the real timeline. The engine holds no process-global
+state and runs concurrently with the command FIFO below.
 
 Every `FFmpegClient` and `FFprobeClient` submits to one process-wide FIFO. This
 is intentional: FFmpeg's command tools and logging retain process-global state.

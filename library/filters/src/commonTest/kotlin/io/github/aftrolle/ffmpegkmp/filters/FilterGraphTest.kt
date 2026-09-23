@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 package io.github.aftrolle.ffmpegkmp.filters
 
+import io.github.aftrolle.ffmpegkmp.core.AudioLevel
 import kotlin.test.Test
 import kotlin.test.assertEquals
 
@@ -39,5 +40,35 @@ class FilterGraphTest {
                 "[quiet]atempo=1.25[sped]",
             graph.compile(),
         )
+    }
+
+    @Test
+    fun mixesTracksAtIndependentLevels() {
+        val graph = FilterGraph {
+            mixAudio(
+                listOf(
+                    audioTrack(0, 0) to AudioLevel.Unchanged,
+                    audioTrack(0, 1) to AudioLevel(volume = 0.4),
+                    audioTrack(1) to AudioLevel(volume = 0.9, muted = true),
+                ),
+                label = "mix",
+            )
+        }
+
+        assertEquals(
+            "[0:a:1]volume=0.4[ffk0];" +
+                "[1:a:0]volume=0[ffk1];" +
+                "[0:a:0][ffk0][ffk1]amix=inputs=3:duration=longest:normalize=0[mix]",
+            graph.compile(),
+        )
+    }
+
+    @Test
+    fun singleTrackMixIsJustItsLevel() {
+        val graph = FilterGraph {
+            mixAudio(listOf(audioTrack(0) to AudioLevel.Unchanged), label = "out")
+        }
+
+        assertEquals("[0:a:0]volume=1[out]", graph.compile())
     }
 }

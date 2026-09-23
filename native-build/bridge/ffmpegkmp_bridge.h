@@ -93,6 +93,56 @@ FFMPEGKMP_EXPORT void ffmpegkmp_exit(int status);
  * running ffprobe. Copies the string; pass NULL to reset to the defaults. */
 FFMPEGKMP_EXPORT void ffmpegkmp_set_temp_directory(const char *path);
 
+/*
+ * Audio playback engine (ffmpegkmp_player.c). Decodes any subset of one
+ * input's audio tracks and mixes them, with live per-track and master gains,
+ * into interleaved float PCM at a caller-chosen rate and channel count. It
+ * uses libav* directly, so it runs alongside ffmpeg/ffprobe commands.
+ *
+ * Threading: open/read/seek/close must not run concurrently with each other
+ * for one player. The set_*_gain, set_track_enabled and abort functions are
+ * safe from any thread; track changes apply on the next read.
+ * Tracks are numbered 0..track_count-1 in audio stream order (the `a:N`
+ * index), independent of absolute stream indices.
+ */
+typedef struct ffmpegkmp_player ffmpegkmp_player;
+
+/* Returns NULL on failure and stores the negative AVERROR in *error. The
+ * track FFmpeg would pick by default starts enabled; all others start off. */
+FFMPEGKMP_EXPORT ffmpegkmp_player *ffmpegkmp_player_open(
+        const char *url,
+        int output_sample_rate,
+        int output_channels,
+        int *error);
+/* Makes a blocked open/read return promptly; the player must still be closed. */
+FFMPEGKMP_EXPORT void ffmpegkmp_player_abort(ffmpegkmp_player *player);
+FFMPEGKMP_EXPORT void ffmpegkmp_player_close(ffmpegkmp_player *player);
+
+FFMPEGKMP_EXPORT int ffmpegkmp_player_track_count(const ffmpegkmp_player *player);
+FFMPEGKMP_EXPORT int ffmpegkmp_player_track_stream_index(const ffmpegkmp_player *player, int track);
+FFMPEGKMP_EXPORT int ffmpegkmp_player_track_channels(const ffmpegkmp_player *player, int track);
+FFMPEGKMP_EXPORT int ffmpegkmp_player_track_sample_rate(const ffmpegkmp_player *player, int track);
+/* Strings stay valid until the player is closed; absent tags are "". */
+FFMPEGKMP_EXPORT const char *ffmpegkmp_player_track_codec(const ffmpegkmp_player *player, int track);
+FFMPEGKMP_EXPORT const char *ffmpegkmp_player_track_language(const ffmpegkmp_player *player, int track);
+FFMPEGKMP_EXPORT const char *ffmpegkmp_player_track_title(const ffmpegkmp_player *player, int track);
+FFMPEGKMP_EXPORT int ffmpegkmp_player_track_is_default(const ffmpegkmp_player *player, int track);
+/* Zero when this build has no decoder for the track's codec. */
+FFMPEGKMP_EXPORT int ffmpegkmp_player_track_is_decodable(const ffmpegkmp_player *player, int track);
+FFMPEGKMP_EXPORT int ffmpegkmp_player_track_enabled(const ffmpegkmp_player *player, int track);
+FFMPEGKMP_EXPORT int ffmpegkmp_player_set_track_enabled(ffmpegkmp_player *player, int track, int enabled);
+/* Linear gains; values above 1 amplify and the mix clips at full scale. */
+FFMPEGKMP_EXPORT int ffmpegkmp_player_set_track_gain(ffmpegkmp_player *player, int track, float gain);
+FFMPEGKMP_EXPORT int ffmpegkmp_player_set_master_gain(ffmpegkmp_player *player, float gain);
+
+/* Microseconds from the input's start; duration is negative when unknown. */
+FFMPEGKMP_EXPORT int64_t ffmpegkmp_player_duration_us(const ffmpegkmp_player *player);
+FFMPEGKMP_EXPORT int64_t ffmpegkmp_player_position_us(const ffmpegkmp_player *player);
+FFMPEGKMP_EXPORT int ffmpegkmp_player_seek(ffmpegkmp_player *player, int64_t position_us);
+/* Fills up to `frames` interleaved frames; returns the count written, 0 at
+ * the end of the input, or a negative AVERROR. */
+FFMPEGKMP_EXPORT int ffmpegkmp_player_read(ffmpegkmp_player *player, float *pcm, int frames);
+
 #ifdef __cplusplus
 }
 #endif

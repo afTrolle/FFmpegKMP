@@ -17,6 +17,7 @@ val verifyMavenPublicationScope = tasks.register("verifyMavenPublicationScope") 
             ":library:ffmpeg",
             ":library:ffprobe",
             ":library:filters",
+            ":library:player",
         )
         val publishingProjects = allprojects
             .filter { it.pluginManager.hasPlugin("com.vanniktech.maven.publish") }

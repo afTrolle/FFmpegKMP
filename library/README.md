@@ -10,3 +10,6 @@ layer the public API on top without exposing binding details.
   ordered command DSL.
 - `ffprobe` owns queries plus forward-compatible typed JSON models.
 - `filters` owns the filter graph AST and compilation to `-filter_complex`.
+- `player` owns audio decoding (`AudioDecoder`) and playback (`AudioPlayer`)
+  with live per-track and master `AudioLevel`s and track selection. It uses the
+  bridge's libav-based engine, not fftools, so it does not join the FIFO.

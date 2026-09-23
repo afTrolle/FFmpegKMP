@@ -79,6 +79,60 @@ truncated by those limits.
 The module layers, binding backends, and native build flow are described in the
 [architecture documentation](docs/architecture.md).
 
+### Audio: volume, mute, and track selection
+
+The same `AudioLevel(volume, muted)` drives encoding and playback, so what a user
+hears in a preview is what an export renders. Tracks are addressed by their
+audio-relative index (`a:N`) in both.
+
+```kotlin
+// Encode: keep the second audio track at half volume and the commentary muted.
+val command = FFmpegCommand {
+    input("movie.mkv")
+    map("0:v:0")
+    mapAudio(track = 1)                           // output audio track 0
+    mapAudio(track = 2)                           // output audio track 1
+    audioLevel(AudioLevel(volume = 0.5), outputTrack = 0)
+    audioLevel(AudioLevel.Muted, outputTrack = 1) // present, but silent
+    audioCodec("aac")
+    output("out.mp4")
+}
+
+// Or mix tracks into one with the filters DSL (sums levels, like the player).
+val mix = FilterGraph {
+    mixAudio(
+        listOf(
+            audioTrack(0, 0) to AudioLevel.Unchanged,
+            audioTrack(1) to AudioLevel(volume = 0.3),
+        ),
+        label = "mix",
+    )
+}
+```
+
+The optional `player` artifact plays or decodes audio with live controls.
+`AudioPlayer` outputs through AudioTrack (Android), Java Sound (desktop) or
+AVAudioEngine (Apple); `AudioDecoder` gives the same mix as float PCM for your
+own pipeline. Both use FFmpeg's libraries directly rather than the command-line
+tools, so they run alongside `FFmpegClient` commands instead of queueing behind
+them. They are not available in the browser yet.
+
+```kotlin
+val player = AudioPlayer.open("movie.mkv")
+player.tracks          // codec, language, title, channels... per audio track
+player.selectTrack(1)  // switch language
+player.setTrackEnabled(2, true)   // or mix in commentary
+player.setTrackVolume(2, 0.4)
+player.setVolume(0.8)
+player.setMuted(true)
+player.play()
+player.seekTo(30.seconds)
+player.state.collect { /* PAUSED, PLAYING, ENDED, FAILED, CLOSED */ }
+```
+
+On iOS, set the app's `AVAudioSession` category before playing; the player
+leaves it unchanged.
+
 The optional `filters` artifact includes color-managed HDR mappings for HDR10
 BT.2020/PQ output. Android runtime builds expose P010 to MediaCodec encoders;
 callers must still select HEVC Main10 HDR10 only on Android 13+ devices whose
@@ -134,6 +188,8 @@ kotlin {
         implementation("io.github.aftrolle.ffmpegkmp:ffprobe:<version>")
         // Optional typed filter graph DSL:
         implementation("io.github.aftrolle.ffmpegkmp:filters:<version>")
+        // Optional audio playback and PCM decoding:
+        implementation("io.github.aftrolle.ffmpegkmp:player:<version>")
     }
 }
 ```
