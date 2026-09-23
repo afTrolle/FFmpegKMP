@@ -45,9 +45,10 @@ version = providers.gradleProperty("ffmpegkmp.version").orElse(derivedVersion).g
 
 if (project == rootProject) {
     tasks.register("printVersion") {
+        val projectVersion = project.version.toString()
         group = "help"
         description = "Prints the Maven version derived from an override or the current Git tag"
-        doLast { logger.quiet(project.version.toString()) }
+        doLast { logger.quiet(projectVersion) }
     }
 }
 

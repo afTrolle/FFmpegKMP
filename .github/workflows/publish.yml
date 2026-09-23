@@ -64,7 +64,7 @@ jobs:
           EXPECTED_VERSION: ${{ steps.version.outputs.value }}
         run: |
           expected="$EXPECTED_VERSION"
-          actual="$(./gradlew -q printVersion --no-configuration-cache)"
+          actual="$(./gradlew -q printVersion)"
           test "$actual" = "$expected" || {
             echo "Tag version $expected does not match Gradle version $actual." >&2
             exit 1
@@ -75,7 +75,6 @@ jobs:
           ./gradlew verifyMavenPublicationScope
           publishAllPublicationsToReleaseCheckRepository
           -Pffmpegkmp.version=${{ steps.version.outputs.value }}
-          --no-configuration-cache
           --stacktrace
 
       - name: Reject native binaries in Maven artifacts
@@ -85,5 +84,4 @@ jobs:
         run: >-
           ./gradlew publishAndReleaseToMavenCentral
           -Pffmpegkmp.version=${{ steps.version.outputs.value }}
-          --no-configuration-cache
           --stacktrace

@@ -22,14 +22,18 @@ import kotlinx.cinterop.CPointer
 import kotlinx.cinterop.CPointerVar
 import kotlinx.cinterop.StableRef
 import kotlinx.cinterop.UByteVar
+import kotlinx.cinterop.addressOf
 import kotlinx.cinterop.allocArray
 import kotlinx.cinterop.asStableRef
+import kotlinx.cinterop.convert
 import kotlinx.cinterop.cstr
 import kotlinx.cinterop.memScoped
 import kotlinx.cinterop.ptr
 import kotlinx.cinterop.readBytes
 import kotlinx.cinterop.set
 import kotlinx.cinterop.staticCFunction
+import kotlinx.cinterop.usePinned
+import platform.posix.memcpy
 import kotlin.concurrent.atomics.AtomicBoolean
 import okio.Buffer
 
@@ -113,7 +117,7 @@ private class NativeCInteropExecutionBridge : NativeExecutionBridge {
     }
 }
 
-private fun protocolUrl(id: Long, path: String): String = "ffmpegkmp:$id${path.fileSuffix()}"
+internal fun protocolUrl(id: Long, path: String): String = "ffmpegkmp:$id${path.fileSuffix()}"
 
 private fun String.fileSuffix(): String {
     val name = substringAfterLast('/').substringAfterLast('\\')
@@ -145,8 +149,13 @@ private fun receiveNativeEvent(
     )
 }
 
-private class NativeMountedResource(private val resource: NativeIoResource) {
+internal class NativeMountedResource(
+    private val resource: NativeIoResource,
+    private val replayableSource: Boolean = false,
+) {
     private val truncated = AtomicBoolean(false)
+    private val sourceCache = Buffer()
+    private var sourceExhausted = false
 
     fun dispatch(operation: Int, offset: Long, data: CPointer<UByteVar>?, size: ULong): Long = try {
         when (operation) {
@@ -176,7 +185,7 @@ private class NativeMountedResource(private val resource: NativeIoResource) {
                 NativeIoAccess.READ_WRITE -> IO_CAP_READ or IO_CAP_WRITE or IO_CAP_SEEK
             }
         }
-        is NativeSourceResource -> IO_CAP_READ
+        is NativeSourceResource -> IO_CAP_READ or if (replayableSource) IO_CAP_SEEK else 0
         is NativeSinkResource -> IO_CAP_WRITE
     }.toLong()
 
@@ -184,16 +193,25 @@ private class NativeMountedResource(private val resource: NativeIoResource) {
         val bytes = ByteArray(size)
         val count = when (resource) {
             is NativeFileResource -> resource.fileHandle.read(offset, bytes, 0, size)
-            is NativeSourceResource -> {
+            is NativeSourceResource -> if (replayableSource) {
+                fillSourceCache(offset + size)
+                val available = (sourceCache.size - offset).coerceIn(0, size.toLong()).toInt()
+                if (available > 0) {
+                    val copy = Buffer()
+                    sourceCache.copyTo(copy, offset, available.toLong())
+                    copy.readExactly(bytes, available)
+                }
+                available
+            } else {
                 val buffer = Buffer()
                 val read = resource.source.read(buffer, size.toLong())
-                if (read > 0L) buffer.read(bytes, 0, read.toInt())
+                if (read > 0L) buffer.readExactly(bytes, read.toInt())
                 read.toInt()
             }
             is NativeSinkResource -> return IO_FAILURE
         }
         if (count <= 0) return 0L
-        repeat(count) { index -> data[index] = bytes[index].toUByte() }
+        bytes.usePinned { pinned -> memcpy(data, pinned.addressOf(0), count.convert()) }
         return count.toLong()
     }
 
@@ -212,7 +230,24 @@ private class NativeMountedResource(private val resource: NativeIoResource) {
 
     private fun size(): Long = when (resource) {
         is NativeFileResource -> resource.fileHandle.size()
+        is NativeSourceResource -> if (replayableSource) {
+            fillSourceCache(requiredSize = null)
+            sourceCache.size
+        } else {
+            IO_FAILURE
+        }
         else -> IO_FAILURE
+    }
+
+    private fun fillSourceCache(requiredSize: Long?) {
+        val source = (resource as? NativeSourceResource)?.source ?: return
+        while (!sourceExhausted && (requiredSize == null || sourceCache.size < requiredSize)) {
+            val request = requiredSize
+                ?.minus(sourceCache.size)
+                ?.coerceAtMost(32_768L)
+                ?: 32_768L
+            if (source.read(sourceCache, request) <= 0L) sourceExhausted = true
+        }
     }
 
     private fun close(): Long {

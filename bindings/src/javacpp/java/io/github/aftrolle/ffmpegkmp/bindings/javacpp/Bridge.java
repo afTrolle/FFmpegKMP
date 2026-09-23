@@ -10,7 +10,7 @@ import org.bytedeco.javacpp.tools.InfoMapper;
 @Properties(
         value = {
                 @Platform(
-                        cinclude = "<ffmpegkmp_bridge.h>",
+                        cinclude = {"<ffmpegkmp_bridge.h>", "<ffplaykmp_player.h>"},
                         link = {"ffmpegkmp_bridge#", "avdevice", "avfilter", "avformat", "avcodec", "swscale", "swresample", "avutil"}
                 ),
                 // Platform-specific link lists replace the default one, so repeat it in full.
@@ -28,5 +28,9 @@ public class Bridge implements InfoMapper {
     @Override public void map(InfoMap infoMap) {
         BasePreset.common(infoMap);
         infoMap.put(new Info("FFMPEGKMP_EXPORT").cppText("#define FFMPEGKMP_EXPORT"));
+        infoMap.put(new Info("FFPLAYKMP_EXPORT").cppText("#define FFPLAYKMP_EXPORT"));
+        // Kept out of the platform-neutral generated declarations. AndroidPlayerSurface
+        // exposes this one function with JavaCPP's raw-JNI object handling instead.
+        infoMap.put(new Info("ffplaykmp_player_set_android_surface").skip());
     }
 }

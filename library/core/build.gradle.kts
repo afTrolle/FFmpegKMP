@@ -72,7 +72,9 @@ tasks.withType<Test>().matching { it.name == "testAndroidHostTest" }.configureEa
 kotlin {
     sourceSets {
         commonMain.dependencies {
-            implementation(project(":bindings"))
+            // Sibling modules use the opt-in mounted-I/O adapter without exposing
+            // generated platform declarations in their public APIs.
+            api(project(":bindings"))
             api(libs.kotlinx.coroutines.core)
             api(libs.okio)
         }

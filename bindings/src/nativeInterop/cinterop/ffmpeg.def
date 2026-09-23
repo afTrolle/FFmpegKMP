@@ -1,6 +1,6 @@
 package = io.github.aftrolle.ffmpegkmp.bindings.cinterop
 headers = ffmpegkmp_umbrella.h
-headerFilter = ffmpegkmp_bridge.h libavcodec/** libavdevice/** libavfilter/** libavformat/** libavutil/** libswresample/** libswscale/**
+headerFilter = ffmpegkmp_bridge.h ffplaykmp_player.h libavcodec/** libavdevice/** libavfilter/** libavformat/** libavutil/** libswresample/** libswscale/**
 excludeDependentModules = true
 
 ---
