@@ -231,10 +231,13 @@ private fun startWorker(
 
 private fun terminateWorker(worker: JsAny): Unit = js("worker.terminate()")
 
-/** One bulk copy out of Wasm memory, viewed unsigned as the worker expects. */
-private fun ByteArray.toJsUint8Array(): JsAny = unsignedView(toInt8Array())
+/**
+ * Bulk-copies out of Wasm memory into an unsigned array that owns its whole buffer: the worker
+ * transfers `.buffer`, and `toInt8Array()` does not guarantee a buffer of its own.
+ */
+private fun ByteArray.toJsUint8Array(): JsAny = unsignedCopy(toInt8Array())
 
-private fun unsignedView(bytes: Int8Array): JsAny = js("new Uint8Array(bytes.buffer, bytes.byteOffset, bytes.length)")
+private fun unsignedCopy(bytes: Int8Array): JsAny = js("new Uint8Array(bytes.buffer, bytes.byteOffset, bytes.length).slice()")
 
 private fun JsAny.toBrowserWorkerOutputs(): List<BrowserWorkerOutput> =
     List(outputCount(this)) { outputIndex ->

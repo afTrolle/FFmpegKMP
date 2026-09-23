@@ -141,6 +141,8 @@ class CompiledRuntimeIntegrationTest {
 
     @Test
     fun plainSinkWithoutStagingFailsForAFormatThatNeedsToSeek() = runTest {
+        // Browser mounts are buffered whole in the worker, so even a plain Sink is seekable there.
+        if (!stagingSupportedOnThisPlatform) return@runTest
         // Demonstrates Staging is load-bearing, not a no-op: the exact same command that
         // succeeds above fails without it, because a plain Sink mount is non-seekable and
         // the default (non-fragmented) MP4 muxer needs to seek to patch its header.

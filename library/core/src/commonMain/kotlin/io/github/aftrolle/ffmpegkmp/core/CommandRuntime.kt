@@ -262,6 +262,7 @@ private class CommandExecutionSession(
             } else {
                 val result = result(nativeResult.returnCode, started.elapsedNow(), false)
                 mutableState.value = if (nativeResult.returnCode == 0) SessionState.SUCCEEDED else SessionState.FAILED
+                closeIoOnce()
                 completion.complete(result)
             }
         } catch (cancellation: CancellationException) {
@@ -269,6 +270,7 @@ private class CommandExecutionSession(
             completeCancelled(started.elapsedNow())
         } catch (failure: Throwable) {
             mutableState.value = SessionState.FAILED
+            closeIoOnce()
             completion.completeExceptionally(NativeExecutionException("Native FFmpeg execution failed", failure))
         } finally {
             staged?.contexts?.forEach { context -> runCatching { context.temporaryFile.close() } }
@@ -329,7 +331,9 @@ private class CommandExecutionSession(
         notifyTerminalOnce()
     }
 
+    /** Completion is the caller's signal that its I/O is released, so every path closes it first. */
     private fun completeCancelled(duration: kotlin.time.Duration, returnCode: Int = 255) {
+        closeIoOnce()
         mutableState.value = SessionState.CANCELLED
         completion.complete(result(returnCode, duration, true))
     }
