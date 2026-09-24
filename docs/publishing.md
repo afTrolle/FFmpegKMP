@@ -153,7 +153,7 @@ version. For example:
 Inspect the result at any time:
 
 ```shell
-./gradlew -q printVersion
+./gradlew -q printVersion --no-configuration-cache
 ```
 
 Central releases are immutable. Never move a release tag or try to reuse a
@@ -205,7 +205,8 @@ build directory:
 release_version='0.1.0'
 ./gradlew verifyMavenPublicationScope \
     publishAllPublicationsToReleaseCheckRepository \
-    -Pffmpegkmp.version="$release_version"
+    -Pffmpegkmp.version="$release_version" \
+    --no-configuration-cache
 ```
 
 Run the mandatory native-content scan:
@@ -221,7 +222,8 @@ explicitly unsigned local audit repository instead:
 ./gradlew verifyMavenPublicationScope \
     publishAllPublicationsToReleaseCheckRepository \
     -Pffmpegkmp.version="$release_version" \
-    -Pffmpegkmp.unsignedPublicationAudit=true
+    -Pffmpegkmp.unsignedPublicationAudit=true \
+    --no-configuration-cache
 scripts/verify-no-native-binaries.sh build/release-check-repository
 ```
 
@@ -276,7 +278,8 @@ The same guarded flow can be run locally after preflight:
 
 ```shell
 ./gradlew publishAndReleaseToMavenCentral \
-    -Pffmpegkmp.version="$release_version"
+    -Pffmpegkmp.version="$release_version" \
+    --no-configuration-cache
 ```
 
 `publishToMavenCentral` uploads for portal review without automatically
