@@ -30,6 +30,12 @@ internal actual fun PlatformFFplaySurface(
     contentScale: ContentScale,
     backgroundColor: Color,
 ) {
+    // Drawn on the Compose canvas, a video stacks, clips and blends with the composables around it; the HTML canvas
+    // below sits above all of them.
+    if (player.configuration.outputPreference == FFplayOutputPreference.COMPOSE_CANVAS) {
+        ComposeCanvasFFplaySurface(player, modifier, contentScale, backgroundColor)
+        return
+    }
     val output = remember(player) { WebCanvasOutput() }
     output.scaleMode = contentScale.webScaleMode()
     output.background = backgroundColor.cssColor()
