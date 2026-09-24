@@ -3,6 +3,7 @@
 
 package io.github.aftrolle.ffmpegkmp.player
 
+import kotlinx.cinterop.convert
 import kotlinx.cinterop.get
 import kotlinx.cinterop.set
 import kotlinx.coroutines.CoroutineDispatcher
@@ -33,7 +34,8 @@ private class AudioEngineOutput(private val format: PcmFormat) : PlatformAudioOu
     private val avFormat = requireNotNull(
         AVAudioFormat(standardFormatWithSampleRate = format.sampleRate.toDouble(), channels = format.channels.toUInt()),
     ) { "AVAudioEngine cannot play ${format.channels} channels at ${format.sampleRate} Hz" }
-    private val slots = dispatch_semaphore_create(QUEUED_BUFFERS.toLong())
+    // intptr_t: 32 bits on watchOS's arm64_32 and armv7k, 64 elsewhere.
+    private val slots = dispatch_semaphore_create(QUEUED_BUFFERS.convert())
     private val buffers = arrayOfNulls<AVAudioPCMBuffer>(QUEUED_BUFFERS)
     private var next = 0
     private var largestWrite = 0
@@ -91,7 +93,7 @@ private class AudioEngineOutput(private val format: PcmFormat) : PlatformAudioOu
      * route change), queued buffers never complete, so fail instead of blocking forever.
      */
     private fun acquireSlot() {
-        while (dispatch_semaphore_wait(slots, dispatch_time(DISPATCH_TIME_NOW, SLOT_WAIT_NANOS)) != 0L) {
+        while (dispatch_semaphore_wait(slots, dispatch_time(DISPATCH_TIME_NOW, SLOT_WAIT_NANOS)).toLong() != 0L) {
             check(engine.running) { "The audio engine stopped (interrupted or its route changed)" }
         }
     }
