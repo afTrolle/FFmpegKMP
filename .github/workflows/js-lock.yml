@@ -1,0 +1,34 @@
+name: Kotlin/JS lock files
+
+# The Kotlin/JS and Wasm test toolchains resolve npm packages against the committed yarn locks.
+# A lock that no longer matches (for example after a Kotlin upgrade) fails every browser test
+# before it runs, so catch it here; this needs no FFmpeg or Emscripten build.
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Check out
+        uses: actions/checkout@v6
+        with:
+          submodules: recursive
+
+      - name: Set up Java
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: 21
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v6
+
+      - name: Verify the yarn locks
+        run: ./gradlew kotlinStoreYarnLock kotlinWasmStoreYarnLock
