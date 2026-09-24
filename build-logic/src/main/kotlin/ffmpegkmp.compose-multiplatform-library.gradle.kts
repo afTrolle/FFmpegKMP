@@ -24,3 +24,9 @@ extensions.configure<KotlinMultiplatformExtension> {
         binaries.executable()
     }
 }
+
+// That JS executable also makes Compose copy its Skiko web runtime into the JS main resources.
+// Applications get Skiko from Compose itself, so it must not ship inside this library's klib.
+tasks.withType<Jar>().matching { it.name == "jsJar" }.configureEach {
+    exclude("skiko.mjs", "skiko.wasm", "skikod8.mjs", "js-reexport-symbols.mjs")
+}
