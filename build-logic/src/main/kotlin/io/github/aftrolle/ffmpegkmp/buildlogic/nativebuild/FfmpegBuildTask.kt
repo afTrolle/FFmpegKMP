@@ -4,6 +4,7 @@ import org.gradle.api.DefaultTask
 import org.gradle.api.file.DirectoryProperty
 import org.gradle.api.file.FileSystemOperations
 import org.gradle.api.provider.ListProperty
+import org.gradle.api.provider.ProviderFactory
 import org.gradle.api.provider.Property
 import org.gradle.api.provider.SetProperty
 import org.gradle.api.tasks.Input
@@ -27,6 +28,9 @@ abstract class FfmpegBuildTask : DefaultTask() {
 
     @get:Inject
     protected abstract val fileSystemOperations: FileSystemOperations
+
+    @get:Inject
+    protected abstract val providers: ProviderFactory
 
     @get:InputDirectory
     @get:PathSensitive(PathSensitivity.RELATIVE)
@@ -89,6 +93,9 @@ abstract class FfmpegBuildTask : DefaultTask() {
     @get:Input abstract val extraCompilerArgs: ListProperty<String>
     @get:Input abstract val extraLinkerArgs: ListProperty<String>
 
+    /** Whether libva resolves on this host, so installing it makes a Linux build stale. */
+    @get:Input abstract val libvaAvailable: Property<Boolean>
+
     init {
         sdkName.convention("")
         deploymentTarget.convention("")
@@ -97,6 +104,16 @@ abstract class FfmpegBuildTask : DefaultTask() {
         androidNdkDirectory.convention("")
         emscriptenDirectory.convention("")
         buildRuntime.convention(true)
+        libvaAvailable.convention(
+            targetKind.zip(targetName) { kind, name -> kind == "jvm" && name.startsWith("linux") }
+                .flatMap { linux ->
+                    if (linux) {
+                        providers.of(PkgConfigPackageExists::class.java) { parameters.packageName.set("libva") }
+                    } else {
+                        providers.provider { false }
+                    }
+                },
+        )
         encoders.convention(emptySet())
         decoders.convention(emptySet())
         muxers.convention(emptySet())
@@ -427,12 +444,28 @@ abstract class FfmpegBuildTask : DefaultTask() {
             }
             "linux" -> {
                 arguments += listOf(
-                    "--target-os=linux", "--arch=${architecture.get()}", "--disable-vaapi",
+                    "--target-os=linux", "--arch=${architecture.get()}",
                     "--disable-vdpau", "--disable-vulkan", "--disable-opencl",
                 )
+                // VAAPI is an optional host capability. Enable it only when the target build can
+                // resolve libva; the player still probes device creation again at runtime.
+                if (hardwareDecoding.get() && libvaAvailable.get()) {
+                    arguments += "--enable-vaapi"
+                } else {
+                    arguments += "--disable-vaapi"
+                }
                 if (architecture.get().startsWith("x86")) arguments += "--disable-x86asm"
+                if (enableAvailableSystemFeatures.get()) arguments += "--enable-zlib"
             }
-            "windows" -> arguments += listOf("--target-os=mingw32", "--arch=x86_64", "--disable-x86asm")
+            "windows" -> {
+                arguments += listOf("--target-os=mingw32", "--arch=x86_64", "--disable-x86asm")
+                arguments += if (hardwareDecoding.get()) {
+                    listOf("--enable-d3d11va", "--enable-dxva2")
+                } else {
+                    listOf("--disable-d3d11va", "--disable-dxva2")
+                }
+                if (enableAvailableSystemFeatures.get()) arguments += "--enable-zlib"
+            }
             else -> error("Unsupported JVM native host: $os")
         }
         if (os != "macos" && extraCompilerArgs.get().isNotEmpty()) {

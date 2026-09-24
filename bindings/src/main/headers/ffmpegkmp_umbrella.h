@@ -10,6 +10,7 @@
 #include <libswresample/swresample.h>
 #include <libswscale/swscale.h>
 #include <ffmpegkmp_bridge.h>
+#include <ffplaykmp_player.h>
 #include <ffmpegkmp_macros.h>
 
 #endif

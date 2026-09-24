@@ -1,5 +1,6 @@
 plugins {
     id("ffmpegkmp.multiplatform-library")
+    id("ffmpegkmp.shared-media-test-fixtures")
 }
 
 description = "Typed FFmpeg filter-graph DSL"

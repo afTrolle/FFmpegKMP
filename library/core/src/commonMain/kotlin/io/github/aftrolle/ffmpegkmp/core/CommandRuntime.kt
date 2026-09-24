@@ -229,11 +229,11 @@ private class CommandExecutionSession(
     suspend fun run() {
         val started = TimeSource.Monotonic.markNow()
         var staged: StagedMounts? = null
+        // Completing tells callers the session is over, so it happens only after the finally
+        // below has released the staging files, the caller's I/O and the client registration.
+        var complete: () -> Unit = { completeCancelled(kotlin.time.Duration.ZERO) }
         try {
-            if (cancelled.load()) {
-                completeCancelled(kotlin.time.Duration.ZERO)
-                return
-            }
+            if (cancelled.load()) return
 
             mutableState.value = SessionState.RUNNING
             staged = prepareStaging()
@@ -257,23 +257,30 @@ private class CommandExecutionSession(
                 }
             }
 
-            if (cancelled.load()) {
-                completeCancelled(started.elapsedNow(), nativeResult.returnCode)
+            val duration = started.elapsedNow()
+            complete = if (cancelled.load()) {
+                { completeCancelled(duration, nativeResult.returnCode) }
             } else {
-                val result = result(nativeResult.returnCode, started.elapsedNow(), false)
-                mutableState.value = if (nativeResult.returnCode == 0) SessionState.SUCCEEDED else SessionState.FAILED
-                completion.complete(result)
+                {
+                    mutableState.value =
+                        if (nativeResult.returnCode == 0) SessionState.SUCCEEDED else SessionState.FAILED
+                    completion.complete(result(nativeResult.returnCode, duration, false))
+                }
             }
         } catch (cancellation: CancellationException) {
             cancelled.store(true)
-            completeCancelled(started.elapsedNow())
+            val duration = started.elapsedNow()
+            complete = { completeCancelled(duration) }
         } catch (failure: Throwable) {
-            mutableState.value = SessionState.FAILED
-            completion.completeExceptionally(NativeExecutionException("Native FFmpeg execution failed", failure))
+            complete = {
+                mutableState.value = SessionState.FAILED
+                completion.completeExceptionally(NativeExecutionException("Native FFmpeg execution failed", failure))
+            }
         } finally {
             staged?.contexts?.forEach { context -> runCatching { context.temporaryFile.close() } }
             closeIoOnce()
             notifyTerminalOnce()
+            complete()
             if (closeRequested.load()) mutableState.value = SessionState.CLOSED
         }
     }
@@ -325,8 +332,8 @@ private class CommandExecutionSession(
     fun fail(failure: Throwable) {
         mutableState.value = SessionState.FAILED
         closeIoOnce()
-        completion.completeExceptionally(failure)
         notifyTerminalOnce()
+        completion.completeExceptionally(failure)
     }
 
     private fun completeCancelled(duration: kotlin.time.Duration, returnCode: Int = 255) {

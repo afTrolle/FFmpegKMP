@@ -104,7 +104,7 @@ class ExportCommandFactoryTest {
         isHdr: Boolean = false,
     ) = TimelineClip(
         id = id,
-        file = PlatformFile("/tmp/$name"),
+        file = testPlatformFile(name),
         displayName = name,
         sizeBytes = null,
         mediaInfo = ClipMediaInfo(
@@ -124,3 +124,5 @@ class ExportCommandFactoryTest {
         speed = speed,
     )
 }
+
+internal expect fun testPlatformFile(name: String): PlatformFile

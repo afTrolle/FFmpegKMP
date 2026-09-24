@@ -8,7 +8,6 @@ import io.github.aftrolle.ffmpegkmp.bindings.generated.bridge.ffmpegkmp_event_ca
 import io.github.aftrolle.ffmpegkmp.bindings.generated.bridge.ffmpegkmp_io_callback
 import io.github.aftrolle.ffmpegkmp.bindings.generated.bridge.global.bridge
 import java.io.File
-import okio.Buffer
 import org.bytedeco.javacpp.BytePointer
 import org.bytedeco.javacpp.Loader
 import org.bytedeco.javacpp.Pointer
@@ -139,7 +138,7 @@ private fun configuredJniPath(): String? =
  * loader failure so later client instances report the useful native-linker cause
  * instead of only `Could not initialize class ...global.bridge`.
  */
-private object JavaCppBridgeLoader {
+internal object JavaCppBridgeLoader {
     private var firstFailure: Throwable? = null
     private var loaded = false
 
@@ -179,90 +178,40 @@ private object JavaCppBridgeLoader {
     }
 }
 
-private fun protocolUrl(id: Long, path: String): String = "ffmpegkmp:$id${path.fileSuffix()}"
 
-private fun String.fileSuffix(): String {
-    val name = substringAfterLast('/').substringAfterLast('\\')
-    val suffix = name.substringAfterLast('.', missingDelimiterValue = "")
-    return if (suffix.isEmpty()) "" else ".$suffix"
-}
-
-private class MountedResource(private val resource: NativeIoResource) {
-    private var truncated = false
+/** Moves `ffmpegkmp:` protocol bytes between JavaCPP pointers and a [MountedIo]. */
+internal class MountedResource(resource: NativeIoResource, replayableSource: Boolean = false) {
+    private val io = MountedIo(resource, replayableSource)
+    private var scratch = ByteArray(0)
 
     @Synchronized
     fun dispatch(operation: Int, offset: Long, data: BytePointer?, size: Long): Long = try {
         when (operation) {
-            IO_OPEN -> open(offset.toInt())
-            IO_READ -> read(offset, data ?: return IO_FAILURE, size.checkedSize())
-            IO_WRITE -> write(offset, data ?: return IO_FAILURE, size.checkedSize())
-            IO_SIZE -> size()
-            IO_CLOSE -> close()
+            IO_OPEN -> io.open(offset.toInt())
+            IO_READ -> {
+                val bytes = scratch(size.checkedSize())
+                val count = io.read(offset, bytes, bytes.size.coerceAtMost(size.toInt()))
+                if (count > 0) (data ?: return IO_FAILURE).put(bytes, 0, count)
+                count.toLong()
+            }
+            IO_WRITE -> {
+                val length = size.checkedSize()
+                val bytes = scratch(length)
+                (data ?: return IO_FAILURE).get(bytes, 0, length)
+                if (io.write(offset, bytes, length)) length.toLong() else IO_FAILURE
+            }
+            IO_SIZE -> io.size()
+            IO_CLOSE -> io.close()
             else -> IO_FAILURE
         }
     } catch (_: Throwable) {
         IO_FAILURE
     }
 
-    private fun open(flags: Int): Long = when (resource) {
-        is NativeFileResource -> {
-            if (resource.truncate && flags and AVIO_FLAG_WRITE != 0 && !truncated) {
-                resource.fileHandle.resize(0L)
-                truncated = true
-            }
-            when (resource.access) {
-                NativeIoAccess.READ -> IO_CAP_READ or IO_CAP_SEEK
-                NativeIoAccess.WRITE -> IO_CAP_WRITE or IO_CAP_SEEK
-                NativeIoAccess.READ_WRITE -> IO_CAP_READ or IO_CAP_WRITE or IO_CAP_SEEK
-            }
-        }
-        is NativeSourceResource -> IO_CAP_READ
-        is NativeSinkResource -> IO_CAP_WRITE
-    }.toLong()
-
-    private fun read(offset: Long, data: BytePointer, size: Int): Long {
-        val bytes = ByteArray(size)
-        val count = when (resource) {
-            is NativeFileResource -> resource.fileHandle.read(offset, bytes, 0, size)
-            is NativeSourceResource -> {
-                val buffer = Buffer()
-                val read = resource.source.read(buffer, size.toLong())
-                if (read > 0L) buffer.read(bytes, 0, read.toInt())
-                read.toInt()
-            }
-            is NativeSinkResource -> return IO_FAILURE
-        }
-        if (count <= 0) return 0L
-        data.put(bytes, 0, count)
-        return count.toLong()
-    }
-
-    private fun write(offset: Long, data: BytePointer, size: Int): Long {
-        val bytes = ByteArray(size)
-        data.get(bytes)
-        when (resource) {
-            is NativeFileResource -> resource.fileHandle.write(offset, bytes, 0, size)
-            is NativeSinkResource -> {
-                val buffer = Buffer().write(bytes)
-                resource.sink.write(buffer, size.toLong())
-            }
-            is NativeSourceResource -> return IO_FAILURE
-        }
-        return size.toLong()
-    }
-
-    private fun size(): Long = when (resource) {
-        is NativeFileResource -> resource.fileHandle.size()
-        else -> IO_FAILURE
-    }
-
-    private fun close(): Long {
-        when (resource) {
-            is NativeFileResource -> if (resource.access != NativeIoAccess.READ) resource.fileHandle.flush()
-            is NativeSinkResource -> resource.sink.flush()
-            is NativeSourceResource -> Unit
-        }
-        return 0L
+    /** Reused across calls: FFmpeg reads in similar-sized blocks. */
+    private fun scratch(size: Int): ByteArray {
+        if (scratch.size < size) scratch = ByteArray(size)
+        return scratch
     }
 }
 
@@ -271,13 +220,3 @@ private fun Long.checkedSize(): Int {
     return toInt()
 }
 
-private const val IO_OPEN = 0
-private const val IO_READ = 1
-private const val IO_WRITE = 2
-private const val IO_SIZE = 3
-private const val IO_CLOSE = 4
-private const val IO_CAP_READ = 1
-private const val IO_CAP_WRITE = 2
-private const val IO_CAP_SEEK = 4
-private const val AVIO_FLAG_WRITE = 2
-private const val IO_FAILURE = -1L

@@ -4,8 +4,8 @@ plugins {
     id("ffmpegkmp.project")
     id("org.jetbrains.kotlin.multiplatform")
     id("com.android.kotlin.multiplatform.library")
-    alias(libs.plugins.jetbrains.compose)
-    alias(libs.plugins.kotlin.compose.compiler)
+    id("org.jetbrains.compose")
+    id("org.jetbrains.kotlin.plugin.compose")
 }
 
 description = "Shared Compose Multiplatform multi-clip editor sample"
@@ -15,6 +15,7 @@ kotlin {
         namespace = "io.github.aftrolle.ffmpegkmp.samples.studio"
         compileSdk = libs.versions.android.compileSdk.get().toInt()
         minSdk = libs.versions.android.minSdk.get().toInt()
+        withHostTest {}
     }
 
     jvm()
@@ -43,6 +44,7 @@ kotlin {
             implementation(project(":library:core"))
             implementation(project(":library:ffmpeg"))
             implementation(project(":library:ffprobe"))
+            implementation(project(":library:ffplay"))
             implementation(project(":library:filters"))
             implementation(libs.filekit.core)
             implementation(libs.filekit.dialogs.compose)

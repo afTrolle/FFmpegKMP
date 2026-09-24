@@ -82,6 +82,34 @@ class CompiledRuntimeIntegrationTest {
     }
 
     @Test
+    fun largeSourceInputReachesFFmpegIntact() = runTest {
+        // Okio moves a Source into a Buffer segment by segment (8 KiB each); a native read spans
+        // several of them, and every byte must arrive, not just the first segment's.
+        val input = ByteArray(LARGE_INPUT_BYTE_COUNT) { index -> (index * 31 + index / 8_192).toByte() }
+        val output = Buffer()
+        val ffmpeg = CommandRuntimeClient(CommandKind.FFMPEG)
+
+        try {
+            val result = ffmpeg.execute(
+                arguments = listOf(
+                    "-hide_banner", "-loglevel", "error",
+                    "-f", "u8", "-ar", "8000", "-ac", "1", "-i", LARGE_INPUT_PATH,
+                    "-c:a", "pcm_u8", "-f", "u8", LARGE_OUTPUT_PATH,
+                ),
+                io = CommandIo {
+                    input(LARGE_INPUT_PATH, Buffer().write(input))
+                    output(LARGE_OUTPUT_PATH, output)
+                },
+            )
+
+            assertTrue(result.isSuccess, result.errorOutput)
+            assertContentEquals(input, output.readByteArray())
+        } finally {
+            ffmpeg.close()
+        }
+    }
+
+    @Test
     fun stagingGivesAPlainSinkRealSeekableStorage() = runTest {
         if (!stagingSupportedOnThisPlatform) return@runTest
         val pixels = Buffer().apply { write(ByteArray(FRAME_BYTE_COUNT)) }
@@ -113,6 +141,8 @@ class CompiledRuntimeIntegrationTest {
 
     @Test
     fun plainSinkWithoutStagingFailsForAFormatThatNeedsToSeek() = runTest {
+        // Browser mounts are buffered whole in the worker, so even a plain Sink is seekable there.
+        if (!stagingSupportedOnThisPlatform) return@runTest
         // Demonstrates Staging is load-bearing, not a no-op: the exact same command that
         // succeeds above fails without it, because a plain Sink mount is non-seekable and
         // the default (non-fragmented) MP4 muxer needs to seek to patch its header.
@@ -267,6 +297,9 @@ class CompiledRuntimeIntegrationTest {
 
     private companion object {
         const val FRAME_BYTE_COUNT = 16 * 16 * 3
+        const val LARGE_INPUT_BYTE_COUNT = 128 * 1_024
+        const val LARGE_INPUT_PATH = "large.u8"
+        const val LARGE_OUTPUT_PATH = "large-copy.u8"
         const val RAW_INPUT_PATH = "frame.rgb"
         const val OUTPUT_PATH = "generated.nut"
         const val INPUT_PATH = "probe-input.nut"

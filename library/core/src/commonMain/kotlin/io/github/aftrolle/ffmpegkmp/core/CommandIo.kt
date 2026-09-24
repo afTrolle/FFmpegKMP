@@ -6,6 +6,7 @@ package io.github.aftrolle.ffmpegkmp.core
 import io.github.aftrolle.ffmpegkmp.bindings.NativeFileResource
 import io.github.aftrolle.ffmpegkmp.bindings.NativeIoAccess
 import io.github.aftrolle.ffmpegkmp.bindings.NativeIoResource
+import io.github.aftrolle.ffmpegkmp.bindings.NativeMountedIo
 import io.github.aftrolle.ffmpegkmp.bindings.NativeSinkResource
 import io.github.aftrolle.ffmpegkmp.bindings.NativeSourceResource
 import okio.FileHandle
@@ -75,3 +76,8 @@ public class CommandIo private constructor(
             Builder().apply(block).build()
     }
 }
+
+/** The mounts as bindings see them, for long-lived clients such as FFplay that own them. */
+@InternalFFmpegKmpApi
+public fun CommandIo.toNativeMounts(): List<NativeMountedIo> =
+    mounts.map { NativeMountedIo(it.path, it.resource) }

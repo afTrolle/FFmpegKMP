@@ -3,8 +3,8 @@ import java.io.File
 plugins {
     id("ffmpegkmp.project")
     id("org.jetbrains.kotlin.multiplatform")
-    alias(libs.plugins.jetbrains.compose)
-    alias(libs.plugins.kotlin.compose.compiler)
+    id("org.jetbrains.compose")
+    id("org.jetbrains.kotlin.plugin.compose")
 }
 
 description = "JVM desktop launcher for the FFmpegKMP Studio sample"

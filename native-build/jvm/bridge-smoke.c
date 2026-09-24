@@ -8,7 +8,7 @@ static void event_callback(
         ffmpegkmp_event_kind kind,
         int level,
         const uint8_t *data,
-        size_t size) {
+        uint64_t size) {
     size_t *events = opaque;
     (void) kind;
     (void) level;

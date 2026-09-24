@@ -6,6 +6,168 @@ let activeContext = 0;
 let activeId = null;
 let nativeRuntimeUnwound = false;
 const nativeDiagnostics = [];
+let playerHandle = 0;
+let playerStateCallback = 0;
+let playerFrameCallback = 0;
+let playerPollTimer = 0;
+let playerDecoderPreference = 0;
+let playerDecoderConfigCallback = 0;
+let playerPacketCallback = 0;
+let webCodecsDecoder = null;
+let webCodecsConfig = null;
+let webCodecsActive = false;
+let webCodecsPlaying = false;
+let webCodecsPreviewing = false;
+let webCodecsNeedsResumeSeek = false;
+let webCodecsPumping = false;
+let webCodecsEof = false;
+let webCodecsClockOriginMs = 0;
+let webCodecsPositionUs = 0;
+let webCodecsQueueSerial = 0;
+let webCodecsPresentationId = 1;
+let webCodecsOutputFlags = 0;
+const webCodecsPresentations = new Map();
+let playerMessageTail = Promise.resolve();
+
+// Audio of the prepared source, decoded here on demand and played by the page's AudioWorklet,
+// which it reaches directly through `port`. Chunks carry the seek epoch they belong to.
+const AUDIO_CHUNK_FRAMES = 2048;
+const AUDIO_BUFFER_SECONDS = 0.25;
+const audio = {
+  handle: 0,
+  port: null,
+  pcm: 0,
+  timer: 0,
+  channels: 0,
+  sampleRate: 0,
+  epoch: 0,
+  decoded: 0,
+  played: 0,
+  ended: false,
+};
+
+function audioFailure(message) {
+  self.postMessage({ type: 'player-audio', event: 'failure', payload: message });
+}
+
+function closeAudio(module) {
+  if (!audio.handle) return;
+  clearInterval(audio.timer);
+  module._ffmpegkmp_player_close(audio.handle);
+  module._free(audio.pcm);
+  audio.port.close();
+  Object.assign(audio, { handle: 0, port: null, pcm: 0, timer: 0 });
+}
+
+/** Keeps about AUDIO_BUFFER_SECONDS decoded ahead of what the worklet has played. */
+function pumpAudio(module) {
+  if (!audio.handle || audio.ended) return;
+  const target = audio.sampleRate * AUDIO_BUFFER_SECONDS;
+  while (audio.decoded - audio.played < target) {
+    const frames = module._ffmpegkmp_player_read(audio.handle, audio.pcm, AUDIO_CHUNK_FRAMES);
+    if (frames < 0) {
+      audioFailure(`Audio decoding failed (${frames})`);
+      closeAudio(module);
+      return;
+    }
+    if (frames === 0) {
+      audio.ended = true;
+      audio.port.postMessage({ type: 'end', epoch: audio.epoch });
+      return;
+    }
+    // slice() copies out of the shared Wasm heap into a buffer that can be transferred.
+    const samples = new Float32Array(module.HEAPU8.buffer, audio.pcm, frames * audio.channels).slice();
+    audio.port.postMessage({ type: 'pcm', epoch: audio.epoch, samples }, [samples.buffer]);
+    audio.decoded += frames;
+  }
+}
+
+function openAudio(module, data) {
+  closeAudio(module);
+  const errorPointer = module._malloc(4);
+  let handle;
+  let error;
+  try {
+    handle = module._ffplaykmp_web_player_open_audio(
+      playerHandle,
+      data.sampleRate,
+      data.channels,
+      errorPointer,
+    );
+    error = new Int32Array(module.HEAPU8.buffer, errorPointer, 1)[0];
+  } finally {
+    module._free(errorPointer);
+  }
+  if (!handle) {
+    data.port.close();
+    audioFailure(`Could not open the source's audio (${error})`);
+    return;
+  }
+  const text = pointer => (pointer ? decodeCString(module.HEAPU8, pointer) : null);
+  const tracks = [];
+  const count = module._ffmpegkmp_player_track_count(handle);
+  for (let track = 0; track < count; track++) {
+    tracks.push({
+      codec: text(module._ffmpegkmp_player_track_codec(handle, track)) || '',
+      language: text(module._ffmpegkmp_player_track_language(handle, track)),
+      title: text(module._ffmpegkmp_player_track_title(handle, track)),
+      channels: module._ffmpegkmp_player_track_channels(handle, track),
+      sampleRate: module._ffmpegkmp_player_track_sample_rate(handle, track),
+      isDefault: module._ffmpegkmp_player_track_is_default(handle, track) === 1,
+      isDecodable: module._ffmpegkmp_player_track_is_decodable(handle, track) === 1,
+      enabled: module._ffmpegkmp_player_track_enabled(handle, track) === 1,
+    });
+  }
+  Object.assign(audio, {
+    handle,
+    port: data.port,
+    pcm: module._malloc(AUDIO_CHUNK_FRAMES * data.channels * 4),
+    channels: data.channels,
+    sampleRate: data.sampleRate,
+    epoch: 0,
+    decoded: 0,
+    played: 0,
+    ended: false,
+  });
+  audio.port.onmessage = ({ data: report }) => {
+    if (report.type === 'played' && report.epoch === audio.epoch) {
+      audio.played = report.frames;
+      pumpAudio(module);
+    }
+  };
+  audio.timer = setInterval(() => pumpAudio(module), 20);
+  self.postMessage({
+    type: 'player-audio',
+    event: 'opened',
+    payload: JSON.stringify({
+      durationUs: Number(module._ffmpegkmp_player_duration_us(handle)),
+      tracks,
+    }),
+  });
+  pumpAudio(module);
+}
+
+function handleAudioMessage(module, data) {
+  if (data.type === 'player-audio-open') {
+    openAudio(module, data);
+    return;
+  }
+  if (!audio.handle) return;
+  let result = 0;
+  if (data.type === 'player-audio-seek') {
+    result = module._ffmpegkmp_player_seek(audio.handle, BigInt(data.positionUs));
+    Object.assign(audio, { epoch: data.epoch, decoded: 0, played: 0, ended: false });
+    audio.port.postMessage({ type: 'flush', epoch: audio.epoch });
+    pumpAudio(module);
+  } else if (data.type === 'player-audio-track-enabled') {
+    result = module._ffmpegkmp_player_set_track_enabled(audio.handle, data.track, data.enabled ? 1 : 0);
+  } else if (data.type === 'player-audio-track-gain') {
+    result = module._ffmpegkmp_player_set_track_gain(audio.handle, data.track, data.gain);
+  } else if (data.type === 'player-audio-close') {
+    closeAudio(module);
+  }
+  if (result < 0) audioFailure(`${data.type} failed (${result})`);
+}
 
 // TextDecoder rejects views backed by the FFmpeg pthread SharedArrayBuffer.
 // Decode directly from that heap so event text crosses the worker boundary as a string.
@@ -44,6 +206,244 @@ function decodeUtf8(heap, start, length) {
   return text;
 }
 
+function decodeCString(heap, start) {
+  let length = 0;
+  while (heap[start + length] !== 0) length++;
+  return decodeUtf8(heap, start, length);
+}
+
+function webColorSpace(primaries, transfer, matrix) {
+  const result = {};
+  const primary = ({ 1: 'bt709', 5: 'bt470bg', 6: 'smpte170m', 9: 'bt2020' })[primaries];
+  const transferName = ({
+    1: 'bt709', 6: 'smpte170m', 13: 'iec61966-2-1', 16: 'pq', 18: 'hlg',
+  })[transfer];
+  const matrixName = ({
+    0: 'rgb', 1: 'bt709', 5: 'bt470bg', 6: 'smpte170m', 9: 'bt2020-ncl',
+  })[matrix];
+  if (primary) result.primaries = primary;
+  if (transferName) result.transfer = transferName;
+  if (matrixName) result.matrix = matrixName;
+  return Object.keys(result).length ? result : undefined;
+}
+
+function clearWebCodecsPresentations() {
+  for (const { timer, frame } of webCodecsPresentations.values()) {
+    clearTimeout(timer);
+    frame.close();
+  }
+  webCodecsPresentations.clear();
+}
+
+function resetWebCodecs(module, closeDecoder = false) {
+  webCodecsPlaying = false;
+  webCodecsPreviewing = false;
+  webCodecsNeedsResumeSeek = false;
+  webCodecsPumping = false;
+  webCodecsEof = false;
+  clearWebCodecsPresentations();
+  if (webCodecsDecoder) {
+    try {
+      if (closeDecoder) webCodecsDecoder.close();
+      else webCodecsDecoder.reset();
+    } catch (_) {
+      // Decoder reclamation or an earlier error may already have closed it.
+    }
+  }
+  if (closeDecoder) {
+    webCodecsDecoder = null;
+    webCodecsConfig = null;
+    webCodecsActive = false;
+    webCodecsOutputFlags = 0;
+  }
+  if (playerHandle) module._ffplaykmp_web_player_close_packets(playerHandle);
+}
+
+function finishWebCodecsIfDrained(module) {
+  if (webCodecsEof && webCodecsPresentations.size === 0 && playerHandle) {
+    module._ffplaykmp_web_player_webcodecs_end(playerHandle);
+    module._ffplaykmp_web_player_poll(playerHandle);
+  }
+}
+
+function scheduleWebCodecsFrame(module, frame) {
+  if (!webCodecsActive || !playerHandle) {
+    frame.close();
+    return;
+  }
+  if (!webCodecsPlaying && !webCodecsPreviewing) {
+    frame.close();
+    return;
+  }
+  const presentationTimeUs = Number(frame.timestamp || 0);
+  const delay = webCodecsPlaying
+    ? Math.max(0, presentationTimeUs / 1000 - (performance.now() - webCodecsClockOriginMs))
+    : 0;
+  const id = webCodecsPresentationId++;
+  const timer = setTimeout(() => {
+    const pending = webCodecsPresentations.get(id);
+    if (!pending) return;
+    webCodecsPresentations.delete(id);
+    webCodecsPositionUs = presentationTimeUs;
+    if (webCodecsPreviewing) webCodecsNeedsResumeSeek = true;
+    webCodecsPreviewing = false;
+    module._ffplaykmp_web_player_webcodecs_presented(
+      playerHandle,
+      BigInt(presentationTimeUs),
+      webCodecsQueueSerial,
+      0,
+    );
+    self.postMessage({
+      type: 'player-video-frame',
+      frame,
+      width: frame.displayWidth || frame.codedWidth,
+      height: frame.displayHeight || frame.codedHeight,
+      presentationTimeUs,
+      queueSerial: webCodecsQueueSerial,
+    }, [frame]);
+    module._ffplaykmp_web_player_poll(playerHandle);
+    finishWebCodecsIfDrained(module);
+  }, Math.min(delay, 2147483647));
+  webCodecsPresentations.set(id, { timer, frame });
+}
+
+function pumpWebCodecs(module, previewOnly = false) {
+  if (!webCodecsActive || !webCodecsDecoder || webCodecsPumping || webCodecsEof) return;
+  webCodecsPumping = true;
+  try {
+    let submitted = 0;
+    while (webCodecsDecoder.decodeQueueSize < 8 && submitted < (previewOnly ? 4 : 16)) {
+      const result = module._ffplaykmp_web_player_read_packet(
+        playerHandle,
+        playerPacketCallback,
+        0,
+      );
+      if (result === 1) {
+        webCodecsEof = true;
+        webCodecsDecoder.flush().then(() => finishWebCodecsIfDrained(module)).catch(error => {
+          fallbackFromWebCodecs(module, error);
+        });
+        break;
+      }
+      if (result < 0) {
+        fallbackFromWebCodecs(module, new Error(`FFmpeg packet demux failed (${result})`));
+        break;
+      }
+      submitted++;
+    }
+  } finally {
+    webCodecsPumping = false;
+  }
+}
+
+function fallbackFromWebCodecs(module, error) {
+  if (!webCodecsActive) return;
+  const message = `FFmpegKMP WebCodecs fallback: ${String(error?.stack || error)}`;
+  console.warn(message);
+  self.postMessage({ type: 'player-diagnostic', message });
+  const wasPlaying = webCodecsPlaying;
+  const fallbackOutputFlags = webCodecsOutputFlags;
+  resetWebCodecs(module, true);
+  const result = module._ffplaykmp_web_player_set_output(
+    playerHandle,
+    2 | (fallbackOutputFlags & 16),
+  );
+  if (result < 0) {
+    self.postMessage({ type: 'player-failure', message: String(error?.stack || error) });
+    return;
+  }
+  if (wasPlaying) module._ffplaykmp_player_play(playerHandle);
+  module._ffplaykmp_web_player_poll(playerHandle);
+}
+
+async function configureWebCodecs(module, outputFlags) {
+  if (typeof VideoDecoder !== 'function' || typeof EncodedVideoChunk !== 'function') {
+    self.postMessage({
+      type: 'player-diagnostic',
+      message: 'FFmpegKMP WebCodecs unavailable: VideoDecoder or EncodedVideoChunk is missing',
+    });
+    return false;
+  }
+  let config = null;
+  const result = module._ffplaykmp_web_player_open_packets(
+    playerHandle,
+    playerDecoderConfigCallback,
+    0,
+  );
+  if (result < 0) {
+    self.postMessage({
+      type: 'player-diagnostic',
+      message: `FFmpegKMP WebCodecs packet setup failed (${result})`,
+    });
+    return false;
+  }
+  config = webCodecsConfig;
+  if (!config) {
+    module._ffplaykmp_web_player_close_packets(playerHandle);
+    self.postMessage({
+      type: 'player-diagnostic',
+      message: 'FFmpegKMP WebCodecs packet setup returned no decoder configuration',
+    });
+    return false;
+  }
+  let support;
+  try {
+    support = await VideoDecoder.isConfigSupported(config);
+    if (!support.supported && config.hardwareAcceleration === 'prefer-hardware') {
+      // `prefer-hardware` is a strict preference on some implementations (notably
+      // headless or virtualized browsers). WebCodecs itself is still the preferred
+      // decoded-frame path, so retry without requiring an available hardware backend.
+      const portableConfig = { ...config, hardwareAcceleration: 'no-preference' };
+      support = await VideoDecoder.isConfigSupported(portableConfig);
+    }
+  } catch (error) {
+    module._ffplaykmp_web_player_close_packets(playerHandle);
+    self.postMessage({
+      type: 'player-diagnostic',
+      message: `FFmpegKMP WebCodecs configuration probe failed: ${String(error?.stack || error)}`,
+    });
+    return false;
+  }
+  if (!support.supported) {
+    module._ffplaykmp_web_player_close_packets(playerHandle);
+    self.postMessage({
+      type: 'player-diagnostic',
+      message: `FFmpegKMP WebCodecs rejected decoder configuration ${JSON.stringify(config)}`,
+    });
+    return false;
+  }
+  webCodecsConfig = support.config;
+  webCodecsOutputFlags = outputFlags;
+  webCodecsDecoder = new VideoDecoder({
+    output: frame => scheduleWebCodecsFrame(module, frame),
+    error: error => fallbackFromWebCodecs(module, error),
+  });
+  webCodecsDecoder.ondequeue = () => {
+    if (webCodecsPlaying) pumpWebCodecs(module);
+  };
+  webCodecsDecoder.configure(webCodecsConfig);
+  webCodecsActive = true;
+  webCodecsPositionUs = 0;
+  webCodecsQueueSerial = 0;
+  webCodecsNeedsResumeSeek = false;
+  const outputResult = module._ffplaykmp_web_player_set_webcodecs_output(
+    playerHandle,
+    outputFlags,
+  );
+  if (outputResult < 0) {
+    resetWebCodecs(module, true);
+    self.postMessage({
+      type: 'player-diagnostic',
+      message: `FFmpegKMP WebCodecs output negotiation failed (${outputResult})`,
+    });
+    return false;
+  }
+  module._ffplaykmp_web_player_poll(playerHandle);
+  webCodecsPreviewing = true;
+  pumpWebCodecs(module, true);
+  return true;
+}
+
 function installPthreadFailureForwarding(module) {
   for (const worker of module.PThread?.unusedWorkers ?? []) {
     worker.onerror = event => {
@@ -66,6 +466,11 @@ function installPthreadFailureForwarding(module) {
             message: `${detail}${location}`,
           });
           activeId = null;
+        } else if (playerHandle) {
+          self.postMessage({
+            type: 'player-failure',
+            message: `${detail}${location}`,
+          });
         }
       }, 0);
     };
@@ -96,7 +501,214 @@ function allocateArguments(module, arguments_) {
   return { argv, strings };
 }
 
+// Player commands run one at a time, in arrival order: each awaits the module and native calls.
+async function handlePlayerMessage(data) {
+  let module;
+  try {
+    module = await loadModule(data.moduleUrl || './ffmpegkmp.mjs');
+    if (data.type === 'player-init') {
+      if (playerHandle) throw new Error('The browser player is already initialized');
+      playerDecoderPreference = data.decoderPreference;
+      playerStateCallback = module.addFunction((opaque, json, size) => {
+        self.postMessage({
+          type: 'player-snapshot',
+          snapshot: decodeUtf8(module.HEAPU8, json, Number(size)),
+        });
+      }, 'viii');
+      playerFrameCallback = module.addFunction(
+        (opaque, rgba, size, width, height, stride, presentationTimeUs, queueSerial) => {
+          const copied = module.HEAPU8.slice(rgba, rgba + Number(size));
+          self.postMessage({
+            type: 'player-frame',
+            bytes: copied,
+            width,
+            height,
+            stride,
+            presentationTimeUs: Number(presentationTimeUs),
+            queueSerial,
+          }, [copied.buffer]);
+        },
+        'viiiiiiji',
+      );
+      playerDecoderConfigCallback = module.addFunction(
+        (opaque, codec, description, descriptionSize, width, height, primaries, transfer, matrix) => {
+          const config = {
+            codec: decodeCString(module.HEAPU8, codec),
+            codedWidth: width,
+            codedHeight: height,
+            hardwareAcceleration: 'prefer-hardware',
+            optimizeForLatency: true,
+          };
+          if (descriptionSize > 0) {
+            config.description = module.HEAPU8.slice(
+              description,
+              description + Number(descriptionSize),
+            );
+          }
+          const colorSpace = webColorSpace(primaries, transfer, matrix);
+          if (colorSpace) config.colorSpace = colorSpace;
+          webCodecsConfig = config;
+        },
+        'viiiiiiiii',
+      );
+      playerPacketCallback = module.addFunction(
+        (opaque, bytes, size, timestampUs, durationUs, keyFrame, queueSerial) => {
+          webCodecsQueueSerial = queueSerial;
+          const copied = module.HEAPU8.slice(bytes, bytes + Number(size));
+          const init = {
+            type: keyFrame ? 'key' : 'delta',
+            timestamp: Number(timestampUs),
+            data: copied,
+          };
+          if (Number(durationUs) > 0) init.duration = Number(durationUs);
+          webCodecsDecoder.decode(new EncodedVideoChunk(init));
+        },
+        'viiijjii',
+      );
+      playerHandle = module._ffplaykmp_web_player_create(
+        data.decoderPreference,
+        playerStateCallback,
+        playerFrameCallback,
+        0,
+      );
+      if (!playerHandle) throw new Error('FFmpegKMP browser player allocation failed');
+      playerPollTimer = setInterval(() => {
+        if (playerHandle) module._ffplaykmp_web_player_poll(playerHandle);
+      }, 8);
+      self.postMessage({ type: 'player-ready' });
+      return;
+    }
+    if (!playerHandle) throw new Error('The browser player is not initialized');
+    if (data.type.startsWith('player-audio-')) {
+      handleAudioMessage(module, data);
+      return;
+    }
+    if (data.type === 'player-master-clock') {
+      // Keep both video paths on the audible position; each extrapolates between reports.
+      if (webCodecsActive) {
+        if (webCodecsPlaying) webCodecsClockOriginMs = performance.now() - data.positionUs / 1000;
+      } else {
+        module._ffplaykmp_player_set_master_clock(playerHandle, BigInt(data.positionUs));
+      }
+      return;
+    }
+    let result = 0;
+    if (data.type === 'player-prepare') {
+      // The audio reads the input this replaces.
+      closeAudio(module);
+      resetWebCodecs(module, true);
+      const mount = (data.mounts || []).find(candidate => candidate.path === data.input);
+      if (!mount?.bytes?.length) {
+        throw new Error('Browser playback requires a non-empty mounted input');
+      }
+      const extension = mount.path.match(/\.([A-Za-z0-9]+)$/)?.[1] || '';
+      const extensionPointer = module.stringToNewUTF8(extension);
+      const inputPointer = module._malloc(mount.bytes.length);
+      try {
+        module.HEAPU8.set(mount.bytes, inputPointer);
+        result = module._ffplaykmp_web_player_prepare_bytes(
+          playerHandle,
+          inputPointer,
+          mount.bytes.length,
+          extensionPointer,
+          data.requireSecurePath ? 1 : 0,
+        );
+      } finally {
+        module._free(inputPointer);
+        module._free(extensionPointer);
+      }
+    } else if (data.type === 'player-set-output') {
+      const canTryWebCodecs = playerDecoderPreference !== 2 && (data.flags & 1) !== 0;
+      if (canTryWebCodecs && await configureWebCodecs(module, data.flags)) {
+        result = 0;
+      } else {
+        result = module._ffplaykmp_web_player_set_output(playerHandle, data.flags & ~1);
+      }
+    } else if (data.type === 'player-clear-output') {
+      resetWebCodecs(module, true);
+      module._ffplaykmp_player_clear_output(playerHandle);
+    } else if (data.type === 'player-play') {
+      if (webCodecsActive) {
+        if (webCodecsNeedsResumeSeek) {
+          clearWebCodecsPresentations();
+          webCodecsDecoder.reset();
+          webCodecsDecoder.configure(webCodecsConfig);
+          webCodecsEof = false;
+          result = module._ffplaykmp_web_player_webcodecs_seek(
+            playerHandle,
+            BigInt(webCodecsPositionUs),
+          );
+          webCodecsNeedsResumeSeek = false;
+        }
+        webCodecsPlaying = true;
+        webCodecsPreviewing = false;
+        webCodecsEof = false;
+        webCodecsClockOriginMs = performance.now() - webCodecsPositionUs / 1000;
+        if (result >= 0) result = module._ffplaykmp_web_player_webcodecs_play(playerHandle);
+        pumpWebCodecs(module);
+      } else {
+        result = module._ffplaykmp_player_play(playerHandle);
+      }
+    } else if (data.type === 'player-pause') {
+      if (webCodecsActive) {
+        webCodecsPlaying = false;
+        webCodecsPreviewing = false;
+        clearWebCodecsPresentations();
+        webCodecsDecoder.reset();
+        webCodecsDecoder.configure(webCodecsConfig);
+        webCodecsEof = false;
+        result = module._ffplaykmp_web_player_webcodecs_pause(playerHandle);
+        if (result >= 0) {
+          result = module._ffplaykmp_web_player_webcodecs_seek(
+            playerHandle,
+            BigInt(webCodecsPositionUs),
+          );
+        }
+        webCodecsNeedsResumeSeek = false;
+      } else {
+        result = module._ffplaykmp_player_pause(playerHandle);
+      }
+    } else if (data.type === 'player-seek') {
+      if (webCodecsActive) {
+        clearWebCodecsPresentations();
+        webCodecsDecoder.reset();
+        webCodecsDecoder.configure(webCodecsConfig);
+        webCodecsEof = false;
+        webCodecsPositionUs = Number(data.positionUs);
+        webCodecsNeedsResumeSeek = false;
+        result = module._ffplaykmp_web_player_webcodecs_seek(
+          playerHandle,
+          BigInt(data.positionUs),
+        );
+        webCodecsClockOriginMs = performance.now() - webCodecsPositionUs / 1000;
+        webCodecsPreviewing = !webCodecsPlaying;
+        pumpWebCodecs(module, !webCodecsPlaying);
+      } else {
+        result = module._ffplaykmp_player_seek(playerHandle, BigInt(data.positionUs));
+      }
+    } else if (data.type === 'player-stop') {
+      closeAudio(module);
+      resetWebCodecs(module, true);
+      result = module._ffplaykmp_player_stop(playerHandle);
+    }
+  } catch (error) {
+    // Emscripten throws this sentinel on the owning worker while transferring
+    // control to a pthread. The pthread callback or its forwarded ErrorEvent
+    // supplies the actual completion/failure signal.
+    if (error !== 'unwind') {
+      self.postMessage({
+        type: 'player-failure',
+        message: String(error?.stack ?? error),
+      });
+    }
+  }
+}
+
 self.onmessage = async ({ data }) => {
+  if (data.type.startsWith('player-')) {
+    playerMessageTail = playerMessageTail.then(() => handlePlayerMessage(data));
+    return;
+  }
   if (data.type === 'cancel') {
     if (activeId === data.id && activeContext) {
       const module = await modulePromise;

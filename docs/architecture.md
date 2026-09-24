@@ -9,24 +9,26 @@ bindings and locally generated native artifacts.
                                 │
                                 ▼
 ┌──────────────────────────────────────────────────────────────┐
-│                    Public Kotlin API                          │
-│                                                               │
-│  core           ffmpeg           ffprobe           filters    │
-│  sessions       command DSL      metadata models   graph DSL  │
-└───────────────────────────────┬───────────────────────────────┘
+│                      Public Kotlin API                       │
+│                                                              │
+│  core      ffmpeg     ffprobe   filters    player   ffplay   │
+│  sessions  command    metadata  graph DSL  audio    video    │
+│            DSL                                               │
+└───────────────────────────────┬──────────────────────────────┘
                                 │ internal runtime abstraction
-┌───────────────────────────────┴───────────────────────────────┐
-│                    Single :bindings module                    │
-│                                                               │
-│ Apple cinterop   shared JVM/Android JNI   JS/Wasm web adapters │
-└───────────────────────────────┬───────────────────────────────┘
                                 ▼
 ┌──────────────────────────────────────────────────────────────┐
-│        Target-specific FFmpeg local build outputs only        │
-│                                                               │
-│    Apple toolchains   Android NDK   Desktop tools   Emscripten │
-│       native-build modules: apple / android / jvm / wasm      │
-└───────────────────────────────┬───────────────────────────────┘
+│                   Single :bindings module                    │
+│                                                              │
+│  Apple cinterop    shared JVM/Android JNI   JS/Wasm adapters │
+└───────────────────────────────┬──────────────────────────────┘
+                                ▼
+┌──────────────────────────────────────────────────────────────┐
+│       Target-specific FFmpeg local build outputs only        │
+│                                                              │
+│  Apple toolchains   Android NDK   Desktop tools   Emscripten │
+│     native-build modules: apple / android / jvm / wasm       │
+└───────────────────────────────┬──────────────────────────────┘
                                 ▼
                  Pinned FFmpeg source and patches
 ```
@@ -38,8 +40,42 @@ The `library` modules provide the platform-neutral API:
 - `core` owns sessions, execution, cancellation, logging, progress, results,
   and errors;
 - `ffmpeg` provides typed command construction and a raw-argument escape hatch;
-- `ffprobe` exposes typed media-inspection models; and
-- `filters` provides the optional filter-graph DSL.
+- `ffprobe` exposes typed media-inspection models;
+- `ffplay` owns a per-player lifecycle and Compose video-output contract;
+- `filters` provides the optional filter-graph DSL; and
+- `player` provides audio decoding and playback with live volume, mute, and
+  track controls.
+
+`AudioLevel` in `core` is the one loudness model shared by the command DSL
+(`audioLevel`), the filter DSL (`volume`, `mixAudio`) and the player, so a
+preview and an export apply identical gains.
+
+The player does not use fftools. `native-build/bridge/ffmpegkmp_player.c` demuxes
+with libavformat, decodes each enabled audio track with libavcodec, resamples
+it with libswresample into a per-track FIFO, and mixes the FIFOs with atomic
+per-track and master gains. Each track is aligned to the playback position by
+its first frame's timestamp after an open, a seek, or being enabled. That makes
+seeking sample-accurate and lets a track join mid-playback without shifting the
+timeline. With every track disabled, the default track keeps decoding unmixed,
+so the silence follows the real timeline. The engine holds no process-global
+state and runs concurrently with the command FIFO below.
+
+FFplay does not use the command FIFO either.
+`native-build/bridge/ffplaykmp_player.c` gives each player its own demux/decode
+worker, queues, clock, mounted I/O and output negotiation, so several videos run
+independently. Preparing a replacement source cancels and joins the outgoing
+worker before its mounted resource ids are reused. Compose Canvas is the portable
+software-frame fallback; native surfaces and hardware-frame import are selected
+only when a platform backend reports that capability, and `AUTO` falls back to
+software where `REQUIRE_HARDWARE` fails. Protected sources never reach a
+software boundary. On the web, Kotlin/JS and Kotlin/Wasm drive the same C engine
+inside an Emscripten worker: decoder pthreads never call page JavaScript, and
+state and the latest frame cross a bounded mailbox. When the source has audio,
+FFplay plays it through the `player` engine and reports the audible position
+back as the video worker's master clock. In the browser that engine runs in the
+player's worker and feeds an AudioWorklet directly over a `MessageChannel`. See
+[`library/ffplay/README.md`](../library/ffplay/README.md) for the per-platform
+decoders, renderers and HDR handling.
 
 Every `FFmpegClient` and `FFprobeClient` submits to one process-wide FIFO. This
 is intentional: FFmpeg's command tools and logging retain process-global state.

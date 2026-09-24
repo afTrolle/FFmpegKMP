@@ -7,6 +7,7 @@ iOS, JVM desktop, browser Kotlin/JS, and browser Kotlin/Wasm. It demonstrates:
 
 - FileKit multi-video import and platform-native save/download;
 - typed FFprobe stream inspection;
+- a selected-clip FFplay preview with play/pause and trim-range looping;
 - clip ordering, trim, speed, volume, canvas, and quality controls;
 - normalized video/audio filter chains and hard-cut concatenation;
 - mounted byte I/O, live session logs, cancellation, and MP4 export; and
