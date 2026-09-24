@@ -11,7 +11,7 @@ fi
 forbidden='(^|/)(ffmpeg|ffprobe)(\.exe)?$|\.so(\.[0-9]+)*$|\.dylib$|\.dll$|\.a$|\.o$|\.wasm$|(^|/)[^/]+\.(framework|xcframework)(/|$)'
 sample_code='(^|/)io/github/aftrolle/ffmpegkmp/samples(/|$)'
 group_directory="$repository/io/github/aftrolle/ffmpegkmp"
-allowed_artifacts='^(bindings|core|ffmpeg|ffprobe|filters)(-[A-Za-z0-9_.-]+)?$'
+allowed_artifacts='^(bindings|core|ffmpeg|ffprobe|ffplay|filters|player)(-[A-Za-z0-9_.-]+)?$'
 scan_tmp="$(mktemp -d)"
 trap 'rm -rf "$scan_tmp"' EXIT
 archive_index=0
