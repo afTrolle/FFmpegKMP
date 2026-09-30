@@ -140,13 +140,9 @@ private class JavaCppPlayerBridge(
                 replayableSource = true,
             )
         }.toMap()
-        val mountedInput = source.mounts.indexOfFirst { it.path == source.input }
-            .takeIf { it >= 0 }
-            ?.let { protocolUrl(it.toLong() + 1L, source.input) }
-            ?: source.input
         return bridge.ffplaykmp_player_prepare(
             player,
-            mountedInput,
+            source.protocolInput(),
             if (source.requireSecurePath) bridge.FFPLAYKMP_SOURCE_REQUIRE_SECURE_PATH else 0,
         ).also { result -> if (result < 0) mounts = emptyMap() }
     }
@@ -225,7 +221,7 @@ private class JavaCppPlayerBridge(
     private fun closedError(): Nothing = throw IllegalStateException("The native player bridge is closed")
 }
 
-private fun ffplaykmp_snapshot.toNativeSnapshot(): NativePlayerSnapshot = nativePlayerSnapshot(
+internal fun ffplaykmp_snapshot.toNativeSnapshot(): NativePlayerSnapshot = nativePlayerSnapshot(
     state = state(),
     positionUs = position_us(),
     durationUs = duration_us(),

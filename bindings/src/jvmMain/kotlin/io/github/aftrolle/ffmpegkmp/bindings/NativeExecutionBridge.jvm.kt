@@ -14,3 +14,15 @@ public actual fun createPlatformPlayerBridge(
     frame: (NativeVideoFrame) -> Unit,
     platformFrame: (NativePlatformVideoFrame) -> Boolean,
 ): NativePlayerBridge = createJavaCppPlayerBridge(configuration, update, frame, platformFrame)
+
+@InternalFFmpegKmpApi
+public actual fun createPlatformVideoDecoder(
+    source: NativePlayerSource,
+    output: NativeVideoDecoderOutput,
+    decoderPreference: NativePlayerDecoderPreference,
+    timeoutMicros: Long,
+    surface: Any?,
+): NativeVideoDecoder {
+    require(output != NativeVideoDecoderOutput.SURFACE) { "Surface output is only available on Android" }
+    return createJavaCppVideoDecoder(source, output, decoderPreference, timeoutMicros) { 0 }
+}

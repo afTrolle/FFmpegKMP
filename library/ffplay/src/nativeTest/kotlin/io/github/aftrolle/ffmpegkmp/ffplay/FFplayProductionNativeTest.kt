@@ -65,7 +65,7 @@ private class NativeProductionOutput : FFplayVideoOutput {
     override fun discard() = Unit
 }
 
-private fun bundledTestResource(name: String): ByteArray {
+internal fun bundledTestResource(name: String): ByteArray {
     val resourcePath = checkNotNull(NSBundle.mainBundle.resourcePath) {
         "The native test bundle has no resource path"
     }

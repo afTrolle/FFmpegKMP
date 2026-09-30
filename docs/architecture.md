@@ -77,6 +77,20 @@ player's worker and feeds an AudioWorklet directly over a `MessageChannel`. See
 [`library/ffplay/README.md`](../library/ffplay/README.md) for the per-platform
 decoders, renderers and HDR handling.
 
+`VideoDecoder` (`native-build/bridge/ffmpegkmp_decoder.c`) is FFplay's pull
+counterpart for exporters: no clock or queue, one decoded frame per call on the
+decoder's own thread, with accurate seeks and one frame of lookahead so each
+frame's end is the next frame's pts. Every call has a native deadline, checked
+by the input's interrupt callback, the decode loop and (through the Android
+build's `ffmpegkmp_wait_timeout` overlay of FFmpeg's MediaCodec decoder) the
+MediaCodec waits; a Kotlin watchdog aborts calls blocked past it in a host read.
+It shares input, stream selection, hardware decoder setup and frame conversion
+with the player through `ffplaykmp_core.c`. On Apple its `PixelBuffer` output
+keeps VideoToolbox frames as `CVPixelBuffer`s and copies software frames into a
+`CVPixelBufferPool`; only the Kotlin/Native Apple runtimes build it
+(`FFMPEGKMP_PIXEL_BUFFER` in `bridge.mk`), since the JVM bridge does not link
+CoreVideo.
+
 Every `FFmpegClient` and `FFprobeClient` submits to one process-wide FIFO. This
 is intentional: FFmpeg's command tools and logging retain process-global state.
 Sessions use `StateFlow` and `Flow`, own transferred I/O, and treat nonzero tool

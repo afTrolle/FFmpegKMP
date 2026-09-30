@@ -44,5 +44,28 @@ int ffmpegkmp_ffprobe_entry(int argc, char **argv) {
     show_optional_fields = SHOW_OPTIONAL_FIELDS_AUTO;
     find_stream_info = 1;
     read_intervals_nb = 0;
+    /* The CLI assumes a fresh process: -select_streams and the other string
+     * options, the -show_entries selections and the cmdutils option dicts
+     * outlive main(), and an exit() mid-run skips main's own cleanup. */
+    av_freep(&stream_specifier);
+    av_freep(&output_format);
+    av_freep(&show_data_hash);
+    av_freep(&data_dump_format);
+    av_freep(&input_filename);
+    av_freep(&print_input_filename);
+    av_freep(&output_filename);
+    av_freep(&read_intervals);
+    av_freep(&audio_codec_name);
+    av_freep(&data_codec_name);
+    av_freep(&subtitle_codec_name);
+    av_freep(&video_codec_name);
+    iformat = NULL;
+    hide_banner = 0;
+    for (size_t i = 0; i < FF_ARRAY_ELEMS(selected_entries); i++) {
+        selected_entries[i].show_all_entries = 0;
+        av_dict_free(&selected_entries[i].entries_to_show);
+    }
+    clear_log(1);
+    uninit_opts();
     return ffmpegkmp_ffprobe_main_impl(argc, argv);
 }

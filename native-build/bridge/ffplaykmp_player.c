@@ -1,36 +1,24 @@
 // SPDX-License-Identifier: LGPL-2.1-or-later
 #include "ffplaykmp_player.h"
+#include "ffplaykmp_core.h"
 #if defined(__EMSCRIPTEN__)
 #include "ffmpegkmp_bridge.h"
 #endif
 
 #include <errno.h>
-#include <math.h>
 #include <pthread.h>
 #include <stdatomic.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <stdio.h>
 
 #include <libavcodec/avcodec.h>
 #if defined(__ANDROID__)
-#include <libavcodec/jni.h>
 #include <libavcodec/mediacodec.h>
 #endif
 #include <libavformat/avformat.h>
-#include <libavutil/display.h>
-#include <libavutil/hwcontext.h>
-#include <libavutil/imgutils.h>
-#include <libavutil/mastering_display_metadata.h>
 #include <libavutil/pixdesc.h>
 #include <libavutil/time.h>
-#include <libswscale/swscale.h>
-
-typedef struct ffplaykmp_avio {
-    struct ffplaykmp_player *player;
-    int64_t resource_id;
-    int64_t position;
-} ffplaykmp_avio;
 
 struct ffplaykmp_player {
     ffplaykmp_configuration configuration;
@@ -52,17 +40,12 @@ struct ffplaykmp_player {
     int worker_running;
     int play_when_ready;
     int has_output;
+    /* Frame conversion scratch, reused across frames. Only the decode thread
+     * touches it, and synchronous decodes run only while no worker does. */
+    ffplaykmp_converter converter;
     /* Host-reported media time (normally the audible audio position) and when
      * it was reported. While valid it replaces the wall clock for scheduling;
      * between reports it is extrapolated. Guarded by mutex. */
-    /* Frame conversion scratch, reused across frames. Only the decode thread
-     * touches it, and synchronous decodes run only while no worker does. */
-    struct SwsContext *rgba_scaler;
-    struct SwsContext *float_scaler;
-    uint8_t *rgba_buffer;
-    int rgba_capacity;
-    uint8_t *float_buffer;
-    int float_capacity;
     int master_clock_valid;
     int64_t master_clock_media_us;
     int64_t master_clock_stamp_us;
@@ -74,206 +57,6 @@ struct ffplaykmp_player {
 
 static void ffplaykmp_publish(ffplaykmp_player *player);
 
-
-
-static int ffplaykmp_pixel_bit_depth(int pixel_format) {
-    const AVPixFmtDescriptor *descriptor = av_pix_fmt_desc_get(pixel_format);
-    int depth = 0;
-    int component;
-    if (!descriptor)
-        return 0;
-    for (component = 0; component < descriptor->nb_components; component++) {
-        if (descriptor->comp[component].depth > depth)
-            depth = descriptor->comp[component].depth;
-    }
-    return depth;
-}
-
-static double ffplaykmp_rational_to_double(AVRational value) {
-    return value.den == 0 ? 0.0 : av_q2d(value);
-}
-
-static void ffplaykmp_reset_video_metadata(ffplaykmp_snapshot *snapshot) {
-    snapshot->video_width = 0;
-    snapshot->video_height = 0;
-    snapshot->pixel_format = AV_PIX_FMT_NONE;
-    snapshot->bit_depth = 0;
-    snapshot->sample_aspect_ratio_num = 0;
-    snapshot->sample_aspect_ratio_den = 0;
-    snapshot->rotation_degrees = 0.0;
-    snapshot->color_primaries = AVCOL_PRI_UNSPECIFIED;
-    snapshot->color_transfer = AVCOL_TRC_UNSPECIFIED;
-    snapshot->color_space = AVCOL_SPC_UNSPECIFIED;
-    snapshot->color_range = AVCOL_RANGE_UNSPECIFIED;
-    snapshot->chroma_location = AVCHROMA_LOC_UNSPECIFIED;
-    snapshot->hdr_type = FFPLAYKMP_HDR_SDR;
-    snapshot->mastering_has_primaries = 0;
-    snapshot->mastering_has_luminance = 0;
-    snapshot->mastering_red_x = 0.0;
-    snapshot->mastering_red_y = 0.0;
-    snapshot->mastering_green_x = 0.0;
-    snapshot->mastering_green_y = 0.0;
-    snapshot->mastering_blue_x = 0.0;
-    snapshot->mastering_blue_y = 0.0;
-    snapshot->mastering_white_x = 0.0;
-    snapshot->mastering_white_y = 0.0;
-    snapshot->mastering_min_luminance = 0.0;
-    snapshot->mastering_max_luminance = 0.0;
-    snapshot->content_light_present = 0;
-    snapshot->max_content_light_level = 0;
-    snapshot->max_frame_average_light_level = 0;
-}
-
-static void ffplaykmp_copy_mastering_metadata(
-        ffplaykmp_snapshot *snapshot,
-        const AVMasteringDisplayMetadata *mastering) {
-    snapshot->mastering_has_primaries = mastering->has_primaries;
-    snapshot->mastering_has_luminance = mastering->has_luminance;
-    snapshot->mastering_red_x = ffplaykmp_rational_to_double(mastering->display_primaries[0][0]);
-    snapshot->mastering_red_y = ffplaykmp_rational_to_double(mastering->display_primaries[0][1]);
-    snapshot->mastering_green_x = ffplaykmp_rational_to_double(mastering->display_primaries[1][0]);
-    snapshot->mastering_green_y = ffplaykmp_rational_to_double(mastering->display_primaries[1][1]);
-    snapshot->mastering_blue_x = ffplaykmp_rational_to_double(mastering->display_primaries[2][0]);
-    snapshot->mastering_blue_y = ffplaykmp_rational_to_double(mastering->display_primaries[2][1]);
-    snapshot->mastering_white_x = ffplaykmp_rational_to_double(mastering->white_point[0]);
-    snapshot->mastering_white_y = ffplaykmp_rational_to_double(mastering->white_point[1]);
-    snapshot->mastering_min_luminance = ffplaykmp_rational_to_double(mastering->min_luminance);
-    snapshot->mastering_max_luminance = ffplaykmp_rational_to_double(mastering->max_luminance);
-}
-
-static void ffplaykmp_read_stream_metadata(
-        ffplaykmp_snapshot *snapshot,
-        const AVStream *stream) {
-    const AVCodecParameters *parameters = stream->codecpar;
-    const AVPacketSideData *side_data;
-    const AVMasteringDisplayMetadata *mastering;
-    const AVContentLightMetadata *content_light;
-    const int32_t *display_matrix;
-
-    snapshot->pixel_format = parameters->format;
-    snapshot->bit_depth = ffplaykmp_pixel_bit_depth(parameters->format);
-    if (snapshot->bit_depth == 0)
-        snapshot->bit_depth = parameters->bits_per_raw_sample;
-    snapshot->sample_aspect_ratio_num = parameters->sample_aspect_ratio.num;
-    snapshot->sample_aspect_ratio_den = parameters->sample_aspect_ratio.den;
-    snapshot->color_primaries = parameters->color_primaries;
-    snapshot->color_transfer = parameters->color_trc;
-    snapshot->color_space = parameters->color_space;
-    snapshot->color_range = parameters->color_range;
-    snapshot->chroma_location = parameters->chroma_location;
-
-    side_data = av_packet_side_data_get(
-            parameters->coded_side_data,
-            parameters->nb_coded_side_data,
-            AV_PKT_DATA_DISPLAYMATRIX);
-    if (side_data && side_data->size >= 9 * sizeof(*display_matrix)) {
-        display_matrix = (const int32_t *)side_data->data;
-        snapshot->rotation_degrees = av_display_rotation_get(display_matrix);
-    }
-
-    side_data = av_packet_side_data_get(
-            parameters->coded_side_data,
-            parameters->nb_coded_side_data,
-            AV_PKT_DATA_MASTERING_DISPLAY_METADATA);
-    if (side_data && side_data->size >= sizeof(*mastering)) {
-        mastering = (const AVMasteringDisplayMetadata *)side_data->data;
-        ffplaykmp_copy_mastering_metadata(snapshot, mastering);
-    }
-
-    side_data = av_packet_side_data_get(
-            parameters->coded_side_data,
-            parameters->nb_coded_side_data,
-            AV_PKT_DATA_CONTENT_LIGHT_LEVEL);
-    if (side_data && side_data->size >= sizeof(*content_light)) {
-        content_light = (const AVContentLightMetadata *)side_data->data;
-        snapshot->content_light_present = 1;
-        snapshot->max_content_light_level = content_light->MaxCLL;
-        snapshot->max_frame_average_light_level = content_light->MaxFALL;
-    }
-
-    if (av_packet_side_data_get(
-            parameters->coded_side_data,
-            parameters->nb_coded_side_data,
-            AV_PKT_DATA_DOVI_CONF)) {
-        snapshot->hdr_type = FFPLAYKMP_HDR_DOLBY_VISION;
-    } else if (av_packet_side_data_get(
-            parameters->coded_side_data,
-            parameters->nb_coded_side_data,
-            AV_PKT_DATA_DYNAMIC_HDR10_PLUS)) {
-        snapshot->hdr_type = FFPLAYKMP_HDR_HDR10_PLUS;
-    } else if (parameters->color_trc == AVCOL_TRC_ARIB_STD_B67) {
-        snapshot->hdr_type = FFPLAYKMP_HDR_HLG;
-    } else if (parameters->color_trc == AVCOL_TRC_SMPTE2084) {
-        snapshot->hdr_type = FFPLAYKMP_HDR_HDR10;
-    } else if (parameters->color_trc == AVCOL_TRC_UNSPECIFIED ||
-            parameters->color_trc == AVCOL_TRC_BT709 ||
-            parameters->color_trc == AVCOL_TRC_GAMMA22 ||
-            parameters->color_trc == AVCOL_TRC_GAMMA28 ||
-            parameters->color_trc == AVCOL_TRC_IEC61966_2_1) {
-        snapshot->hdr_type = FFPLAYKMP_HDR_SDR;
-    } else {
-        snapshot->hdr_type = FFPLAYKMP_HDR_UNKNOWN;
-    }
-}
-
-static void ffplaykmp_read_frame_metadata(
-        ffplaykmp_snapshot *snapshot,
-        const AVFrame *frame) {
-    const AVHWFramesContext *hardware_frames = NULL;
-    const AVFrameSideData *side_data;
-    const AVMasteringDisplayMetadata *mastering;
-    const AVContentLightMetadata *content_light;
-    int bit_depth;
-    snapshot->video_width = frame->width;
-    snapshot->video_height = frame->height;
-    bit_depth = ffplaykmp_pixel_bit_depth(frame->format);
-    if (frame->hw_frames_ctx) {
-        hardware_frames = (const AVHWFramesContext *)frame->hw_frames_ctx->data;
-        if (hardware_frames && hardware_frames->sw_format != AV_PIX_FMT_NONE) {
-            snapshot->pixel_format = hardware_frames->sw_format;
-            bit_depth = ffplaykmp_pixel_bit_depth(hardware_frames->sw_format);
-        }
-    }
-    if (bit_depth > 0) {
-        if (!hardware_frames)
-            snapshot->pixel_format = frame->format;
-        snapshot->bit_depth = bit_depth;
-    }
-    if (frame->color_primaries != AVCOL_PRI_UNSPECIFIED)
-        snapshot->color_primaries = frame->color_primaries;
-    if (frame->color_trc != AVCOL_TRC_UNSPECIFIED)
-        snapshot->color_transfer = frame->color_trc;
-    if (frame->colorspace != AVCOL_SPC_UNSPECIFIED)
-        snapshot->color_space = frame->colorspace;
-    if (frame->color_range != AVCOL_RANGE_UNSPECIFIED)
-        snapshot->color_range = frame->color_range;
-    if (frame->chroma_location != AVCHROMA_LOC_UNSPECIFIED)
-        snapshot->chroma_location = frame->chroma_location;
-
-    side_data = av_frame_get_side_data(frame, AV_FRAME_DATA_MASTERING_DISPLAY_METADATA);
-    if (side_data && side_data->size >= sizeof(*mastering)) {
-        mastering = (const AVMasteringDisplayMetadata *)side_data->data;
-        ffplaykmp_copy_mastering_metadata(snapshot, mastering);
-    }
-    side_data = av_frame_get_side_data(frame, AV_FRAME_DATA_CONTENT_LIGHT_LEVEL);
-    if (side_data && side_data->size >= sizeof(*content_light)) {
-        content_light = (const AVContentLightMetadata *)side_data->data;
-        snapshot->content_light_present = 1;
-        snapshot->max_content_light_level = content_light->MaxCLL;
-        snapshot->max_frame_average_light_level = content_light->MaxFALL;
-    }
-    if (av_frame_get_side_data(frame, AV_FRAME_DATA_DOVI_METADATA) ||
-            av_frame_get_side_data(frame, AV_FRAME_DATA_DOVI_RPU_BUFFER)) {
-        snapshot->hdr_type = FFPLAYKMP_HDR_DOLBY_VISION;
-    } else if (av_frame_get_side_data(frame, AV_FRAME_DATA_DYNAMIC_HDR_PLUS)) {
-        snapshot->hdr_type = FFPLAYKMP_HDR_HDR10_PLUS;
-    } else if (frame->color_trc == AVCOL_TRC_ARIB_STD_B67) {
-        snapshot->hdr_type = FFPLAYKMP_HDR_HLG;
-    } else if (frame->color_trc == AVCOL_TRC_SMPTE2084) {
-        snapshot->hdr_type = FFPLAYKMP_HDR_HDR10;
-    }
-}
-
 static int ffplaykmp_is_aborted(const ffplaykmp_player *player) {
     return atomic_load(&player->cancelled) || atomic_load(&player->worker_abort);
 }
@@ -283,358 +66,42 @@ static int ffplaykmp_interrupt(void *opaque) {
     return player ? ffplaykmp_is_aborted(player) : 1;
 }
 
-#if defined(__ANDROID__)
-static JNIEnv *ffplaykmp_android_env(ffplaykmp_player *player, int *attached) {
-    JNIEnv *env = NULL;
-    *attached = 0;
-    if (!player->android_vm)
-        return NULL;
-    if ((*player->android_vm)->GetEnv(
-            player->android_vm, (void **)&env, JNI_VERSION_1_6) == JNI_OK)
-        return env;
-    if ((*player->android_vm)->AttachCurrentThread(
-            player->android_vm, &env, NULL) != JNI_OK)
-        return NULL;
-    *attached = 1;
-    return env;
+static ffplaykmp_io_host ffplaykmp_player_io_host(ffplaykmp_player *player) {
+    ffplaykmp_io_host host;
+    pthread_mutex_lock(&player->mutex);
+    host.callback = player->io_callback;
+    host.opaque = player->io_opaque;
+    pthread_mutex_unlock(&player->mutex);
+    host.interrupted = ffplaykmp_interrupt;
+    host.interrupt_opaque = player;
+    return host;
 }
 
+static int ffplaykmp_player_open_input(
+        ffplaykmp_player *player,
+        const char *url,
+        ffplaykmp_input *input) {
+    ffplaykmp_io_host host = ffplaykmp_player_io_host(player);
+    return ffplaykmp_open_input(&host, url, input);
+}
+
+#if defined(__ANDROID__)
 static void ffplaykmp_release_android_surface(ffplaykmp_player *player) {
-    int attached;
-    JNIEnv *env;
     jobject surface;
     pthread_mutex_lock(&player->mutex);
     surface = player->android_surface;
     player->android_surface = NULL;
     pthread_mutex_unlock(&player->mutex);
-    if (!surface)
-        return;
-    env = ffplaykmp_android_env(player, &attached);
-    if (env)
-        (*env)->DeleteGlobalRef(env, surface);
-    if (attached)
-        (*player->android_vm)->DetachCurrentThread(player->android_vm);
+    ffplaykmp_android_release_global(player->android_vm, surface);
 }
 #endif
-
-static int ffplaykmp_parse_resource_id(const char *input, int64_t *resource_id) {
-    const char prefix[] = "ffmpegkmp:";
-    char *end = NULL;
-    long long parsed;
-    if (strncmp(input, prefix, sizeof(prefix) - 1) != 0)
-        return 0;
-    parsed = strtoll(input + sizeof(prefix) - 1, &end, 10);
-    if (parsed <= 0 || end == input + sizeof(prefix) - 1)
-        return FFPLAYKMP_ERROR_INVALID_ARGUMENT;
-    *resource_id = (int64_t)parsed;
-    return 1;
-}
-
-static int ffplaykmp_avio_read(void *opaque, uint8_t *buffer, int size) {
-    ffplaykmp_avio *io = opaque;
-    if (ffplaykmp_is_aborted(io->player))
-        return AVERROR_EXIT;
-    int64_t result = io->player->io_callback(
-            io->player->io_opaque,
-            io->resource_id,
-            FFPLAYKMP_IO_READ,
-            io->position,
-            buffer,
-            (uint64_t)size);
-    if (result <= 0)
-        return result == 0 ? AVERROR_EOF : AVERROR(EIO);
-    io->position += result;
-    return result > INT_MAX ? AVERROR(EIO) : (int)result;
-}
-
-static int64_t ffplaykmp_avio_seek(void *opaque, int64_t offset, int whence) {
-    ffplaykmp_avio *io = opaque;
-    int64_t size;
-    int64_t position;
-    if (whence & AVSEEK_SIZE) {
-        return io->player->io_callback(
-                io->player->io_opaque,
-                io->resource_id,
-                FFPLAYKMP_IO_SIZE,
-                0,
-                NULL,
-                0);
-    }
-    whence &= ~AVSEEK_FORCE;
-    if (whence == SEEK_SET) {
-        position = offset;
-    } else if (whence == SEEK_CUR) {
-        position = io->position + offset;
-    } else if (whence == SEEK_END) {
-        size = io->player->io_callback(
-                io->player->io_opaque,
-                io->resource_id,
-                FFPLAYKMP_IO_SIZE,
-                0,
-                NULL,
-                0);
-        if (size < 0)
-            return AVERROR(EIO);
-        position = size + offset;
-    } else {
-        return AVERROR(EINVAL);
-    }
-    if (position < 0)
-        return AVERROR(EINVAL);
-    io->position = position;
-    return position;
-}
-
-#define FFPLAYKMP_IO_BUFFER_SIZE 32768
-#define FFPLAYKMP_IO_CAP_SEEK 4
-
-/* A demuxer over a URL or a host-mounted ("ffmpegkmp:<id>") resource. */
-typedef struct ffplaykmp_input {
-    AVFormatContext *format;
-    AVIOContext *avio;
-    ffplaykmp_avio *io;
-    int64_t resource_id;
-    int resource_opened;
-} ffplaykmp_input;
-
-static void ffplaykmp_close_input(ffplaykmp_player *player, ffplaykmp_input *input) {
-    avformat_close_input(&input->format);
-    if (input->avio) {
-        av_freep(&input->avio->buffer);
-        avio_context_free(&input->avio);
-    }
-    if (input->resource_opened && player->io_callback)
-        player->io_callback(player->io_opaque, input->resource_id, FFPLAYKMP_IO_CLOSE, 0, NULL, 0);
-    input->resource_opened = 0;
-    av_freep(&input->io);
-}
-
-/* Opens and probes `url`; on failure the caller still closes `input`. */
-static int ffplaykmp_open_input(ffplaykmp_player *player, const char *url, ffplaykmp_input *input) {
-    int mounted = ffplaykmp_parse_resource_id(url, &input->resource_id);
-    int result;
-    if (mounted < 0)
-        return mounted;
-    input->format = avformat_alloc_context();
-    if (!input->format)
-        return AVERROR(ENOMEM);
-    input->format->interrupt_callback.callback = ffplaykmp_interrupt;
-    input->format->interrupt_callback.opaque = player;
-    if (mounted) {
-        uint8_t *buffer;
-        int64_t capabilities;
-        if (!player->io_callback)
-            return AVERROR(ENOSYS);
-        capabilities = player->io_callback(
-                player->io_opaque, input->resource_id, FFPLAYKMP_IO_OPEN, 1, NULL, 0);
-        if (capabilities < 0)
-            return AVERROR(EIO);
-        input->resource_opened = 1;
-        input->io = av_mallocz(sizeof(*input->io));
-        buffer = av_malloc(FFPLAYKMP_IO_BUFFER_SIZE);
-        if (input->io && buffer) {
-            input->io->player = player;
-            input->io->resource_id = input->resource_id;
-            input->avio = avio_alloc_context(
-                    buffer, FFPLAYKMP_IO_BUFFER_SIZE, 0, input->io, ffplaykmp_avio_read, NULL,
-                    (capabilities & FFPLAYKMP_IO_CAP_SEEK) ? ffplaykmp_avio_seek : NULL);
-        }
-        if (!input->avio) {
-            av_free(buffer);
-            return AVERROR(ENOMEM);
-        }
-        input->format->pb = input->avio;
-        input->format->flags |= AVFMT_FLAG_CUSTOM_IO;
-        result = avformat_open_input(&input->format, NULL, NULL, NULL);
-    } else {
-        result = avformat_open_input(&input->format, url, NULL, NULL);
-    }
-    return result < 0 ? result : avformat_find_stream_info(input->format, NULL);
-}
-
-static float ffplaykmp_clamp_unit(double value) {
-    if (!isfinite(value) || value <= 0.0)
-        return 0.0f;
-    if (value >= 1.0)
-        return 1.0f;
-    return (float)value;
-}
-
-static double ffplaykmp_hdr_eotf(double value, enum AVColorTransferCharacteristic transfer) {
-    value = ffplaykmp_clamp_unit(value);
-    if (transfer == AVCOL_TRC_SMPTE2084) {
-        const double m1 = 2610.0 / 16384.0;
-        const double m2 = 2523.0 / 32.0;
-        const double c1 = 3424.0 / 4096.0;
-        const double c2 = 2413.0 / 128.0;
-        const double c3 = 2392.0 / 128.0;
-        double signal = pow(value, 1.0 / m2);
-        double numerator = signal > c1 ? signal - c1 : 0.0;
-        double denominator = c2 - c3 * signal;
-        if (denominator <= 0.0)
-            return 100.0;
-        /* ST 2084 is normalized to 10,000 nits. Express it relative to a
-         * 100-nit SDR reference white before applying the shoulder. */
-        return pow(numerator / denominator, 1.0 / m1) * 100.0;
-    }
-    if (transfer == AVCOL_TRC_ARIB_STD_B67) {
-        const double a = 0.17883277;
-        const double b = 0.28466892;
-        const double c = 0.55991073;
-        double scene = value <= 0.5
-                ? value * value / 3.0
-                : (exp((value - c) / a) + b) / 12.0;
-        /* Nominal HLG peak is twelve times diffuse scene white. */
-        return scene * 12.0;
-    }
-    return value;
-}
-
-static double ffplaykmp_srgb_oetf(double value) {
-    value = ffplaykmp_clamp_unit(value);
-    return value <= 0.0031308
-            ? 12.92 * value
-            : 1.055 * pow(value, 1.0 / 2.4) - 0.055;
-}
-
-static void ffplaykmp_bt2020_to_bt709(double *red, double *green, double *blue) {
-    double source_red = *red;
-    double source_green = *green;
-    double source_blue = *blue;
-    *red = 1.660491 * source_red - 0.587641 * source_green - 0.072850 * source_blue;
-    *green = -0.124550 * source_red + 1.132900 * source_green - 0.008349 * source_blue;
-    *blue = -0.018151 * source_red - 0.100579 * source_green + 1.118730 * source_blue;
-}
-
-static void ffplaykmp_configure_scaler_colors(
-        struct SwsContext *scaler,
-        const AVFrame *decoded) {
-    const int *source_coefficients;
-    const int *destination_coefficients = sws_getCoefficients(SWS_CS_ITU709);
-    int source_space = decoded->colorspace == AVCOL_SPC_UNSPECIFIED
-            ? SWS_CS_ITU709
-            : decoded->colorspace;
-    source_coefficients = sws_getCoefficients(source_space);
-    if (!source_coefficients)
-        source_coefficients = destination_coefficients;
-    if (source_coefficients && destination_coefficients) {
-        sws_setColorspaceDetails(
-                scaler,
-                source_coefficients,
-                decoded->color_range == AVCOL_RANGE_JPEG,
-                destination_coefficients,
-                1,
-                0,
-                1 << 16,
-                1 << 16);
-    }
-}
-
-/* Grows *buffer to at least size bytes, keeping it for later frames. */
-static uint8_t *ffplaykmp_scratch(uint8_t **buffer, int *capacity, int size) {
-    if (size > *capacity) {
-        av_freep(buffer);
-        *buffer = av_malloc((size_t)size);
-        *capacity = *buffer ? size : 0;
-    }
-    return *buffer;
-}
-
-static int ffplaykmp_tone_map_hdr_frame(
-        ffplaykmp_player *player,
-        const AVFrame *decoded,
-        uint8_t *rgba,
-        int rgba_stride) {
-    uint8_t *float_pixels;
-    uint8_t *planes[4] = { NULL };
-    int strides[4] = { 0 };
-    int float_size;
-    int x;
-    int y;
-    enum AVColorTransferCharacteristic transfer = decoded->color_trc;
-    if (transfer != AVCOL_TRC_SMPTE2084 && transfer != AVCOL_TRC_ARIB_STD_B67)
-        return AVERROR(ENOSYS);
-    float_size = av_image_get_buffer_size(
-            AV_PIX_FMT_GBRPF32LE, decoded->width, decoded->height, 1);
-    if (float_size <= 0)
-        return AVERROR(EINVAL);
-    float_pixels = ffplaykmp_scratch(&player->float_buffer, &player->float_capacity, float_size);
-    if (!float_pixels)
-        return AVERROR(ENOMEM);
-    if (av_image_fill_arrays(
-            planes,
-            strides,
-            float_pixels,
-            AV_PIX_FMT_GBRPF32LE,
-            decoded->width,
-            decoded->height,
-            1) < 0)
-        return AVERROR(EINVAL);
-    player->float_scaler = sws_getCachedContext(
-            player->float_scaler,
-            decoded->width,
-            decoded->height,
-            decoded->format,
-            decoded->width,
-            decoded->height,
-            AV_PIX_FMT_GBRPF32LE,
-            SWS_BILINEAR,
-            NULL,
-            NULL,
-            NULL);
-    if (!player->float_scaler)
-        return AVERROR(EINVAL);
-    ffplaykmp_configure_scaler_colors(player->float_scaler, decoded);
-    if (sws_scale(
-            player->float_scaler,
-            (const uint8_t *const *)decoded->data,
-            decoded->linesize,
-            0,
-            decoded->height,
-            planes,
-            strides) != decoded->height)
-        return AVERROR(EINVAL);
-    for (y = 0; y < decoded->height; y++) {
-        const float *green_row = (const float *)(planes[0] + y * strides[0]);
-        const float *blue_row = (const float *)(planes[1] + y * strides[1]);
-        const float *red_row = (const float *)(planes[2] + y * strides[2]);
-        uint8_t *output = rgba + y * rgba_stride;
-        for (x = 0; x < decoded->width; x++) {
-            double red = ffplaykmp_hdr_eotf(red_row[x], transfer);
-            double green = ffplaykmp_hdr_eotf(green_row[x], transfer);
-            double blue = ffplaykmp_hdr_eotf(blue_row[x], transfer);
-            double luminance;
-            double mapped_luminance;
-            double scale;
-            if (decoded->color_primaries == AVCOL_PRI_BT2020)
-                ffplaykmp_bt2020_to_bt709(&red, &green, &blue);
-            red = red > 0.0 ? red : 0.0;
-            green = green > 0.0 ? green : 0.0;
-            blue = blue > 0.0 ? blue : 0.0;
-            luminance = 0.2126 * red + 0.7152 * green + 0.0722 * blue;
-            mapped_luminance = luminance / (1.0 + luminance);
-            scale = luminance > 1e-9 ? mapped_luminance / luminance : 0.0;
-            output[x * 4 + 0] = (uint8_t)lrint(
-                    ffplaykmp_clamp_unit(ffplaykmp_srgb_oetf(red * scale)) * 255.0);
-            output[x * 4 + 1] = (uint8_t)lrint(
-                    ffplaykmp_clamp_unit(ffplaykmp_srgb_oetf(green * scale)) * 255.0);
-            output[x * 4 + 2] = (uint8_t)lrint(
-                    ffplaykmp_clamp_unit(ffplaykmp_srgb_oetf(blue * scale)) * 255.0);
-            output[x * 4 + 3] = 255;
-        }
-    }
-    return 0;
-}
 
 static void ffplaykmp_emit_video_frame(
         ffplaykmp_player *player,
         const AVFrame *decoded,
         int64_t presentation_time_us) {
     ffplaykmp_video_frame frame;
-    uint8_t *rgba;
-    uint8_t *planes[4] = { NULL };
-    int strides[4] = { 0 };
-    int size;
+    ffplaykmp_converted_frame converted;
     ffplaykmp_video_frame_callback callback;
     void *callback_opaque;
     uint32_t queue_serial;
@@ -652,104 +119,21 @@ static void ffplaykmp_emit_video_frame(
     pthread_mutex_unlock(&player->mutex);
     if (!callback || !can_upload || ffplaykmp_is_aborted(player))
         return;
-    size = av_image_get_buffer_size(AV_PIX_FMT_RGBA, decoded->width, decoded->height, 1);
-    if (size <= 0)
+    if (ffplaykmp_convert_rgba(&player->converter, decoded, tone_map_hdr, &converted) < 0)
         return;
-    rgba = ffplaykmp_scratch(&player->rgba_buffer, &player->rgba_capacity, size);
-    if (!rgba || av_image_fill_arrays(
-            planes, strides, rgba, AV_PIX_FMT_RGBA, decoded->width, decoded->height, 1) < 0)
-        return;
-    if (!tone_map_hdr || ffplaykmp_tone_map_hdr_frame(player, decoded, rgba, strides[0]) != 0) {
-        player->rgba_scaler = sws_getCachedContext(
-                player->rgba_scaler,
-                decoded->width, decoded->height, decoded->format,
-                decoded->width, decoded->height, AV_PIX_FMT_RGBA,
-                SWS_BILINEAR, NULL, NULL, NULL);
-        if (!player->rgba_scaler)
-            return;
-        ffplaykmp_configure_scaler_colors(player->rgba_scaler, decoded);
-        if (sws_scale(
-                player->rgba_scaler,
-                (const uint8_t *const *)decoded->data,
-                decoded->linesize,
-                0,
-                decoded->height,
-                planes,
-                strides) != decoded->height)
-            return;
-    }
     memset(&frame, 0, sizeof(frame));
     frame.size = sizeof(frame);
-    frame.rgba = rgba;
-    frame.rgba_size = (uint64_t)size;
-    frame.width = decoded->width;
-    frame.height = decoded->height;
-    frame.stride = strides[0];
+    frame.rgba = converted.pixels;
+    frame.rgba_size = (uint64_t)converted.size;
+    frame.width = converted.width;
+    frame.height = converted.height;
+    frame.stride = converted.stride;
     frame.presentation_time_us = presentation_time_us;
     frame.queue_serial = queue_serial;
     callback(callback_opaque, &frame);
 }
 
-static int ffplaykmp_is_hardware_frame(const AVFrame *frame) {
-    const AVPixFmtDescriptor *descriptor;
-    if (frame->hw_frames_ctx)
-        return 1;
-    descriptor = av_pix_fmt_desc_get(frame->format);
-    return descriptor && (descriptor->flags & AV_PIX_FMT_FLAG_HWACCEL);
-}
-
 #if !defined(__ANDROID__)
-/* get_format for hardware decoding; context->opaque points at the wanted format. */
-static enum AVPixelFormat ffplaykmp_hardware_format(
-        AVCodecContext *context,
-        const enum AVPixelFormat *formats) {
-    const enum AVPixelFormat *wanted = context->opaque;
-    const enum AVPixelFormat *format;
-    if (!wanted)
-        return AV_PIX_FMT_NONE;
-    for (format = formats; *format != AV_PIX_FMT_NONE; format++) {
-        if (*format == *wanted)
-            return *format;
-    }
-    return AV_PIX_FMT_NONE;
-}
-
-static int ffplaykmp_select_hardware_config(
-        const AVCodec *codec,
-        enum AVHWDeviceType *device_type,
-        enum AVPixelFormat *pixel_format) {
-    const AVCodecHWConfig *config;
-    enum AVHWDeviceType candidates[3];
-    int candidate_count = 0;
-    int candidate_index;
-    int config_index;
-#if defined(__APPLE__)
-    candidates[candidate_count++] = AV_HWDEVICE_TYPE_VIDEOTOOLBOX;
-#elif defined(_WIN32)
-    candidates[candidate_count++] = AV_HWDEVICE_TYPE_D3D11VA;
-    candidates[candidate_count++] = AV_HWDEVICE_TYPE_DXVA2;
-#elif defined(__linux__)
-    candidates[candidate_count++] = AV_HWDEVICE_TYPE_VAAPI;
-#else
-    (void)codec;
-#endif
-    for (candidate_index = 0; candidate_index < candidate_count; candidate_index++) {
-        for (config_index = 0; ; config_index++) {
-            config = avcodec_get_hw_config(codec, config_index);
-            if (!config)
-                break;
-            if (config->device_type == candidates[candidate_index] &&
-                    config->pix_fmt != AV_PIX_FMT_NONE &&
-                    (config->methods & AV_CODEC_HW_CONFIG_METHOD_HW_DEVICE_CTX)) {
-                *device_type = config->device_type;
-                *pixel_format = config->pix_fmt;
-                return 0;
-            }
-        }
-    }
-    return AVERROR(ENOTSUP);
-}
-
 #if defined(__APPLE__)
 
 static int ffplaykmp_emit_platform_video_frame(
@@ -799,9 +183,7 @@ static int ffplaykmp_emit_downloaded_video_frame(
     software_frame = av_frame_alloc();
     if (!software_frame)
         return AVERROR(ENOMEM);
-    result = av_hwframe_transfer_data(software_frame, hardware_frame, 0);
-    if (result >= 0)
-        result = av_frame_copy_props(software_frame, hardware_frame);
+    result = ffplaykmp_download_frame(software_frame, hardware_frame);
     if (result >= 0)
         ffplaykmp_emit_video_frame(player, software_frame, presentation_time_us);
     av_frame_free(&software_frame);
@@ -824,14 +206,6 @@ static void ffplaykmp_invalidate_master_clock(ffplaykmp_player *player) {
     pthread_mutex_lock(&player->mutex);
     player->master_clock_valid = 0;
     pthread_mutex_unlock(&player->mutex);
-}
-
-/*
- * Media time is measured from the container start, as the audio engine does,
- * so audio and video clocks agree when their streams start at different times.
- */
-static int64_t ffplaykmp_media_start_us(const AVFormatContext *format) {
-    return format->start_time == AV_NOPTS_VALUE ? 0 : format->start_time;
 }
 
 static int ffplaykmp_wait_until(
@@ -993,6 +367,7 @@ static int ffplaykmp_decode_frames(
         int continuous,
         ffplaykmp_decoder_preference preference) {
     ffplaykmp_input input = { 0 };
+    ffplaykmp_video_codec video_codec = { 0 };
     AVCodecContext *decoder = NULL;
     const AVCodec *codec;
     const AVStream *stream;
@@ -1005,17 +380,10 @@ static int ffplaykmp_decode_frames(
     int64_t media_start_us;
     int hardware_active = 0;
     const int require_hardware = preference == FFPLAYKMP_DECODER_REQUIRE_HARDWARE;
-#if defined(__ANDROID__)
-    AVMediaCodecContext *mediacodec_context = NULL;
-    jobject android_surface = NULL;
-#else
-    AVBufferRef *hardware_device = NULL;
-    enum AVHWDeviceType hardware_device_type = AV_HWDEVICE_TYPE_NONE;
-    enum AVPixelFormat hardware_format = AV_PIX_FMT_NONE;
-#endif
-    if ((result = ffplaykmp_open_input(player, url, &input)) < 0)
+    void *android_surface = NULL;
+    if ((result = ffplaykmp_player_open_input(player, url, &input)) < 0)
         goto cleanup;
-    video_stream = av_find_best_stream(input.format, AVMEDIA_TYPE_VIDEO, -1, -1, &codec, 0);
+    video_stream = ffplaykmp_find_video_stream(input.format, &codec);
     if (video_stream < 0) {
         result = video_stream;
         goto cleanup;
@@ -1039,59 +407,12 @@ static int ffplaykmp_decode_frames(
 #endif
         pthread_mutex_unlock(&player->mutex);
     }
-    if (hardware_active) {
-#if defined(__ANDROID__)
-        char decoder_name[96];
-        const AVCodec *hardware_codec = NULL;
-        if (snprintf(decoder_name, sizeof(decoder_name), "%s_mediacodec", codec->name) > 0)
-            hardware_codec = avcodec_find_decoder_by_name(decoder_name);
-        if (hardware_codec)
-            codec = hardware_codec;
-        else
-            hardware_active = 0;
-#else
-        hardware_active = ffplaykmp_select_hardware_config(
-                codec, &hardware_device_type, &hardware_format) >= 0;
-#endif
-    }
-    if (require_hardware && !hardware_active) {
-        result = FFPLAYKMP_ERROR_UNSUPPORTED;
-        goto cleanup;
-    }
-
-    decoder = avcodec_alloc_context3(codec);
-    if (!decoder) {
-        result = AVERROR(ENOMEM);
-        goto cleanup;
-    }
-    if ((result = avcodec_parameters_to_context(decoder, stream->codecpar)) < 0)
-        goto cleanup;
-    if (hardware_active) {
-#if defined(__ANDROID__)
-        mediacodec_context = av_mediacodec_alloc_context();
-        if (!mediacodec_context) {
-            result = AVERROR(ENOMEM);
-            goto cleanup;
-        }
-        if ((result = av_mediacodec_default_init(decoder, mediacodec_context, android_surface)) < 0) {
-            /* Not attached to the decoder, so av_mediacodec_default_free won't free it. */
-            av_freep(&mediacodec_context);
-            goto cleanup;
-        }
-#else
-        if ((result = av_hwdevice_ctx_create(
-                &hardware_device, hardware_device_type, NULL, NULL, 0)) < 0)
-            goto cleanup;
-        decoder->hw_device_ctx = av_buffer_ref(hardware_device);
-        if (!decoder->hw_device_ctx) {
-            result = AVERROR(ENOMEM);
-            goto cleanup;
-        }
-        decoder->opaque = &hardware_format;
-        decoder->get_format = ffplaykmp_hardware_format;
-#endif
-    }
-    if ((result = avcodec_open2(decoder, codec, NULL)) < 0)
+    result = ffplaykmp_video_codec_open(
+            &video_codec, input.format, video_stream, hardware_active, require_hardware,
+            android_surface, NULL);
+    hardware_active = video_codec.hardware;
+    decoder = video_codec.decoder;
+    if (result < 0)
         goto cleanup;
 
     pthread_mutex_lock(&player->mutex);
@@ -1165,14 +486,8 @@ finish:
 cleanup:
     av_packet_free(&packet);
     av_frame_free(&frame);
-#if defined(__ANDROID__)
-    if (decoder && mediacodec_context)
-        av_mediacodec_default_free(decoder);
-#else
-    av_buffer_unref(&hardware_device);
-#endif
-    avcodec_free_context(&decoder);
-    ffplaykmp_close_input(player, &input);
+    ffplaykmp_video_codec_close(&video_codec);
+    ffplaykmp_close_input(&input);
     if (result < 0 && hardware_active && decoded_frames == 0 &&
             preference == FFPLAYKMP_DECODER_AUTO && !ffplaykmp_is_aborted(player))
         return ffplaykmp_decode_frames(player, url, start_position_us, continuous,
@@ -1188,9 +503,9 @@ cleanup:
 static int ffplaykmp_inspect_source(ffplaykmp_player *player, const char *url) {
     ffplaykmp_input input = { 0 };
     int video_stream = -1;
-    int result = ffplaykmp_open_input(player, url, &input);
+    int result = ffplaykmp_player_open_input(player, url, &input);
     if (result >= 0) {
-        video_stream = av_find_best_stream(input.format, AVMEDIA_TYPE_VIDEO, -1, -1, NULL, 0);
+        video_stream = ffplaykmp_find_video_stream(input.format, NULL);
         result = video_stream < 0 ? video_stream : 0;
     }
     if (result >= 0) {
@@ -1204,7 +519,7 @@ static int ffplaykmp_inspect_source(ffplaykmp_player *player, const char *url) {
                 : input.format->duration;
         pthread_mutex_unlock(&player->mutex);
     }
-    ffplaykmp_close_input(player, &input);
+    ffplaykmp_close_input(&input);
     return result;
 }
 
@@ -1458,17 +773,9 @@ int ffplaykmp_player_set_android_surface(
     if (secure)
         return FFPLAYKMP_ERROR_UNSUPPORTED;
     if (surface) {
-        retained = (*env)->NewGlobalRef(env, surface);
-        if (!retained)
-            return -ENOMEM;
-        if ((*env)->GetJavaVM(env, &vm) != JNI_OK) {
-            (*env)->DeleteGlobalRef(env, retained);
-            return FFPLAYKMP_ERROR_IO;
-        }
-        if (av_jni_set_java_vm(vm, NULL) < 0) {
-            (*env)->DeleteGlobalRef(env, retained);
-            return FFPLAYKMP_ERROR_IO;
-        }
+        int result = ffplaykmp_android_retain_global(env, surface, &vm, &retained);
+        if (result < 0)
+            return result;
     }
     ffplaykmp_stop_worker(player);
     pthread_mutex_lock(&player->mutex);
@@ -1492,10 +799,7 @@ void ffplaykmp_player_destroy(ffplaykmp_player *player) {
     ffplaykmp_release_android_surface(player);
 #endif
     free(player->input);
-    sws_freeContext(player->rgba_scaler);
-    sws_freeContext(player->float_scaler);
-    av_free(player->rgba_buffer);
-    av_free(player->float_buffer);
+    ffplaykmp_converter_free(&player->converter);
     pthread_mutex_destroy(&player->mutex);
     free(player);
 }
@@ -1826,7 +1130,7 @@ static void ffplaykmp_web_close_packet_reader(ffplaykmp_player *player) {
     callbacks->packet_reader = NULL;
     if (!reader)
         return;
-    ffplaykmp_close_input(player, &reader->input);
+    ffplaykmp_close_input(&reader->input);
     free(reader);
 }
 
@@ -2190,7 +1494,7 @@ int ffplaykmp_web_player_open_packets(
     if (!reader)
         return AVERROR(ENOMEM);
     /* The worker mounts the prepared bytes as resource 1. */
-    result = ffplaykmp_open_input(player, "ffmpegkmp:1", &reader->input);
+    result = ffplaykmp_player_open_input(player, "ffmpegkmp:1", &reader->input);
     if (result < 0)
         goto fail;
     reader->video_stream = av_find_best_stream(

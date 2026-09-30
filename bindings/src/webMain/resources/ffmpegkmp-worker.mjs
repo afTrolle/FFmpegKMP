@@ -704,9 +704,106 @@ async function handlePlayerMessage(data) {
   }
 }
 
+// A pull demuxer over the player's packet reader, for a caller that decodes on its own schedule, such as an
+// export. It prepares its input without an output, so the player never decodes or plays; one per worker.
+const demux = { handle: 0, snapshot: null, config: null, packets: null, callbacks: [] };
+let demuxMessageTail = Promise.resolve();
+
+function openDemux(module, data) {
+  if (demux.handle) throw new Error('The demuxer is already open');
+  const [stateCallback, configCallback, packetCallback] = demux.callbacks = [
+    module.addFunction((opaque, json, size) => {
+      demux.snapshot = decodeUtf8(module.HEAPU8, json, Number(size));
+    }, 'viii'),
+    module.addFunction(
+      (opaque, codec, description, descriptionSize, width, height, primaries, transfer, matrix) => {
+        const config = { codec: decodeCString(module.HEAPU8, codec), codedWidth: width, codedHeight: height };
+        if (descriptionSize > 0) {
+          config.description = module.HEAPU8.slice(description, description + Number(descriptionSize));
+        }
+        const colorSpace = webColorSpace(primaries, transfer, matrix);
+        if (colorSpace) config.colorSpace = colorSpace;
+        demux.config = config;
+      },
+      'viiiiiiiii',
+    ),
+    module.addFunction((opaque, bytes, size, timestampUs, durationUs, keyFrame) => {
+      demux.packets.push({
+        type: keyFrame ? 'key' : 'delta',
+        timestamp: Number(timestampUs),
+        duration: Number(durationUs),
+        data: module.HEAPU8.slice(bytes, bytes + Number(size)),
+      });
+    }, 'viiijjii'),
+  ];
+  demux.handle = module._ffplaykmp_web_player_create(0, stateCallback, 0, 0);
+  if (!demux.handle) throw new Error('FFmpegKMP demuxer allocation failed');
+  const extensionPointer = module.stringToNewUTF8(data.extension || '');
+  const inputPointer = module._malloc(data.bytes.length);
+  let result;
+  try {
+    module.HEAPU8.set(data.bytes, inputPointer);
+    result = module._ffplaykmp_web_player_prepare_bytes(
+      demux.handle, inputPointer, data.bytes.length, extensionPointer, 0);
+  } finally {
+    module._free(inputPointer);
+    module._free(extensionPointer);
+  }
+  if (result < 0) throw new Error(`FFmpeg could not open the input (${result})`);
+  // Delivers the inspected stream's snapshot: size, rotation, aspect ratio and duration.
+  module._ffplaykmp_web_player_poll(demux.handle);
+  result = module._ffplaykmp_web_player_open_packets(demux.handle, configCallback, 0);
+  if (result < 0 || !demux.config) throw new Error(`FFmpeg found no video stream WebCodecs can take (${result})`);
+  const transfers = demux.config.description ? [demux.config.description.buffer] : [];
+  self.postMessage({ type: 'demux-opened', id: data.id, config: demux.config, snapshot: demux.snapshot }, transfers);
+}
+
+function readDemux(module, data) {
+  demux.packets = [];
+  let end = false;
+  while (demux.packets.length < data.count) {
+    const result = module._ffplaykmp_web_player_read_packet(demux.handle, demux.callbacks[2], 0);
+    if (result === 1) {
+      end = true;
+      break;
+    }
+    if (result < 0) throw new Error(`FFmpeg packet demux failed (${result})`);
+  }
+  const packets = demux.packets;
+  demux.packets = null;
+  self.postMessage({ type: 'demux-packets', id: data.id, packets, end }, packets.map(packet => packet.data.buffer));
+}
+
+async function handleDemuxMessage(data) {
+  try {
+    const module = await loadModule(data.moduleUrl || './ffmpegkmp.mjs');
+    if (data.type === 'demux-open') {
+      openDemux(module, data);
+      return;
+    }
+    if (!demux.handle) throw new Error('The demuxer is not open');
+    if (data.type === 'demux-read') {
+      readDemux(module, data);
+    } else if (data.type === 'demux-seek') {
+      // AVSEEK_FLAG_BACKWARD: the next packet is the keyframe at or before the position.
+      const result = module._ffplaykmp_web_player_webcodecs_seek(demux.handle, BigInt(data.positionUs));
+      if (result < 0) throw new Error(`FFmpeg could not seek to ${data.positionUs} us (${result})`);
+      self.postMessage({ type: 'demux-seeked', id: data.id });
+    }
+  } catch (error) {
+    if (error !== 'unwind') {
+      self.postMessage({ type: 'demux-failure', id: data.id, message: String(error?.stack ?? error) });
+    }
+  }
+}
+
 self.onmessage = async ({ data }) => {
   if (data.type.startsWith('player-')) {
     playerMessageTail = playerMessageTail.then(() => handlePlayerMessage(data));
+    return;
+  }
+  if (data.type.startsWith('demux-')) {
+    demuxMessageTail = demuxMessageTail.then(() => handleDemuxMessage(data));
     return;
   }
   if (data.type === 'cancel') {
