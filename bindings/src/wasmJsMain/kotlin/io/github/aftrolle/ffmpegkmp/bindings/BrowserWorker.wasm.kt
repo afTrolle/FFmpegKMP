@@ -299,3 +299,5 @@ private const val WORKER_BOOTSTRAP: String = """
       return worker;
     }
 """
+
+internal actual fun copyToJsUint8Array(bytes: ByteArray): JsAny = bytes.toJsUint8Array()

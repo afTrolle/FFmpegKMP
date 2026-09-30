@@ -65,4 +65,22 @@ class MediaCodecP010OverlayTest {
         assertContains(composed, "AV_PIX_FMT_P010")
         assertContains(composed, "hdr-static-info")
     }
+
+    @Test
+    fun boundsTheMediaCodecDecoderSpinBehindAnOption() {
+        val sourceFile = listOf(File("ffmpeg"), File("../ffmpeg"))
+            .map { it.resolve("libavcodec/mediacodecdec.c") }
+            .first(File::isFile)
+        val source = sourceFile.readText()
+        val patched = addMediaCodecDecoderWaitTimeout(source)
+
+        assertContains(patched, "Modified by FFmpegKMP contributors in 2026")
+        assertContains(patched, "#include \"libavutil/time.h\"")
+        assertContains(patched, "OFFSET(wait_timeout), AV_OPT_TYPE_INT64, {.i64 = 0}, 0, INT_MAX, VD }")
+        assertContains(patched, "s->wait_timeout && wait_start != AV_NOPTS_VALUE ? FFMPEGKMP_INPUT_WAIT_US : 0")
+        assertContains(patched, "else if (now - wait_start >= s->wait_timeout)")
+        assertFalse("ff_AMediaCodec_dequeueInputBuffer(s->ctx->codec, 0)" in patched)
+        assertContains(patched, "{ \"ffmpegkmp_wait_timeout\", ")
+        assertEquals(patched, addMediaCodecDecoderWaitTimeout(patched))
+    }
 }

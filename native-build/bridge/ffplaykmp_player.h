@@ -66,6 +66,7 @@ typedef enum ffplaykmp_error {
     FFPLAYKMP_ERROR_UNSUPPORTED = -1004,
     FFPLAYKMP_ERROR_IO = -1005,
     FFPLAYKMP_ERROR_STALE = -1006,
+    FFPLAYKMP_ERROR_TIMED_OUT = -1007,
 } ffplaykmp_error;
 
 typedef enum ffplaykmp_source_flags {

@@ -155,6 +155,10 @@ abstract class FfmpegBuildTask : DefaultTask() {
             mediaCodecWrapper.writeText(addMediaCodecHdr10ProfileSupport(mediaCodecWrapper.readText()))
             mediaCodecEncoder.writeText(addMediaCodecHdrStaticInfoSupport(mediaCodecEncoder.readText()))
         }
+        if (targetKind.get() == "android" && androidMediaCodec.get() && hardwareDecoding.get()) {
+            val mediaCodecDecoder = preparedSource.resolve("libavcodec/mediacodecdec.c")
+            mediaCodecDecoder.writeText(addMediaCodecDecoderWaitTimeout(mediaCodecDecoder.readText()))
+        }
         val configure = preparedSource.resolve("configure")
 
         val arguments = mutableListOf<String>()
@@ -542,6 +546,7 @@ abstract class FfmpegBuildTask : DefaultTask() {
                     "BRIDGE_INSTALL=${install.absolutePath}",
                     "FFMPEGKMP_EMBEDDED_FFTOOLS=${if (fftoolsObjects.isEmpty()) 0 else 1}",
                     "FFTOOLS_OBJECTS=${fftoolsObjects.joinToString(" ")}",
+                    "FFMPEGKMP_PIXEL_BUFFER=${if (targetKind.get() == "apple") 1 else 0}",
                     "ffmpegkmp-bridge",
                 ),
             )

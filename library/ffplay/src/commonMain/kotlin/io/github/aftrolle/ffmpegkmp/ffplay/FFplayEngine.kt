@@ -495,13 +495,13 @@ internal fun FFplayVideoInfo?.sampleAspectRatioValue(): Double {
     return (numerator / denominator).takeIf { it.isFinite() && it > 0.0 } ?: 1.0
 }
 
-private fun FFplayConfiguration.toNative() = NativePlayerConfiguration(
-    decoderPreference = when (decoderPreference) {
-        FFplayDecoderPreference.AUTO -> NativePlayerDecoderPreference.AUTO
-        FFplayDecoderPreference.REQUIRE_HARDWARE -> NativePlayerDecoderPreference.REQUIRE_HARDWARE
-        FFplayDecoderPreference.SOFTWARE -> NativePlayerDecoderPreference.SOFTWARE
-    },
-)
+private fun FFplayConfiguration.toNative() = NativePlayerConfiguration(decoderPreference.toNative())
+
+internal fun FFplayDecoderPreference.toNative(): NativePlayerDecoderPreference = when (this) {
+    FFplayDecoderPreference.AUTO -> NativePlayerDecoderPreference.AUTO
+    FFplayDecoderPreference.REQUIRE_HARDWARE -> NativePlayerDecoderPreference.REQUIRE_HARDWARE
+    FFplayDecoderPreference.SOFTWARE -> NativePlayerDecoderPreference.SOFTWARE
+}
 
 private fun FFplayOutputCapabilities.toNative() = NativePlayerOutputCapabilities(
     hardwareFrameImport = hardwareFrameImport,

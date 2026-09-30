@@ -15,4 +15,8 @@ details.
   with live per-track and master `AudioLevel`s and track selection. It uses the
   bridge's libav-based engine, not fftools, so it does not join the FIFO.
 - `ffplay` owns Compose video playback (`FFplayPlayer`, `FFplaySurface`) on its
-  own engine, with audio played through `player` and slaved to the video clock.
+  own engine, with audio played through `player` and slaved to the video clock,
+  and frame-accurate pull decoding (`VideoDecoder`) for exporters. The decoder
+  lives here, not in `player`, because its API uses FFplay's source and
+  metadata types and Compose's `ImageBitmap`, and `ffplay` already depends on
+  `player`.

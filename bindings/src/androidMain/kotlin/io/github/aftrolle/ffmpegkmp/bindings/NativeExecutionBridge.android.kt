@@ -26,8 +26,34 @@ public actual fun createPlatformPlayerBridge(
         if (target != null && target !is Surface) {
             -22
         } else {
-            Loader.load(AndroidPlayerSurface::class.java)
+            androidSurfaceNatives.value
             AndroidPlayerSurface.setSurface(target, player, if (secure) 1 else 0)
         }
     },
 )
+
+@InternalFFmpegKmpApi
+public actual fun createPlatformVideoDecoder(
+    source: NativePlayerSource,
+    output: NativeVideoDecoderOutput,
+    decoderPreference: NativePlayerDecoderPreference,
+    timeoutMicros: Long,
+    surface: Any?,
+): NativeVideoDecoder {
+    require((output == NativeVideoDecoderOutput.SURFACE) == (surface != null)) {
+        "A Surface is required for, and only for, Surface output"
+    }
+    require(surface == null || surface is Surface) { "Surface output needs an android.view.Surface, not $surface" }
+    return createJavaCppVideoDecoder(source, output, decoderPreference, timeoutMicros) { decoder ->
+        if (surface == null) {
+            0
+        } else {
+            androidSurfaceNatives.value
+            AndroidPlayerSurface.setDecoderSurface(surface, decoder)
+        }
+    }
+}
+
+// Decoders open on threads of their own, so two can reach the Surface natives at once; a bare Loader.load lets the second
+// call a native before the first has finished binding it (UnsatisfiedLinkError), as JavaCppBridgeLoader guards the bridge.
+private val androidSurfaceNatives = lazy { Loader.load(AndroidPlayerSurface::class.java) }

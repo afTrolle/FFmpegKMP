@@ -104,13 +104,9 @@ private class NativeCInteropPlayerBridge(
                 replayableSource = true,
             )
         }.toMap()
-        val mountedInput = source.mounts.indexOfFirst { it.path == source.input }
-            .takeIf { it >= 0 }
-            ?.let { protocolUrl(it.toLong() + 1L, source.input) }
-            ?: source.input
         return ffplaykmp_player_prepare(
             player,
-            mountedInput,
+            source.protocolInput(),
             if (source.requireSecurePath) FFPLAYKMP_SOURCE_REQUIRE_SECURE_PATH else 0u,
         ).also { result -> if (result < 0) callbackState.mounts = emptyMap() }
     }
@@ -263,7 +259,7 @@ private fun receiveNativePlayerIo(
     state.mounts[resourceId]?.dispatch(operation.toInt(), offset, data, size) ?: -1L
 }
 
-private fun ffplaykmp_snapshot.toNativeSnapshot(): NativePlayerSnapshot = nativePlayerSnapshot(
+internal fun ffplaykmp_snapshot.toNativeSnapshot(): NativePlayerSnapshot = nativePlayerSnapshot(
     state = state.toInt(),
     positionUs = position_us,
     durationUs = duration_us,

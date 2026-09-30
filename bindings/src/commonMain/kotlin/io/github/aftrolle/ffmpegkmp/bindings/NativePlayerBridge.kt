@@ -138,6 +138,7 @@ public object NativePlayerError {
     public const val ACCESS_DENIED: Int = -1003
     public const val UNSUPPORTED: Int = -1004
     public const val IO: Int = -1005
+    public const val TIMED_OUT: Int = -1007
 }
 
 @InternalFFmpegKmpApi

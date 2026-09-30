@@ -7,6 +7,7 @@ import kotlin.test.Test
 import kotlin.test.assertContentEquals
 import kotlin.test.assertContains
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 import kotlinx.coroutines.test.runTest
 import okio.Buffer
@@ -77,6 +78,44 @@ class CompiledRuntimeIntegrationTest {
             assertContains(probeResult.output, "\"codec_type\"")
         } finally {
             ffmpeg.close()
+            ffprobe.close()
+        }
+    }
+
+    @Test
+    fun streamSelectionDoesNotLeakIntoTheNextProbe() = runTest {
+        val media = audioVideoMedia()
+        val ffprobe = CommandRuntimeClient(CommandKind.FFPROBE)
+
+        try {
+            val videoOnly = ffprobe.probe(media, "-select_streams", "v:0", "-show_streams")
+            assertFalse("\"audio\"" in videoOnly, videoOnly)
+
+            val everything = ffprobe.probe(media, "-show_streams")
+            assertContains(everything, "\"video\"")
+            assertContains(everything, "\"audio\"")
+        } finally {
+            ffprobe.close()
+        }
+    }
+
+    @Test
+    fun entrySelectionDoesNotLeakIntoTheNextProbe() = runTest {
+        val media = audioVideoMedia()
+        val ffprobe = CommandRuntimeClient(CommandKind.FFPROBE)
+
+        try {
+            val selected = ffprobe.probe(media, "-show_entries", "stream=codec_type")
+            assertFalse("\"codec_name\"" in selected, selected)
+
+            val full = ffprobe.probe(media, "-show_format", "-show_streams")
+            assertContains(full, "\"codec_name\"")
+            assertContains(full, "\"format_name\"")
+
+            val selectedAgain = ffprobe.probe(media, "-show_entries", "stream=codec_type")
+            assertFalse("\"codec_name\"" in selectedAgain, selectedAgain)
+            assertFalse("\"format_name\"" in selectedAgain, selectedAgain)
+        } finally {
             ffprobe.close()
         }
     }
@@ -251,6 +290,42 @@ class CompiledRuntimeIntegrationTest {
         }
     }
 
+    private suspend fun audioVideoMedia(): ByteArray {
+        val media = MemoryFileHandle(readWrite = true)
+        val ffmpeg = CommandRuntimeClient(CommandKind.FFMPEG)
+        try {
+            val result = ffmpeg.execute(
+                arguments = listOf(
+                    "-hide_banner", "-loglevel", "error",
+                    "-f", "rawvideo", "-pixel_format", "rgb24", "-video_size", "16x16",
+                    "-i", RAW_INPUT_PATH,
+                    "-f", "u8", "-ar", "8000", "-ac", "1", "-i", AUDIO_INPUT_PATH,
+                    "-map", "0:v", "-map", "1:a",
+                    "-frames:v", "1", "-c:v", "rawvideo", "-c:a", "pcm_u8",
+                    "-f", "nut", OUTPUT_PATH,
+                ),
+                io = CommandIo {
+                    input(RAW_INPUT_PATH, Buffer().write(ByteArray(FRAME_BYTE_COUNT)))
+                    input(AUDIO_INPUT_PATH, Buffer().write(ByteArray(AUDIO_BYTE_COUNT)))
+                    readWrite(OUTPUT_PATH, media, truncate = true)
+                },
+            )
+            assertTrue(result.isSuccess, result.errorOutput)
+        } finally {
+            ffmpeg.close()
+        }
+        return media.snapshot()
+    }
+
+    private suspend fun CommandRuntimeClient.probe(media: ByteArray, vararg options: String): String {
+        val result = execute(
+            arguments = listOf("-v", "error", *options, "-of", "json", INPUT_PATH),
+            io = CommandIo { input(INPUT_PATH, MemoryFileHandle(readWrite = false, media)) },
+        )
+        assertTrue(result.isSuccess, result.errorOutput)
+        return result.output
+    }
+
     private class MemoryFileHandle(
         readWrite: Boolean,
         initialBytes: ByteArray = ByteArray(0),
@@ -297,10 +372,12 @@ class CompiledRuntimeIntegrationTest {
 
     private companion object {
         const val FRAME_BYTE_COUNT = 16 * 16 * 3
+        const val AUDIO_BYTE_COUNT = 8_000
         const val LARGE_INPUT_BYTE_COUNT = 128 * 1_024
         const val LARGE_INPUT_PATH = "large.u8"
         const val LARGE_OUTPUT_PATH = "large-copy.u8"
         const val RAW_INPUT_PATH = "frame.rgb"
+        const val AUDIO_INPUT_PATH = "tone.u8"
         const val OUTPUT_PATH = "generated.nut"
         const val INPUT_PATH = "probe-input.nut"
         const val MP4_OUTPUT_PATH = "generated.mp4"

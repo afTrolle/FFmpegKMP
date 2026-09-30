@@ -85,6 +85,15 @@ frame side data present on the encoder's `AVCodecContext` to Android's
 MaxCLL/MaxFALL metadata from an HDR source survives re-encoding instead of
 being silently dropped.
 
+The same preparation gives FFmpeg's MediaCodec decoders an opt-in
+`ffmpegkmp_wait_timeout` option (microseconds, 0 by default). Upstream,
+`receive_frame` spins on a zero-timeout `dequeueInputBuffer` for as long as a
+codec holds every input buffer without outputting a frame; with the option set it
+waits on the input queue instead and, once the timeout passes, returns `EAGAIN`
+from both `avcodec_send_packet` and `avcodec_receive_frame`. `VideoDecoder` sets
+it so its decode loop can keep checking its deadline. Callers that do not set it,
+including fftools commands, keep the upstream behaviour.
+
 The Android HDR10 profile is selected from `avctx->profile`, not inferred from
 pixel format or color metadata, so a caller must set it explicitly. A minimal
 HDR10-to-HDR10 command on Android looks like:
@@ -107,7 +116,11 @@ submodule, compiles it for each target, and adds
 it to the install manifest. The bridge serializes embedded command entry, turns
 `exit()` into a return to the host, resets the wrapper-controlled tool state,
 routes `av_log` events, captures FFprobe output, and checks cancellation in the
-FFmpeg scheduler and FFprobe packet-read path.
+FFmpeg scheduler and FFprobe packet-read path. Before every FFprobe run it clears
+the option state `ffprobe.c` keeps in statics (`-show_*` flags,
+`-select_streams`, `-show_entries` selections, output format, file names, forced
+decoders and the cmdutils option dictionaries), so one probe's options never
+carry into the next.
 
 Cancellation follows the coroutine. On JVM, Android and Apple,
 `NativeExecutionBridge.execute` runs the blocking native entry point on
