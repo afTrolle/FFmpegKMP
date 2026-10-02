@@ -7,7 +7,12 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNotEquals
 import kotlin.test.assertTrue
+import kotlin.time.Duration.Companion.seconds
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeout
 import okio.Buffer
 
 class JavaCppExecutionBridgeTest {
@@ -68,6 +73,47 @@ class JavaCppExecutionBridgeTest {
 
             assertEquals(0, result.returnCode)
             assertTrue(output.size > 0L)
+        }
+    }
+
+    @Test
+    fun cancelStopsATranscodeThatIsStillRunning() = runBlocking {
+        // -re paces the read at the input's own frame rate, so this is a minute of work that
+        // only a cancel can finish inside the timeout.
+        val frame = 16 * 16 * 3
+        val input = Buffer().write(ByteArray(frame * 25 * 60))
+
+        createPlatformExecutionBridge().use { nativeBridge ->
+            val run = async(Dispatchers.IO) {
+                nativeBridge.execute(
+                    NativeExecutionRequest(
+                        id = 1,
+                        kind = NativeCommandKind.FFMPEG,
+                        arguments = listOf(
+                            "-y",
+                            "-re",
+                            "-f", "rawvideo",
+                            "-pixel_format", "rgb24",
+                            "-video_size", "16x16",
+                            "-framerate", "25",
+                            "-i", "input.rgb",
+                            "-c:v", "rawvideo",
+                            "-f", "nut",
+                            "output.nut",
+                        ),
+                        mounts = listOf(
+                            NativeMountedIo("input.rgb", NativeSourceResource(input)),
+                            NativeMountedIo("output.nut", NativeSinkResource(Buffer())),
+                        ),
+                    ),
+                    {},
+                )
+            }
+            delay(2.seconds)
+            nativeBridge.cancel(1)
+
+            val result = withTimeout(30.seconds) { run.await() }
+            assertEquals(255, result.returnCode)
         }
     }
 

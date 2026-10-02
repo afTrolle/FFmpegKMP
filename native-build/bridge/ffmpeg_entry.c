@@ -51,5 +51,11 @@ int ffmpegkmp_ffmpeg_entry(int argc, char **argv) {
 }
 
 void ffmpegkmp_ffmpeg_cancel(void) {
+    /* The transcode loop and the I/O interrupt callback watch the signal count, the way
+     * the CLI's own handler leaves it after one SIGTERM. received_sigterm alone only
+     * changes the exit message, so a cancelled run carried on to its natural end.
+     * Set rather than counted: a repeated cancel must not escalate into the second-signal
+     * interrupt that abandons the output mid-write. */
     received_sigterm = SIGTERM;
+    received_nb_signals = 1;
 }
