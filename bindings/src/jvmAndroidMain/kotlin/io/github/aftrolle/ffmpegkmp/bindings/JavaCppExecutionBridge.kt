@@ -27,6 +27,10 @@ private class JavaCppExecutionBridge : NativeExecutionBridge {
     private var mountedResources: Map<Long, MountedResource> = emptyMap()
     @Volatile
     private var closed = false
+    private val cancelGate = ExecutionCancelGate(
+        resetNative = { bridge.ffmpegkmp_context_reset_cancel(context) },
+        cancelNative = { bridge.ffmpegkmp_cancel(context) },
+    )
 
     init {
         JavaCppBridgeLoader.load()
@@ -89,6 +93,7 @@ private class JavaCppExecutionBridge : NativeExecutionBridge {
             val pointers = PointerPointer<BytePointer>(*arguments.toTypedArray())
             mountedResources = mounts
             eventConsumer = emit
+            cancelGate.begin(request.id)
             val returnCode = try {
                 bridge.ffmpegkmp_execute(
                     context,
@@ -101,6 +106,7 @@ private class JavaCppExecutionBridge : NativeExecutionBridge {
                     pointers,
                 )
             } finally {
+                cancelGate.end()
                 eventConsumer = null
                 pointers.close()
             }
@@ -116,7 +122,7 @@ private class JavaCppExecutionBridge : NativeExecutionBridge {
     }
 
     override fun cancel(executionId: Long) {
-        if (!closed) bridge.ffmpegkmp_cancel(context)
+        if (!closed) cancelGate.cancel(executionId)
     }
 
     override fun close() {

@@ -236,6 +236,9 @@ private class CommandExecutionSession(
             if (cancelled.load()) return
 
             mutableState.value = SessionState.RUNNING
+            // cancel() tells the bridge only once the session is running, so one that read the
+            // state just before the line above told nobody.
+            if (cancelled.load()) return
             staged = prepareStaging()
             val nativeResult = executeAndCaptureEvents(staged.mounts)
 

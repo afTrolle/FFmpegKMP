@@ -16,6 +16,7 @@ import io.github.aftrolle.ffmpegkmp.bindings.cinterop.ffmpegkmp_cancel
 import io.github.aftrolle.ffmpegkmp.bindings.cinterop.ffmpegkmp_context_create
 import io.github.aftrolle.ffmpegkmp.bindings.cinterop.ffmpegkmp_context_set_io_callback
 import io.github.aftrolle.ffmpegkmp.bindings.cinterop.ffmpegkmp_context_destroy
+import io.github.aftrolle.ffmpegkmp.bindings.cinterop.ffmpegkmp_context_reset_cancel
 import io.github.aftrolle.ffmpegkmp.bindings.cinterop.ffmpegkmp_execute
 import kotlinx.cinterop.ByteVar
 import kotlinx.cinterop.COpaquePointer
@@ -52,6 +53,10 @@ private class NativeCInteropExecutionBridge : NativeExecutionBridge {
         throw NativeBridgeUnavailableException("FFmpegKMP native context allocation failed")
     }
     private var closed = false
+    private val cancelGate = ExecutionCancelGate(
+        resetNative = { ffmpegkmp_context_reset_cancel(context) },
+        cancelNative = { ffmpegkmp_cancel(context) },
+    )
 
     init {
         ffmpegkmp_context_set_io_callback(context, staticCFunction(::receiveNativeIo))
@@ -73,6 +78,7 @@ private class NativeCInteropExecutionBridge : NativeExecutionBridge {
             callbackState.mounts = mounts
             val executable = if (request.kind == NativeCommandKind.FFMPEG) "ffmpeg" else "ffprobe"
             val arguments = listOf(executable) + request.arguments.map { mountedPaths[it] ?: it }
+            cancelGate.begin(request.id)
             val returnCode = try {
                 memScoped {
                     val nativeArguments = allocArray<CPointerVar<ByteVar>>(arguments.size)
@@ -89,6 +95,7 @@ private class NativeCInteropExecutionBridge : NativeExecutionBridge {
                     )
                 }
             } finally {
+                cancelGate.end()
                 callbackState.emit = null
             }
             if (returnCode == -38) {
@@ -104,7 +111,7 @@ private class NativeCInteropExecutionBridge : NativeExecutionBridge {
     }
 
     override fun cancel(executionId: Long) {
-        if (!closed) ffmpegkmp_cancel(context)
+        if (!closed) cancelGate.cancel(executionId)
     }
 
     override fun close() {
