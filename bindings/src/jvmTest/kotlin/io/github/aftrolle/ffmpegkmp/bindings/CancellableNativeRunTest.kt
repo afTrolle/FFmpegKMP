@@ -6,18 +6,18 @@ package io.github.aftrolle.ffmpegkmp.bindings
 import kotlin.concurrent.atomics.AtomicBoolean
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.async
-import kotlinx.coroutines.delay
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.test.runTest
 
 class CancellableNativeRunTest {
-    /** Stands in for FFmpeg: blocks the thread until the cancel flag it polls is raised. */
+    /** Stands in for FFmpeg: blocks its thread until the cancel flag it polls is raised. */
     private class FakeNativeRun {
         val cancelRequested = AtomicBoolean(false)
         val started = CompletableDeferred<Unit>()
@@ -36,7 +36,7 @@ class CancellableNativeRunTest {
     }
 
     @Test
-    fun cancellingTheCallerRaisesTheNativeFlagAndWaitsForTheRunToReturn() = runBlocking {
+    fun cancellingTheCallerRaisesTheNativeFlagAndWaitsForTheRunToReturn() = runTest {
         val native = FakeNativeRun()
         var returnedBeforeRethrow = false
         val caller = launch {
@@ -60,38 +60,38 @@ class CancellableNativeRunTest {
     }
 
     @Test
-    fun anUncancelledRunReturnsItsResult() = runBlocking {
+    fun anUncancelledRunReturnsItsResult() = runTest {
         val result = runCancellableNative(Dispatchers.IO, cancelNative = { error("not expected") }) { 42 }
 
         assertEquals(42, result)
     }
 
     @Test
-    fun aFailingRunRethrowsItsFailureWithoutCancellingNative() = runBlocking {
+    fun aFailingRunRethrowsItsOwnFailureWithoutCancellingNative() = runTest {
         var cancelled = false
-        val failure = runCatching {
+
+        assertFailsWith<IllegalStateException> {
             runCancellableNative(Dispatchers.IO, cancelNative = { cancelled = true }) {
                 throw IllegalStateException("boom")
             }
-        }.exceptionOrNull()
-
-        assertTrue(failure is IllegalStateException)
+        }
         assertFalse(cancelled)
     }
 
     @Test
-    fun cancellationBeforeTheRunIsDispatchedSkipsTheRunButStillRaisesTheFlag() = runBlocking {
+    fun aCallerCancelledBeforeTheRunIsDispatchedSkipsTheRunAndStillRaisesTheFlag() = runTest {
         var ran = false
         var cancelled = false
-        val caller = async(start = kotlinx.coroutines.CoroutineStart.LAZY) {
-            runCancellableNative(Dispatchers.IO, cancelNative = { cancelled = true }) { ran = true }
-        }
-        caller.cancel()
-        caller.join()
-        delay(50)
+
+        launch {
+            cancel()
+            assertFailsWith<CancellationException> {
+                runCancellableNative(Dispatchers.IO, cancelNative = { cancelled = true }) { ran = true }
+            }
+        }.join()
 
         assertFalse(ran)
-        // The flag is harmless here: the next run clears it before it starts.
-        assertFalse(cancelled, "A run that never started has nothing to cancel")
+        // Harmless: the next run clears the flag before it starts.
+        assertTrue(cancelled)
     }
 }

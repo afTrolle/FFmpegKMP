@@ -9,10 +9,11 @@ import kotlin.test.assertNotEquals
 import kotlin.test.assertTrue
 import kotlin.time.Duration.Companion.seconds
 import kotlin.time.measureTime
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.async
 import kotlinx.coroutines.cancelAndJoin
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeout
 import okio.Buffer
 
 class JavaCppExecutionBridgeTest {
@@ -54,13 +55,16 @@ class JavaCppExecutionBridgeTest {
         }
     }
 
+    // runBlocking on purpose: these drive real FFmpeg threads, `-re` paces in wall-clock time,
+    // and the unwinding bound below is a wall-clock measurement.
     @Test
     fun cancellingTheCallerStopsATranscodeThatIsStillRunning() = runBlocking {
         createPlatformExecutionBridge().use { nativeBridge ->
+            val transcoding = CompletableDeferred<Unit>()
             val run = async {
-                nativeBridge.execute(transcode(1, frames = MINUTE_OF_FRAMES, paced = true), {})
+                nativeBridge.execute(transcode(1, frames = MINUTE_OF_FRAMES, paced = true), transcoding::completeOnStats)
             }
-            delay(2.seconds)
+            withTimeout(30.seconds) { transcoding.await() }
 
             val unwinding = measureTime { run.cancelAndJoin() }
 
@@ -74,10 +78,11 @@ class JavaCppExecutionBridgeTest {
     @Test
     fun aCancelledRunLeavesTheBridgeReadyForTheNextOne() = runBlocking {
         createPlatformExecutionBridge().use { nativeBridge ->
+            val transcoding = CompletableDeferred<Unit>()
             val cancelled = async {
-                nativeBridge.execute(transcode(1, frames = MINUTE_OF_FRAMES, paced = true), {})
+                nativeBridge.execute(transcode(1, frames = MINUTE_OF_FRAMES, paced = true), transcoding::completeOnStats)
             }
-            delay(1.seconds)
+            withTimeout(30.seconds) { transcoding.await() }
             cancelled.cancelAndJoin()
 
             val output = Buffer()
@@ -126,4 +131,9 @@ class JavaCppExecutionBridgeTest {
         const val FRAME_RATE = 25
         const val MINUTE_OF_FRAMES = FRAME_RATE * 60
     }
+}
+
+/** FFmpeg's first `frame=` status line means the transcode loop, not just setup, is running. */
+private fun CompletableDeferred<Unit>.completeOnStats(event: NativeExecutionEvent) {
+    if (event is NativeExecutionEvent.Log && "frame=" in event.message) complete(Unit)
 }

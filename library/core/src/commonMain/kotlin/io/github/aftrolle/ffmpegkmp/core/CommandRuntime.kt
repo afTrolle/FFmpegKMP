@@ -33,16 +33,21 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import okio.Sink
 import okio.buffer
 
@@ -92,8 +97,11 @@ public class CommandRuntimeClient private constructor(
     public suspend fun execute(
         arguments: List<String>,
         io: CommandIo = CommandIo.Empty,
-    ): ExecutionResult = coroutineScope {
-        start(this, arguments, io).await()
+    ): ExecutionResult {
+        currentCoroutineContext().ensureActive()
+        return coroutineScope {
+            start(this, arguments, io).await()
+        }
     }
 
     private fun start(scope: CoroutineScope, arguments: List<String>, io: CommandIo): CommandExecutionSession {
@@ -251,25 +259,14 @@ private class CommandExecutionSession(
     @kotlin.concurrent.Volatile
     private var latestProgress: ExecutionEvent.Progress? = null
     private val closeRequested = AtomicBoolean(false)
-    private val ioClosed = AtomicBoolean(false)
-    private val terminalNotified = AtomicBoolean(false)
+    /** Set by whichever of [finish] and [fail] runs first; the session settles exactly once. */
+    private val settled = AtomicBoolean(false)
 
     @kotlin.concurrent.Volatile
     private var ticket: GlobalExecutionQueue.Ticket? = null
 
     // Native code and file copies run off the caller's dispatcher even when the caller is on Main.
     private val job: Job = scope.launch(Dispatchers.Default, start = CoroutineStart.LAZY) { run() }
-
-    init {
-        job.invokeOnCompletion { cause ->
-            // A session cancelled before it ran, or one whose run ended outside [run], still owes
-            // its caller a result and its resources a release.
-            if (!completion.isCompleted) {
-                finish(if (cause == null || cause is CancellationException) Outcome.Cancelled else Outcome.Failed(cause), Duration.ZERO)
-            }
-            if (closeRequested.load()) mutableState.value = SessionState.CLOSED
-        }
-    }
 
     override val state = mutableState.asStateFlow()
     override val events: Flow<ExecutionEvent> = mutableEvents.asSharedFlow()
@@ -289,7 +286,12 @@ private class CommandExecutionSession(
         if (job.isCompleted) mutableState.value = SessionState.CLOSED else job.cancel()
     }
 
-    /** Takes a place in the global line and starts the job; the session fails if the line is full. */
+    /**
+     * Takes a place in the global line and starts the job; the session fails if the line is full.
+     * Called once the client has registered the session, so everything the completion handler
+     * releases (the ticket, the I/O, the registration) exists by the time it can run — including
+     * when the job was already cancelled with its scope and the handler runs right here.
+     */
     fun start() {
         val taken = GlobalExecutionQueue.take()
         if (taken == null) {
@@ -302,18 +304,25 @@ private class CommandExecutionSession(
             return
         }
         ticket = taken
+        job.invokeOnCompletion { cause ->
+            // A session cancelled before it ran, or one whose run ended outside [run], still owes
+            // its caller a result and its resources a release.
+            finish(if (cause == null || cause is CancellationException) Outcome.Cancelled else Outcome.Failed(cause), Duration.ZERO)
+            if (closeRequested.load()) mutableState.value = SessionState.CLOSED
+        }
         job.start()
     }
 
-    /** For a session its client refused: it never ran, so cancelling the job settles it. */
+    /** For a session its client refused: nothing was handed to it yet, so the job just goes away. */
     fun abandon() {
         job.cancel()
     }
 
     private fun fail(failure: Throwable) {
+        if (!settled.compareAndSet(expectedValue = false, newValue = true)) return
         mutableState.value = SessionState.FAILED
-        closeIoOnce()
-        notifyTerminalOnce()
+        closeIo()
+        onTerminal(this)
         completion.completeExceptionally(failure)
         job.cancel()
     }
@@ -338,7 +347,9 @@ private class CommandExecutionSession(
         } catch (cancellation: CancellationException) {
             Outcome.Cancelled
         } catch (failure: Throwable) {
-            Outcome.Failed(failure)
+            // A failure while a cancelled run unwinds (or an event overflow after the collector
+            // stopped) must not turn the cancellation the caller asked for into a failure.
+            if (currentCoroutineContext().isActive) Outcome.Failed(failure) else Outcome.Cancelled
         }
         finish(outcome, started.elapsedNow())
     }
@@ -348,9 +359,10 @@ private class CommandExecutionSession(
      * caller's I/O and the client registration have been released.
      */
     private fun finish(outcome: Outcome, duration: Duration) {
+        if (!settled.compareAndSet(expectedValue = false, newValue = true)) return
         ticket?.release()
-        closeIoOnce()
-        notifyTerminalOnce()
+        closeIo()
+        onTerminal(this)
         when (outcome) {
             is Outcome.Finished -> {
                 mutableState.value =
@@ -474,7 +486,13 @@ private class CommandExecutionSession(
         } finally {
             acceptingEvents.store(false)
             nativeEvents.close()
-            collector.join()
+            // A cancelled session's collector stops at its next suspension, but FFmpeg keeps
+            // reporting while it unwinds (final stats, the exit message). Those events are part
+            // of the cancelled result, so drain what the collector left behind.
+            withContext(NonCancellable) {
+                collector.join()
+                for (event in nativeEvents) acceptNativeEvent(event)
+            }
         }
         overflow.load()?.let { throw it }
         nativeResult
@@ -512,8 +530,7 @@ private class CommandExecutionSession(
         }
     }
 
-    private fun closeIoOnce() {
-        if (!ioClosed.compareAndSet(expectedValue = false, newValue = true)) return
+    private fun closeIo() {
         io.mounts.forEach { mount ->
             runCatching {
                 when (val resource = mount.resource) {
@@ -525,9 +542,6 @@ private class CommandExecutionSession(
         }
     }
 
-    private fun notifyTerminalOnce() {
-        if (terminalNotified.compareAndSet(expectedValue = false, newValue = true)) onTerminal(this)
-    }
 }
 
 /** FFmpeg's own exit status after a signal, reported for a session cancelled before it finished. */

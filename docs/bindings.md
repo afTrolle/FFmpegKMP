@@ -109,18 +109,21 @@ it to the install manifest. The bridge serializes embedded command entry, turns
 routes `av_log` events, captures FFprobe output, and checks cancellation in the
 FFmpeg scheduler and FFprobe packet-read path.
 
-Cancellation follows the coroutine. `NativeExecutionBridge.execute` runs the
-blocking native entry point on `Dispatchers.IO`; when its caller is cancelled
-the bridge raises the context's cancel flag (`ffmpegkmp_cancel`, which also
-leaves fftools' signal count the way one SIGTERM does) and then waits for the
-native call to return before rethrowing, so the single-run runtime is idle by
-the time a cancelled caller resumes. The flag stays on the context until
-`ffmpegkmp_context_reset_cancel` clears it, which each bridge does right before
-it starts a run, so a cancel that lands while FFmpeg is still resetting its own
-flags is picked up by the entry wrapper rather than lost. In `library:core` a
-session is a coroutine `Job` and the process-wide queue is a FIFO of those
-jobs, so `ExecutionSession.cancel()`, closing the client, and cancelling the
-caller of `execute()` are all the same path.
+Cancellation follows the coroutine. On JVM, Android and Apple,
+`NativeExecutionBridge.execute` runs the blocking native entry point on
+`Dispatchers.IO`; when its caller is cancelled the bridge raises the context's
+cancel flag with `ffmpegkmp_cancel` (FFprobe polls that flag; for an active
+FFmpeg run it also leaves fftools' signal count the way one SIGTERM does) and
+then waits for the native call to return before rethrowing, so the single-run
+runtime is idle by the time a cancelled caller resumes. The flag stays on the
+context until `ffmpegkmp_context_reset_cancel` clears it, which those bridges
+do right before each run, so a cancel that lands while FFmpeg is still
+resetting its own flags is picked up by the entry wrapper rather than lost. The
+browser bridge terminates its Web Worker from the continuation's cancellation
+handler instead; each run there has a fresh context. In `library:core` a
+session is a coroutine `Job`, and the process-wide queue is a FIFO of ticket
+jobs taken at submission, so `ExecutionSession.cancel()`, closing the client,
+and cancelling the caller of `execute()` are all the same path.
 
 If the bridge is compiled without its `fftools` objects, its weak fallback
 returns `-ENOSYS`; Kotlin converts that condition to
