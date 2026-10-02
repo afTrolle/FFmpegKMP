@@ -77,6 +77,10 @@ FFMPEGKMP_EXPORT int ffmpegkmp_execute(
         int argc,
         const char *const *argv);
 FFMPEGKMP_EXPORT void ffmpegkmp_cancel(ffmpegkmp_context *context);
+/* A cancel stays requested until this clears it, so one issued just before a run enters
+ * ffmpegkmp_execute still reaches that run. A host that reuses a context across runs
+ * calls this before each one. */
+FFMPEGKMP_EXPORT void ffmpegkmp_context_reset_cancel(ffmpegkmp_context *context);
 
 /* Called by the reviewed fftools overlay at safe processing and I/O points. */
 FFMPEGKMP_EXPORT int ffmpegkmp_cancel_requested(void);

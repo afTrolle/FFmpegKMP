@@ -97,12 +97,6 @@ private class BrowserWorkerExecutionBridge : NativeExecutionBridge {
         }
     }
 
-    override fun cancel(executionId: Long) {
-        if (activeId != executionId) return
-        activeWorker?.terminate()
-        completeActive(executionId, NativeExecutionResult(returnCode = CANCELLED_RETURN_CODE))
-    }
-
     override fun close() {
         if (closed) return
         closed = true

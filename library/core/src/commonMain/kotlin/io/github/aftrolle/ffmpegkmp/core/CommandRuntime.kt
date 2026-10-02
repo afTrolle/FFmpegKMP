@@ -10,6 +10,7 @@ import io.github.aftrolle.ffmpegkmp.bindings.NativeCommandKind
 import io.github.aftrolle.ffmpegkmp.bindings.NativeExecutionBridge
 import io.github.aftrolle.ffmpegkmp.bindings.NativeExecutionEvent
 import io.github.aftrolle.ffmpegkmp.bindings.NativeExecutionRequest
+import io.github.aftrolle.ffmpegkmp.bindings.NativeExecutionResult
 import io.github.aftrolle.ffmpegkmp.bindings.NativeFileResource
 import io.github.aftrolle.ffmpegkmp.bindings.NativeIoAccess
 import io.github.aftrolle.ffmpegkmp.bindings.NativeMountedIo
@@ -17,15 +18,23 @@ import io.github.aftrolle.ffmpegkmp.bindings.NativeSinkResource
 import io.github.aftrolle.ffmpegkmp.bindings.NativeSourceResource
 import io.github.aftrolle.ffmpegkmp.bindings.createPlatformExecutionBridge
 import kotlin.concurrent.atomics.AtomicBoolean
+import kotlin.concurrent.atomics.AtomicInt
 import kotlin.concurrent.atomics.AtomicReference
 import kotlin.concurrent.atomics.ExperimentalAtomicApi
+import kotlin.concurrent.atomics.decrementAndFetch
+import kotlin.concurrent.atomics.incrementAndFetch
 import kotlin.random.Random
+import kotlin.time.Duration
 import kotlin.time.TimeSource
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CompletableJob
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.Flow
@@ -33,9 +42,7 @@ import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 import okio.Sink
 import okio.buffer
 
@@ -64,13 +71,36 @@ public class CommandRuntimeClient private constructor(
     private val clientState = AtomicReference(ClientState())
     private val bridgeClosed = AtomicBoolean(false)
 
+    /** Owns the sessions started with [enqueue]; [execute] runs its session in the caller's scope. */
+    private val enqueuedScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+
+    /**
+     * Starts the command in the background and returns a handle to it. The handle's `cancel`
+     * stops the native run; the session reports itself cancelled once the run has unwound.
+     */
     public fun enqueue(
         arguments: List<String>,
         io: CommandIo = CommandIo.Empty,
-    ): ExecutionSession<ExecutionResult> {
+    ): ExecutionSession<ExecutionResult> = start(enqueuedScope, arguments, io)
+
+    /**
+     * Runs the command and awaits its result. The session is a child of the calling coroutine, so
+     * cancelling the caller (including via `withTimeout`) cancels the native run, and this
+     * returns only after that run has unwound — otherwise an abandoned ffmpeg/ffprobe would keep
+     * the single-run bridge busy and block every later command in the process.
+     */
+    public suspend fun execute(
+        arguments: List<String>,
+        io: CommandIo = CommandIo.Empty,
+    ): ExecutionResult = coroutineScope {
+        start(this, arguments, io).await()
+    }
+
+    private fun start(scope: CoroutineScope, arguments: List<String>, io: CommandIo): CommandExecutionSession {
         require(arguments.none { '\u0000' in it }) { "Arguments must not contain NUL" }
 
         val session = CommandExecutionSession(
+            scope = scope,
             id = nextExecutionId(),
             arguments = arguments.toList(),
             io = io,
@@ -79,27 +109,12 @@ public class CommandRuntimeClient private constructor(
             limits = limits,
             onTerminal = ::removeSession,
         )
-        check(addSession(session)) { "The command client is closed" }
-        GlobalExecutionScheduler.submit(session)
-        return session
-    }
-
-    /**
-     * Runs the command and awaits its result. Cancelling the calling coroutine (including via
-     * `withTimeout`) also cancels the native run — otherwise an abandoned ffmpeg/ffprobe would
-     * keep the single-run bridge busy and block every later command in the process.
-     */
-    public suspend fun execute(
-        arguments: List<String>,
-        io: CommandIo = CommandIo.Empty,
-    ): ExecutionResult {
-        val session = enqueue(arguments, io)
-        return try {
-            session.await()
-        } catch (cancellation: CancellationException) {
-            withContext(NonCancellable) { session.cancelAndJoin() }
-            throw cancellation
+        if (!addSession(session)) {
+            session.abandon()
+            throw IllegalStateException("The command client is closed")
         }
+        session.start()
+        return session
     }
 
     override fun close() {
@@ -147,32 +162,67 @@ private data class ClientState(
     val sessions: Set<CommandExecutionSession> = emptySet(),
 )
 
-private object GlobalExecutionScheduler {
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
-    private val queue = Channel<CommandExecutionSession>(GLOBAL_EXECUTION_QUEUE_CAPACITY)
+/**
+ * Hands the process-wide, single-run native runtime to sessions in the order they were started.
+ *
+ * A session takes a ticket when it starts and waits for the ticket before it on its own
+ * coroutine, so leaving the line is just cancelling that coroutine. A ticket is released when its
+ * session ends, whether or not the session ever ran, and only passes the turn on once the ticket
+ * before it has finished — a session that left the line must not let the one behind it run
+ * beside the one still in front.
+ */
+@OptIn(ExperimentalAtomicApi::class)
+private object GlobalExecutionQueue {
+    private val tail = AtomicReference<Job>(Job().apply { complete() })
+    private val waiting = AtomicInt(0)
 
-    init {
-        scope.launch {
-            for (session in queue) session.run()
+    /** Null when [GLOBAL_EXECUTION_QUEUE_CAPACITY] sessions are already waiting for their turn. */
+    fun take(): Ticket? {
+        if (waiting.incrementAndFetch() > GLOBAL_EXECUTION_QUEUE_CAPACITY) {
+            waiting.decrementAndFetch()
+            return null
         }
+        val turn = Job()
+        return Ticket(previous = tail.exchange(turn), turn = turn)
     }
 
-    fun submit(session: CommandExecutionSession) {
-        if (!queue.trySend(session).isSuccess) {
-            session.fail(
-                NativeExecutionException(
-                    "The global FFmpeg execution queue is full " +
-                        "($GLOBAL_EXECUTION_QUEUE_CAPACITY waiting commands)",
-                ),
-            )
+    class Ticket(private val previous: Job, private val turn: CompletableJob) {
+        private val waitingInLine = AtomicBoolean(true)
+        private val released = AtomicBoolean(false)
+
+        suspend fun awaitTurn() {
+            previous.join()
+            leaveLine()
+        }
+
+        fun release() {
+            if (!released.compareAndSet(expectedValue = false, newValue = true)) return
+            leaveLine()
+            previous.invokeOnCompletion { turn.complete() }
+        }
+
+        private fun leaveLine() {
+            if (waitingInLine.compareAndSet(expectedValue = true, newValue = false)) waiting.decrementAndFetch()
         }
     }
 }
 
 internal const val GLOBAL_EXECUTION_QUEUE_CAPACITY: Int = 64
 
+private sealed interface Outcome {
+    class Finished(val returnCode: Int) : Outcome
+    object Cancelled : Outcome
+    class Failed(val failure: Throwable) : Outcome
+}
+
+/**
+ * One command from start to result. The session is a coroutine [Job]: cancelling it is the only
+ * cancellation path, and it reaches the native run through the bridge's own suspension, so the
+ * job completes only after FFmpeg has unwound and every mounted resource has been released.
+ */
 @OptIn(ExperimentalAtomicApi::class)
 private class CommandExecutionSession(
+    scope: CoroutineScope,
     override val id: Long,
     override val arguments: List<String>,
     private val io: CommandIo,
@@ -200,10 +250,26 @@ private class CommandExecutionSession(
 
     @kotlin.concurrent.Volatile
     private var latestProgress: ExecutionEvent.Progress? = null
-    private val cancelled = AtomicBoolean(false)
     private val closeRequested = AtomicBoolean(false)
     private val ioClosed = AtomicBoolean(false)
     private val terminalNotified = AtomicBoolean(false)
+
+    @kotlin.concurrent.Volatile
+    private var ticket: GlobalExecutionQueue.Ticket? = null
+
+    // Native code and file copies run off the caller's dispatcher even when the caller is on Main.
+    private val job: Job = scope.launch(Dispatchers.Default, start = CoroutineStart.LAZY) { run() }
+
+    init {
+        job.invokeOnCompletion { cause ->
+            // A session cancelled before it ran, or one whose run ended outside [run], still owes
+            // its caller a result and its resources a release.
+            if (!completion.isCompleted) {
+                finish(if (cause == null || cause is CancellationException) Outcome.Cancelled else Outcome.Failed(cause), Duration.ZERO)
+            }
+            if (closeRequested.load()) mutableState.value = SessionState.CLOSED
+        }
+    }
 
     override val state = mutableState.asStateFlow()
     override val events: Flow<ExecutionEvent> = mutableEvents.asSharedFlow()
@@ -211,77 +277,96 @@ private class CommandExecutionSession(
     override suspend fun await(): ExecutionResult = completion.await()
 
     override fun cancel() {
-        if (completion.isCompleted) return
-        cancelled.store(true)
-        if (mutableState.value == SessionState.RUNNING) bridge.cancel(id)
+        job.cancel()
     }
 
     override suspend fun cancelAndJoin() {
-        cancel()
-        runCatching { completion.await() }
+        job.cancelAndJoin()
     }
 
     override fun close() {
         if (!closeRequested.compareAndSet(expectedValue = false, newValue = true)) return
-        if (!completion.isCompleted) cancel() else mutableState.value = SessionState.CLOSED
+        if (job.isCompleted) mutableState.value = SessionState.CLOSED else job.cancel()
     }
 
-    suspend fun run() {
+    /** Takes a place in the global line and starts the job; the session fails if the line is full. */
+    fun start() {
+        val taken = GlobalExecutionQueue.take()
+        if (taken == null) {
+            fail(
+                NativeExecutionException(
+                    "The global FFmpeg execution queue is full " +
+                        "($GLOBAL_EXECUTION_QUEUE_CAPACITY waiting commands)",
+                ),
+            )
+            return
+        }
+        ticket = taken
+        job.start()
+    }
+
+    /** For a session its client refused: it never ran, so cancelling the job settles it. */
+    fun abandon() {
+        job.cancel()
+    }
+
+    private fun fail(failure: Throwable) {
+        mutableState.value = SessionState.FAILED
+        closeIoOnce()
+        notifyTerminalOnce()
+        completion.completeExceptionally(failure)
+        job.cancel()
+    }
+
+    private suspend fun run() {
         val started = TimeSource.Monotonic.markNow()
-        var staged: StagedMounts? = null
-        // Completing tells callers the session is over, so it happens only after the finally
-        // below has released the staging files, the caller's I/O and the client registration.
-        var complete: () -> Unit = { completeCancelled(kotlin.time.Duration.ZERO) }
-        try {
-            if (cancelled.load()) return
-
+        val outcome = try {
+            checkNotNull(ticket).awaitTurn()
             mutableState.value = SessionState.RUNNING
-            staged = prepareStaging()
-            val nativeResult = executeAndCaptureEvents(staged.mounts)
-
-            if (!cancelled.load() && nativeResult.returnCode == 0) {
-                // Verify every staged mount before copying any of them: a command with two
-                // staged outputs where only one was actually written must not leave the other
-                // sink populated while the overall result reports failure.
-                staged.contexts.forEach(::verifyStagedOutputWasWritten)
-                staged.contexts.forEach(::copyStagedOutput)
-            }
-
-            io.mounts.forEach { mount ->
-                when (val resource = mount.resource) {
-                    is NativeFileResource -> if (resource.access != NativeIoAccess.READ) {
-                        resource.fileHandle.flush()
-                    }
-                    is NativeSinkResource -> resource.sink.flush()
-                    is NativeSourceResource -> Unit
+            prepareStaging().use { staged ->
+                val nativeResult = executeAndCaptureEvents(staged.mounts)
+                if (nativeResult.returnCode == 0) {
+                    // Verify every staged mount before copying any of them: a command with two
+                    // staged outputs where only one was actually written must not leave the other
+                    // sink populated while the overall result reports failure.
+                    staged.contexts.forEach(::verifyStagedOutputWasWritten)
+                    staged.contexts.forEach(::copyStagedOutput)
                 }
-            }
-
-            val duration = started.elapsedNow()
-            complete = if (cancelled.load()) {
-                { completeCancelled(duration, nativeResult.returnCode) }
-            } else {
-                {
-                    mutableState.value =
-                        if (nativeResult.returnCode == 0) SessionState.SUCCEEDED else SessionState.FAILED
-                    completion.complete(result(nativeResult.returnCode, duration, false))
-                }
+                flushMounts()
+                Outcome.Finished(nativeResult.returnCode)
             }
         } catch (cancellation: CancellationException) {
-            cancelled.store(true)
-            val duration = started.elapsedNow()
-            complete = { completeCancelled(duration) }
+            Outcome.Cancelled
         } catch (failure: Throwable) {
-            complete = {
-                mutableState.value = SessionState.FAILED
-                completion.completeExceptionally(NativeExecutionException("Native FFmpeg execution failed", failure))
+            Outcome.Failed(failure)
+        }
+        finish(outcome, started.elapsedNow())
+    }
+
+    /**
+     * Completing tells callers the session is over, so it happens only after the turn, the
+     * caller's I/O and the client registration have been released.
+     */
+    private fun finish(outcome: Outcome, duration: Duration) {
+        ticket?.release()
+        closeIoOnce()
+        notifyTerminalOnce()
+        when (outcome) {
+            is Outcome.Finished -> {
+                mutableState.value =
+                    if (outcome.returnCode == 0) SessionState.SUCCEEDED else SessionState.FAILED
+                completion.complete(result(outcome.returnCode, duration, cancelled = false))
             }
-        } finally {
-            staged?.contexts?.forEach { context -> runCatching { context.temporaryFile.close() } }
-            closeIoOnce()
-            notifyTerminalOnce()
-            complete()
-            if (closeRequested.load()) mutableState.value = SessionState.CLOSED
+            Outcome.Cancelled -> {
+                mutableState.value = SessionState.CANCELLED
+                completion.complete(result(CANCELLED_RETURN_CODE, duration, cancelled = true))
+            }
+            is Outcome.Failed -> {
+                mutableState.value = SessionState.FAILED
+                completion.completeExceptionally(
+                    NativeExecutionException("Native FFmpeg execution failed", outcome.failure),
+                )
+            }
         }
     }
 
@@ -329,19 +414,19 @@ private class CommandExecutionSession(
         }
     }
 
-    fun fail(failure: Throwable) {
-        mutableState.value = SessionState.FAILED
-        closeIoOnce()
-        notifyTerminalOnce()
-        completion.completeExceptionally(failure)
+    private fun flushMounts() {
+        io.mounts.forEach { mount ->
+            when (val resource = mount.resource) {
+                is NativeFileResource -> if (resource.access != NativeIoAccess.READ) {
+                    resource.fileHandle.flush()
+                }
+                is NativeSinkResource -> resource.sink.flush()
+                is NativeSourceResource -> Unit
+            }
+        }
     }
 
-    private fun completeCancelled(duration: kotlin.time.Duration, returnCode: Int = 255) {
-        mutableState.value = SessionState.CANCELLED
-        completion.complete(result(returnCode, duration, true))
-    }
-
-    private fun result(returnCode: Int, duration: kotlin.time.Duration, cancelled: Boolean) =
+    private fun result(returnCode: Int, duration: Duration, cancelled: Boolean) =
         ExecutionResult(
             returnCode,
             capturedOutput.toString(),
@@ -359,9 +444,7 @@ private class CommandExecutionSession(
             ),
         )
 
-    private suspend fun executeAndCaptureEvents(
-        mounts: List<NativeMountedIo>,
-    ): io.github.aftrolle.ffmpegkmp.bindings.NativeExecutionResult = coroutineScope {
+    private suspend fun executeAndCaptureEvents(mounts: List<NativeMountedIo>): NativeExecutionResult = coroutineScope {
         val nativeEvents = Channel<NativeExecutionEvent>(limits.maxPendingNativeEvents)
         val acceptingEvents = AtomicBoolean(true)
         val overflow = AtomicReference<NativeExecutionException?>(null)
@@ -447,7 +530,15 @@ private class CommandExecutionSession(
     }
 }
 
-private class StagedMounts(val mounts: List<NativeMountedIo>, val contexts: List<StagingContext>)
+/** FFmpeg's own exit status after a signal, reported for a session cancelled before it finished. */
+private const val CANCELLED_RETURN_CODE = 255
+
+/** The mounts handed to the bridge plus the temporary files behind the staged ones; closing deletes them. */
+private class StagedMounts(val mounts: List<NativeMountedIo>, val contexts: List<StagingContext>) : AutoCloseable {
+    override fun close() {
+        contexts.forEach { context -> runCatching { context.temporaryFile.close() } }
+    }
+}
 
 private class StagingContext(val path: String, val sink: Sink, val temporaryFile: TemporaryFile)
 

@@ -16,7 +16,9 @@ import io.github.aftrolle.ffmpegkmp.bindings.cinterop.ffmpegkmp_cancel
 import io.github.aftrolle.ffmpegkmp.bindings.cinterop.ffmpegkmp_context_create
 import io.github.aftrolle.ffmpegkmp.bindings.cinterop.ffmpegkmp_context_set_io_callback
 import io.github.aftrolle.ffmpegkmp.bindings.cinterop.ffmpegkmp_context_destroy
+import io.github.aftrolle.ffmpegkmp.bindings.cinterop.ffmpegkmp_context_reset_cancel
 import io.github.aftrolle.ffmpegkmp.bindings.cinterop.ffmpegkmp_execute
+import kotlinx.cinterop.Arena
 import kotlinx.cinterop.ByteVar
 import kotlinx.cinterop.COpaquePointer
 import kotlinx.cinterop.CPointer
@@ -28,12 +30,12 @@ import kotlinx.cinterop.allocArray
 import kotlinx.cinterop.asStableRef
 import kotlinx.cinterop.convert
 import kotlinx.cinterop.cstr
-import kotlinx.cinterop.memScoped
-import kotlinx.cinterop.ptr
 import kotlinx.cinterop.readBytes
 import kotlinx.cinterop.set
 import kotlinx.cinterop.staticCFunction
 import kotlinx.cinterop.usePinned
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.IO
 import platform.posix.memcpy
 import kotlin.concurrent.atomics.AtomicBoolean
 
@@ -73,10 +75,16 @@ private class NativeCInteropExecutionBridge : NativeExecutionBridge {
             callbackState.mounts = mounts
             val executable = if (request.kind == NativeCommandKind.FFMPEG) "ffmpeg" else "ffprobe"
             val arguments = listOf(executable) + request.arguments.map { mountedPaths[it] ?: it }
+            // The argument strings outlive a suspension, so they live in an Arena rather than a
+            // memScoped block.
+            val arena = Arena()
             val returnCode = try {
-                memScoped {
-                    val nativeArguments = allocArray<CPointerVar<ByteVar>>(arguments.size)
-                    arguments.forEachIndexed { index, argument -> nativeArguments[index] = argument.cstr.ptr }
+                val nativeArguments = arena.allocArray<CPointerVar<ByteVar>>(arguments.size)
+                arguments.forEachIndexed { index, argument -> nativeArguments[index] = argument.cstr.getPointer(arena) }
+                // A cancel stays on the context until cleared, so clearing it here (with no run
+                // in flight on this bridge) means any cancel from now on belongs to this run.
+                ffmpegkmp_context_reset_cancel(context)
+                runCancellableNative(Dispatchers.IO, cancelNative = { ffmpegkmp_cancel(context) }) {
                     ffmpegkmp_execute(
                         context,
                         if (request.kind == NativeCommandKind.FFMPEG) {
@@ -90,6 +98,7 @@ private class NativeCInteropExecutionBridge : NativeExecutionBridge {
                 }
             } finally {
                 callbackState.emit = null
+                arena.clear()
             }
             if (returnCode == -38) {
                 throw NativeBridgeUnavailableException(
@@ -101,10 +110,6 @@ private class NativeCInteropExecutionBridge : NativeExecutionBridge {
             callbackState.emit = null
             callbackState.mounts = emptyMap()
         }
-    }
-
-    override fun cancel(executionId: Long) {
-        if (!closed) ffmpegkmp_cancel(context)
     }
 
     override fun close() {

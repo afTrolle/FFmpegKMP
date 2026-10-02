@@ -15,7 +15,5 @@ public class UnavailableNativeExecutionBridge(
         )
     }
 
-    override fun cancel(executionId: Long) = Unit
-
     override fun close() = Unit
 }
