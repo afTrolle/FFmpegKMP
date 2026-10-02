@@ -534,6 +534,9 @@ kotlin {
             api(libs.javacpp)
             implementation(javaCppDeclarations)
         }
+        jvmTest.dependencies {
+            implementation(libs.kotlinx.coroutines.test)
+        }
         webTest.dependencies {
             implementation(libs.kotlinx.coroutines.test)
         }

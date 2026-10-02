@@ -16,14 +16,23 @@ import kotlin.test.Test
 import kotlin.test.assertContentEquals
 import kotlin.test.assertContains
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
+import kotlin.test.assertFalse
 import kotlin.test.assertIs
 import kotlin.test.assertTrue
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.awaitCancellation
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.withContext
 import okio.Buffer
 import okio.Sink
 import okio.Source
@@ -103,7 +112,7 @@ class CommandRuntimeTest {
         val secondClient = CommandRuntimeClient(CommandKind.FFMPEG, secondBridge)
 
         val first = firstClient.enqueue(listOf("first"))
-        while (first.state.value != SessionState.RUNNING) delay(1)
+        first.state.first { it == SessionState.RUNNING }
         val input = TrackingSource("queued".encodeToByteArray())
         val output = TrackingSink()
         val second = secondClient.enqueue(listOf("second"))
@@ -202,6 +211,214 @@ class CommandRuntimeTest {
     }
 
     @Test
+    fun cancellingARunningSessionCancelsTheBridgeAndReportsOnlyAfterItUnwound() = runTest {
+        val started = CompletableDeferred<Unit>()
+        val unwound = CompletableDeferred<Unit>()
+        val bridge = FakeBridge { request, _ ->
+            if (request.arguments.single() != "long") return@FakeBridge NativeExecutionResult(0)
+            try {
+                started.complete(Unit)
+                awaitCancellation()
+            } finally {
+                // FFmpeg writing its trailer after the transcode loop broke.
+                withContext(NonCancellable) { delay(20) }
+                unwound.complete(Unit)
+            }
+        }
+        val input = TrackingSource("running".encodeToByteArray())
+        val output = TrackingSink()
+        val client = CommandRuntimeClient(CommandKind.FFMPEG, bridge)
+        val session = client.enqueue(
+            listOf("long"),
+            CommandIo {
+                input("input.bin", input)
+                output("output.bin", output)
+            },
+        )
+        started.await()
+
+        session.cancelAndJoin()
+        val result = session.await()
+
+        assertTrue(unwound.isCompleted, "The session completed before the bridge had unwound")
+        assertTrue(result.cancelled)
+        assertEquals(255, result.returnCode)
+        assertEquals(SessionState.CANCELLED, session.state.value)
+        assertEquals(1, input.closeCount)
+        assertEquals(1, output.closeCount)
+
+        val next = client.execute(listOf("next"))
+        assertTrue(next.isSuccess)
+        client.close()
+    }
+
+    @Test
+    fun cancellingTheCallerOfExecuteCancelsTheBridgeAndFreesTheRuntime() = runTest {
+        val started = CompletableDeferred<Unit>()
+        var sawCancellation = false
+        val bridge = FakeBridge { request, _ ->
+            if (request.arguments.single() == "long") {
+                try {
+                    started.complete(Unit)
+                    awaitCancellation()
+                } catch (cancellation: CancellationException) {
+                    sawCancellation = true
+                    throw cancellation
+                }
+            }
+            NativeExecutionResult(0)
+        }
+        val client = CommandRuntimeClient(CommandKind.FFMPEG, bridge)
+        var rethrown = false
+        val caller = launch {
+            try {
+                client.execute(listOf("long"))
+            } catch (cancellation: CancellationException) {
+                rethrown = true
+                throw cancellation
+            }
+        }
+        started.await()
+
+        caller.cancelAndJoin()
+
+        assertTrue(sawCancellation)
+        assertTrue(rethrown, "execute() must rethrow its caller's cancellation")
+        val next = client.execute(listOf("next"))
+        assertTrue(next.isSuccess)
+        client.close()
+        assertEquals(1, bridge.closeCount)
+    }
+
+    @Test
+    fun executeFromAnAlreadyCancelledCallerThrowsAndLeavesTheQueueUsable() = runTest {
+        var executed = 0
+        val bridge = FakeBridge { _, _ -> executed++; NativeExecutionResult(0) }
+        val client = CommandRuntimeClient(CommandKind.FFMPEG, bridge)
+
+        launch {
+            cancel()
+            assertFailsWith<CancellationException> { client.execute(listOf("too-late")) }
+        }.join()
+
+        // The refused session must not hold a turn or stay registered with the client.
+        assertTrue(client.execute(listOf("next")).isSuccess)
+        assertEquals(1, executed)
+        client.close()
+        assertEquals(1, bridge.closeCount)
+    }
+
+    @Test
+    fun aCancelledResultKeepsTheEventsFFmpegEmittedWhileUnwinding() = runTest {
+        val started = CompletableDeferred<Unit>()
+        val bridge = FakeBridge { _, emit ->
+            try {
+                emit(NativeExecutionEvent.Log(32, "frame=1\n"))
+                started.complete(Unit)
+                awaitCancellation()
+            } finally {
+                withContext(NonCancellable) {
+                    delay(10)
+                    emit(NativeExecutionEvent.Log(32, "Exiting normally, received signal 15.\n"))
+                }
+            }
+        }
+        val client = CommandRuntimeClient(CommandKind.FFMPEG, bridge)
+        val session = client.enqueue(listOf("long"))
+        started.await()
+
+        session.cancelAndJoin()
+        val result = session.await()
+
+        assertTrue(result.cancelled)
+        assertEquals(listOf("frame=1\n", "Exiting normally, received signal 15.\n"), result.logs.map { it.message })
+        assertContains(result.errorOutput, "received signal 15")
+        client.close()
+    }
+
+    @Test
+    fun closingTheClientCancelsTheRunningSessionDropsTheQueuedOneAndThenClosesTheBridge() = runTest {
+        val started = CompletableDeferred<Unit>()
+        var queuedExecuted = false
+        val bridge = FakeBridge { request, _ ->
+            when (request.arguments.single()) {
+                "running" -> {
+                    started.complete(Unit)
+                    awaitCancellation()
+                }
+                else -> {
+                    queuedExecuted = true
+                    NativeExecutionResult(0)
+                }
+            }
+        }
+        val client = CommandRuntimeClient(CommandKind.FFMPEG, bridge)
+        val running = client.enqueue(listOf("running"))
+        started.await()
+        val queued = client.enqueue(listOf("queued"))
+
+        client.close()
+
+        assertTrue(running.await().cancelled)
+        assertTrue(queued.await().cancelled)
+        assertFalse(queuedExecuted)
+        running.state.first { it == SessionState.CLOSED }
+        queued.state.first { it == SessionState.CLOSED }
+        assertEquals(1, bridge.closeCount)
+    }
+
+    @Test
+    fun aSessionCancelledWhileWaitingKeepsTheQueueOrderForThoseBehindIt() = runTest {
+        val order = mutableListOf<String>()
+        val firstStarted = CompletableDeferred<Unit>()
+        val releaseFirst = CompletableDeferred<Unit>()
+        val bridge = FakeBridge { request, _ ->
+            order += "start-${request.arguments.single()}"
+            if (request.arguments.single() == "first") {
+                firstStarted.complete(Unit)
+                releaseFirst.await()
+            }
+            order += "end-${request.arguments.single()}"
+            NativeExecutionResult(0)
+        }
+        val client = CommandRuntimeClient(CommandKind.FFMPEG, bridge)
+        val first = client.enqueue(listOf("first"))
+        firstStarted.await()
+        val second = client.enqueue(listOf("second"))
+        val third = client.enqueue(listOf("third"))
+
+        second.cancelAndJoin()
+        assertTrue(second.await().cancelled)
+        // The cancelled session must not have handed its turn on while the first still runs.
+        assertEquals(listOf("start-first"), order)
+
+        releaseFirst.complete(Unit)
+        first.await()
+        third.await()
+        assertEquals(listOf("start-first", "end-first", "start-third", "end-third"), order)
+        client.close()
+    }
+
+    @Test
+    fun closingTheClientCancelsItsRunningSessionAndThenClosesTheBridge() = runTest {
+        val started = CompletableDeferred<Unit>()
+        val bridge = FakeBridge { _, _ ->
+            started.complete(Unit)
+            awaitCancellation()
+        }
+        val client = CommandRuntimeClient(CommandKind.FFMPEG, bridge)
+        val session = client.enqueue(listOf("long"))
+        started.await()
+
+        client.close()
+        val result = session.await()
+
+        assertTrue(result.cancelled)
+        assertEquals(SessionState.CLOSED, session.state.first { it == SessionState.CLOSED })
+        assertEquals(1, bridge.closeCount)
+    }
+
+    @Test
     fun rejectsCommandsBeyondTheGlobalQueueLimit() = runTest {
         val firstStarted = CompletableDeferred<Unit>()
         val releaseFirst = CompletableDeferred<Unit>()
@@ -241,7 +458,6 @@ private class FakeBridge(
         emit: (NativeExecutionEvent) -> Unit,
     ): NativeExecutionResult = block(request, emit)
 
-    override fun cancel(executionId: Long) = Unit
     override fun close() { closeCount++ }
 }
 

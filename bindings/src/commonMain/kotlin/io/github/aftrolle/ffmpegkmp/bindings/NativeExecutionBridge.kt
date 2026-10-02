@@ -73,14 +73,20 @@ public data class NativeExecutionResult(
     val returnCode: Int,
 )
 
+/**
+ * Runs one command at a time on the process-wide native runtime.
+ *
+ * Cancellation follows the coroutine: cancelling the caller of [execute] stops the native run,
+ * and [execute] rethrows the cancellation only once the native code has returned. The bridge is
+ * therefore free for the next command the moment a cancelled caller resumes, and no separate
+ * cancel call or execution id is needed.
+ */
 @InternalFFmpegKmpApi
 public interface NativeExecutionBridge : AutoCloseable {
     public suspend fun execute(
         request: NativeExecutionRequest,
         emit: (NativeExecutionEvent) -> Unit,
     ): NativeExecutionResult
-
-    public fun cancel(executionId: Long)
 }
 
 @InternalFFmpegKmpApi

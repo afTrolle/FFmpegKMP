@@ -8,6 +8,7 @@ import io.github.aftrolle.ffmpegkmp.bindings.generated.bridge.ffmpegkmp_event_ca
 import io.github.aftrolle.ffmpegkmp.bindings.generated.bridge.ffmpegkmp_io_callback
 import io.github.aftrolle.ffmpegkmp.bindings.generated.bridge.global.bridge
 import java.io.File
+import kotlinx.coroutines.Dispatchers
 import org.bytedeco.javacpp.BytePointer
 import org.bytedeco.javacpp.Loader
 import org.bytedeco.javacpp.Pointer
@@ -89,17 +90,22 @@ private class JavaCppExecutionBridge : NativeExecutionBridge {
             val pointers = PointerPointer<BytePointer>(*arguments.toTypedArray())
             mountedResources = mounts
             eventConsumer = emit
+            // A cancel stays on the context until cleared, so clearing it here (with no run in
+            // flight on this bridge) means any cancel from now on belongs to this run.
+            bridge.ffmpegkmp_context_reset_cancel(context)
             val returnCode = try {
-                bridge.ffmpegkmp_execute(
-                    context,
-                    if (request.kind == NativeCommandKind.FFMPEG) {
-                        bridge.FFMPEGKMP_COMMAND_FFMPEG
-                    } else {
-                        bridge.FFMPEGKMP_COMMAND_FFPROBE
-                    },
-                    arguments.size,
-                    pointers,
-                )
+                runCancellableNative(Dispatchers.IO, cancelNative = { bridge.ffmpegkmp_cancel(context) }) {
+                    bridge.ffmpegkmp_execute(
+                        context,
+                        if (request.kind == NativeCommandKind.FFMPEG) {
+                            bridge.FFMPEGKMP_COMMAND_FFMPEG
+                        } else {
+                            bridge.FFMPEGKMP_COMMAND_FFPROBE
+                        },
+                        arguments.size,
+                        pointers,
+                    )
+                }
             } finally {
                 eventConsumer = null
                 pointers.close()
@@ -113,10 +119,6 @@ private class JavaCppExecutionBridge : NativeExecutionBridge {
         } finally {
             mountedResources = emptyMap()
         }
-    }
-
-    override fun cancel(executionId: Long) {
-        if (!closed) bridge.ffmpegkmp_cancel(context)
     }
 
     override fun close() {
