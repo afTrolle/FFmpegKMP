@@ -107,7 +107,11 @@ submodule, compiles it for each target, and adds
 it to the install manifest. The bridge serializes embedded command entry, turns
 `exit()` into a return to the host, resets the wrapper-controlled tool state,
 routes `av_log` events, captures FFprobe output, and checks cancellation in the
-FFmpeg scheduler and FFprobe packet-read path.
+FFmpeg scheduler and FFprobe packet-read path. A cancel request stays on the
+context until `ffmpegkmp_context_reset_cancel` clears it; the Kotlin bridges
+that reuse a context clear it before each run and hold a cancel for the
+execution it names, so one issued just before a run starts still stops it and
+one that arrives after a run ended does not reach the next.
 
 If the bridge is compiled without its `fftools` objects, its weak fallback
 returns `-ENOSYS`; Kotlin converts that condition to

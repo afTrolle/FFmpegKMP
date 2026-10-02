@@ -174,7 +174,6 @@ int ffmpegkmp_execute(
     if (!atomic_compare_exchange_strong(&active_context, &expected, context))
         return -16;
 
-    atomic_store(&context->cancelled, 0);
     atomic_store(&active_kind, kind);
     av_ffmpegkmp_protocol_set_callback(context->io_callback, context->opaque);
 #if FFMPEGKMP_EMBEDDED_FFTOOLS
@@ -301,6 +300,11 @@ void ffmpegkmp_cancel(ffmpegkmp_context *context) {
             ffmpegkmp_ffmpeg_cancel();
 #endif
     }
+}
+
+void ffmpegkmp_context_reset_cancel(ffmpegkmp_context *context) {
+    if (context)
+        atomic_store(&context->cancelled, 0);
 }
 
 int ffmpegkmp_cancel_requested(void) {

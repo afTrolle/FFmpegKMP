@@ -47,9 +47,19 @@ int ffmpegkmp_ffmpeg_entry(int argc, char **argv) {
     nb_decoders = 0;
     vstats_file = NULL;
     progress_avio = NULL;
+    /* A cancel requested before this point is not in the flags reset above: either it
+     * was wiped with them, or it came while the context was not yet the active one. */
+    if (ffmpegkmp_cancel_requested())
+        ffmpegkmp_ffmpeg_cancel();
     return ffmpegkmp_ffmpeg_main_impl(argc, argv);
 }
 
 void ffmpegkmp_ffmpeg_cancel(void) {
+    /* The transcode loop and the I/O interrupt callback watch the signal count, the way
+     * the CLI's own handler leaves it after one SIGTERM. received_sigterm alone only
+     * changes the exit message, so a cancelled run carried on to its natural end.
+     * Set rather than counted: a repeated cancel must not escalate into the second-signal
+     * interrupt that abandons the output mid-write. */
     received_sigterm = SIGTERM;
+    received_nb_signals = 1;
 }
