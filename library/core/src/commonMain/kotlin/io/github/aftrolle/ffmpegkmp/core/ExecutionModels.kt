@@ -33,10 +33,10 @@ public enum class OutputStream {
 /**
  * Memory limits applied to one queued or running command.
  *
- * Accepted native log/output events are not truncated for active collectors: collectors apply
- * backpressure. Progress reports parsed from one native callback are coalesced to the latest
- * report. These limits bound the native-to-Kotlin handoff and the data retained in the final
- * [ExecutionResult].
+ * Collectors of [ExecutionSession.events] never slow a run down: one that falls more than
+ * [maxPendingNativeEvents] events behind loses the oldest. Progress reports parsed from one native
+ * callback are coalesced to the latest report. These limits bound the native-to-Kotlin handoff,
+ * how far a collector may fall behind, and the data retained in the final [ExecutionResult].
  */
 public data class CommandRuntimeLimits(
     val maxPendingNativeEvents: Int = 1_024,

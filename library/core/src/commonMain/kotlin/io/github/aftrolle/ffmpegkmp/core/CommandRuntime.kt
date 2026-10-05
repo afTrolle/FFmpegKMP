@@ -36,6 +36,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.currentCoroutineContext
@@ -44,8 +45,8 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.transformWhile
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import okio.Sink
@@ -240,7 +241,14 @@ private class CommandExecutionSession(
     private val onTerminal: (CommandExecutionSession) -> Unit,
 ) : ExecutionSession<ExecutionResult> {
     private val mutableState = MutableStateFlow(SessionState.QUEUED)
-    private val mutableEvents = MutableSharedFlow<ExecutionEvent>()
+    // Publishing never waits for collectors: one that falls behind loses its oldest events instead
+    // of stalling the run, and the result still retains them. `null` ends the stream; replaying it
+    // completes collectors that subscribe after the session has ended.
+    private val mutableEvents = MutableSharedFlow<ExecutionEvent?>(
+        replay = 1,
+        extraBufferCapacity = limits.maxPendingNativeEvents,
+        onBufferOverflow = BufferOverflow.DROP_OLDEST,
+    )
     private val completion = CompletableDeferred<ExecutionResult>()
     private val retainedLogs = BoundedLogCapture(
         maxEvents = limits.maxRetainedLogEvents,
@@ -269,7 +277,10 @@ private class CommandExecutionSession(
     private val job: Job = scope.launch(Dispatchers.Default, start = CoroutineStart.LAZY) { run() }
 
     override val state = mutableState.asStateFlow()
-    override val events: Flow<ExecutionEvent> = mutableEvents.asSharedFlow()
+    override val events: Flow<ExecutionEvent> = mutableEvents.transformWhile { event ->
+        if (event != null) emit(event)
+        event != null
+    }
 
     override suspend fun await(): ExecutionResult = completion.await()
 
@@ -323,6 +334,7 @@ private class CommandExecutionSession(
         mutableState.value = SessionState.FAILED
         closeIo()
         onTerminal(this)
+        mutableEvents.tryEmit(null)
         completion.completeExceptionally(failure)
         job.cancel()
     }
@@ -363,6 +375,7 @@ private class CommandExecutionSession(
         ticket?.release()
         closeIo()
         onTerminal(this)
+        mutableEvents.tryEmit(null)
         when (outcome) {
             is Outcome.Finished -> {
                 mutableState.value =
@@ -477,8 +490,7 @@ private class CommandExecutionSession(
                         expectedValue = null,
                         newValue = NativeExecutionException(
                             "Native event buffer exceeded ${limits.maxPendingNativeEvents} events; " +
-                                "increase CommandRuntimeLimits.maxPendingNativeEvents or consume " +
-                                "ExecutionSession.events faster",
+                                "increase CommandRuntimeLimits.maxPendingNativeEvents",
                         ),
                     )
                 }
@@ -498,7 +510,7 @@ private class CommandExecutionSession(
         nativeResult
     }
 
-    private suspend fun acceptNativeEvent(event: NativeExecutionEvent) {
+    private fun acceptNativeEvent(event: NativeExecutionEvent) {
         val publicEvent = when (event) {
             is NativeExecutionEvent.Log -> ExecutionEvent.Log(event.level.toLogLevel(), event.message)
             is NativeExecutionEvent.Output -> ExecutionEvent.Output(
@@ -523,10 +535,10 @@ private class CommandExecutionSession(
             }
             is ExecutionEvent.Progress -> Unit
         }
-        mutableEvents.emit(publicEvent)
+        mutableEvents.tryEmit(publicEvent)
         pendingProgress?.let { progress ->
             pendingProgress = null
-            mutableEvents.emit(progress)
+            mutableEvents.tryEmit(progress)
         }
     }
 

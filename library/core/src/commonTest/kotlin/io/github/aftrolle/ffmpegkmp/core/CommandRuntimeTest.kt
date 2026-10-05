@@ -24,12 +24,15 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.onEach
+import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.withContext
@@ -337,6 +340,70 @@ class CommandRuntimeTest {
     }
 
     @Test
+    fun eventsCompleteWhenTheSessionEnds() = runTest {
+        val subscribed = CompletableDeferred<Unit>()
+        val bridge = FakeBridge { _, emit ->
+            emitUntil(subscribed, emit)
+            emit(NativeExecutionEvent.Log(32, "last\n"))
+            NativeExecutionResult(0)
+        }
+        val client = CommandRuntimeClient(CommandKind.FFMPEG, bridge)
+        val session = client.enqueue(listOf("events"))
+
+        val events = async(Dispatchers.Default) {
+            session.events.onEach { subscribed.complete(Unit) }.toList()
+        }
+
+        session.await()
+        assertEquals("last\n", assertIs<ExecutionEvent.Log>(events.await().last()).message)
+        client.close()
+    }
+
+    @Test
+    fun aCollectorThatSubscribesAfterTheSessionEndedCompletes() = runTest {
+        val bridge = FakeBridge { _, emit ->
+            emit(NativeExecutionEvent.Log(16, "Unknown input format: 'lavfi'\n"))
+            NativeExecutionResult(-22)
+        }
+        val client = CommandRuntimeClient(CommandKind.FFMPEG, bridge)
+        val session = client.enqueue(listOf("fails-at-once"))
+
+        assertEquals(-22, session.await().returnCode)
+        assertEquals(emptyList(), session.events.toList())
+        client.close()
+    }
+
+    @Test
+    fun aSlowCollectorLosesItsOldestEventsInsteadOfFailingTheRun() = runTest {
+        val subscribed = CompletableDeferred<Unit>()
+        val bridge = FakeBridge { _, emit ->
+            emitUntil(subscribed, emit)
+            repeat(200) {
+                emit(NativeExecutionEvent.Log(32, "line $it\n"))
+                delay(1)
+            }
+            NativeExecutionResult(0)
+        }
+        val client = CommandRuntimeClient(CommandKind.FFMPEG, bridge, CommandRuntimeLimits(maxPendingNativeEvents = 16))
+        val session = client.enqueue(listOf("slow-collector"))
+
+        val events = async(Dispatchers.Default) {
+            session.events.onEach {
+                subscribed.complete(Unit)
+                delay(20)
+            }.toList()
+        }
+
+        val result = session.await()
+        val lines = events.await().map { assertIs<ExecutionEvent.Log>(it).message }.filter { it.startsWith("line") }
+        assertTrue(result.isSuccess)
+        assertEquals(200, result.logs.count { it.message.startsWith("line") })
+        assertTrue(lines.size < 200, "a collector this slow cannot have kept every line")
+        assertEquals("line 199\n", lines.last())
+        client.close()
+    }
+
+    @Test
     fun closingTheClientCancelsTheRunningSessionDropsTheQueuedOneAndThenClosesTheBridge() = runTest {
         val started = CompletableDeferred<Unit>()
         var queuedExecuted = false
@@ -445,6 +512,15 @@ class CommandRuntimeTest {
         blocker.await()
         accepted.forEach { it.await() }
         client.close()
+    }
+}
+
+// A collector launched beside its session may subscribe after the first events went out, so the
+// bridge keeps emitting until the collector has seen one.
+private suspend fun emitUntil(subscribed: CompletableDeferred<Unit>, emit: (NativeExecutionEvent) -> Unit) {
+    while (!subscribed.isCompleted) {
+        emit(NativeExecutionEvent.Log(32, "waiting\n"))
+        delay(1)
     }
 }
 

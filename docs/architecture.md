@@ -85,12 +85,13 @@ return codes as results. Bridge loading and serialization errors are exceptions.
 The process-wide FIFO accepts at most 64 waiting commands; further submissions
 fail their session explicitly. Each client accepts `CommandRuntimeLimits` for
 bounding the native-event handoff, captured stdout/stderr, and structured logs.
-Active event collectors apply backpressure to accepted native log/output events;
-progress reports parsed from one native callback are coalesced to the latest
-report. If the non-suspending native callback outruns its bounded handoff,
-execution fails explicitly. `ExecutionResult.captureStatus` reports any stdout,
-stderr, or log data omitted from the retained result after a configured limit is
-reached.
+Event collectors never slow a run down: a session's `events` flow drops a slow
+collector's oldest events and completes when the session ends, while the result
+keeps the full capture. Progress reports parsed from one native callback are
+coalesced to the latest report. If the non-suspending native callback outruns
+its bounded handoff, execution fails explicitly. `ExecutionResult.captureStatus`
+reports any stdout, stderr, or log data omitted from the retained result after a
+configured limit is reached.
 
 ## Bindings
 
