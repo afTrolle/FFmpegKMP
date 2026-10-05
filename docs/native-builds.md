@@ -150,7 +150,7 @@ Android builds API 24 shared `libav*.so` libraries for `armeabi-v7a`,
 JNI and MediaCodec decode and encode; `min` explicitly disables both.
 
 The package is
-`native-build/android/out/<profile>/ffmpeg-android-n9.0.1-<profile>.aar`.
+`native-build/android/out/<profile>/ffmpeg-android-n9.0.2-<profile>.aar`.
 It contains runtime libraries under `jni/<abi>`, seven Prefab modules with
 headers and transitive FFmpeg library declarations, per-ABI build manifests,
 FFmpeg licence texts, and the redistribution disclaimer.
