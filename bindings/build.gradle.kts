@@ -136,6 +136,8 @@ val generateJavaCppBindings = javaCppFamilies.map { family ->
             ).joinToString(File.pathSeparator)}",
             "io.github.aftrolle.ffmpegkmp.bindings.javacpp.$family",
         )
+        // JavaCPP only adds files, so classes from another branch's headers would linger and break the JNI build.
+        doFirst { generated.get().asFile.deleteRecursively() }
         doLast {
             generated.get().asFileTree.matching { include("**/*.java") }.forEach { source ->
                 val withoutBlockComments = source.readText().replace(Regex("(?s)/\\*.*?\\*/"), "")
