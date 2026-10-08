@@ -79,12 +79,20 @@ internal class SurfaceVideoEncoder private constructor(
     override fun start() = drain.start()
 
     override fun dequeue(): NativeGpuBuffer {
+        val deadline = if (timeoutNanos > 0) System.nanoTime() + timeoutNanos else Long.MAX_VALUE
         lock.withLock {
             while (true) {
                 failure?.let { throw it }
                 if (released) throw NativeMediaWriterException("The encoder is released", NativePlayerError.INVALID_STATE)
                 if (lent.size + dequeuing < MAX_IMAGES) break
-                changed.await()
+                val left = deadline - System.nanoTime()
+                if (left <= 0) {
+                    throw NativeMediaWriterException(
+                        "Could not take a buffer from the encoder: the caller holds all $MAX_IMAGES, and none was queued or closed in time",
+                        NativePlayerError.TIMED_OUT,
+                    )
+                }
+                changed.awaitNanos(left)
             }
             dequeuing++
         }

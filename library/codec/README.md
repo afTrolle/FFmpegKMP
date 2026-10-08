@@ -313,7 +313,7 @@ an encoder takes it, as for HDR.
   AV1, software encoders, Android before 14, a renderer on its software path, and a track that has
   already taken a frame. A `zeroCopy` track takes only the frames its renderer drew, which lie in GPU
   memory like `GpuBuffers` ones (`format` is null, `hardwareBuffer` is the encoder's), and its buffers
-  go back to the encoder as the frames close, so a caller holds a few at a time and `write`s each. Frames
+  go back to the encoder as the frames are written or closed, so a caller holds at most four at a time (a fifth `render` fails after the writer's timeout) and `write`s each. Frames
   from memory then fail the track; use a track no renderer has been made for.
 - A source keeps its colour through `DynamicRange.of(decoder.info)`, which follows the transfer
   function: PQ is `HDR10`, HLG is `HLG` and the rest `SDR`. Dolby Vision and HDR10+ are flags over
