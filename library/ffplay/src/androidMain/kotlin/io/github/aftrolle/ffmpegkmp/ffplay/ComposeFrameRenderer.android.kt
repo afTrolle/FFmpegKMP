@@ -40,6 +40,7 @@ import androidx.savedstate.SavedStateRegistry
 import androidx.savedstate.SavedStateRegistryController
 import androidx.savedstate.SavedStateRegistryOwner
 import androidx.savedstate.setViewTreeSavedStateRegistryOwner
+import io.github.aftrolle.ffmpegkmp.bindings.NativeGpuBuffer
 import io.github.aftrolle.ffmpegkmp.bindings.allocateNativeFrame
 import io.github.aftrolle.ffmpegkmp.bindings.convertFromBitmap
 import io.github.aftrolle.ffmpegkmp.bindings.convertFromHardwareBuffer
@@ -75,6 +76,13 @@ import kotlinx.coroutines.withTimeoutOrNull
  * `HardwareBufferRenderer` draws on the GPU into a `HardwareBuffer`; earlier, or where that fails,
  * it is drawn onto a software canvas over a bitmap. Either way one conversion copies the pixels
  * into a new pooled frame the caller owns.
+ *
+ * A renderer made for a [VideoTrack] can skip that copy. On Android 14 and later, for an 8-bit SDR H.264
+ * or HEVC track on a hardware encoder, the first [render] turns the track [VideoTrack.zeroCopy]: the GPU then draws
+ * into buffers of the encoder's own input surface, and [render] returns a frame over the buffer it drew, which
+ * [VideoTrack.write] queues to the encoder with its [VideoFrame.pts], so no pixel is copied or converted. Such a
+ * frame lies in GPU memory like a `GpuBuffers` one, and its buffer goes back to the encoder when the frame closes,
+ * so a caller holds at most a few at a time. The renderer then draws on the GPU only, and fails where it cannot.
  *
  * [format] is [FrameFormat.Rgba8] (sRGB, `ARGB_8888`), 10-bit RGB in sRGB (`RGBA_1010102`, API 33
  * and later) for 10-bit SDR, or [FrameFormat.RgbaF16] (linear extended sRGB, `RGBA_F16`, API 26
@@ -120,7 +128,9 @@ public class ComposeFrameRenderer<T> internal constructor(
         track.config.canvasFormat.takeIf { it != RGBA_1010102 || Build.VERSION.SDK_INT >= 33 } ?: FrameFormat.Rgba8,
         density,
         content,
-    )
+    ) {
+        this.track = track
+    }
 
     init {
         require(width > 0 && height > 0) { "The size must be positive: ${width}x$height" }
@@ -140,6 +150,15 @@ public class ComposeFrameRenderer<T> internal constructor(
     private var host: Host? = null
     private var bitmap: Bitmap? = null
     private var gpuCanvas: Any? = null
+
+    /** The track whose encoder's input surface to draw into, where it offers one; set for a renderer made for a track. */
+    private var track: VideoTrack? = null
+
+    /** Whether frames go into [track]'s input surface; known once the first frame has asked the track. */
+    private var surfaceOpen: Boolean? = null
+
+    /** The canvases of the input surface's buffers, each keeping its renderer and display list, by the buffer it was made for. */
+    private val surfaceCanvases = HashMap<HardwareBuffer, GpuCanvas>()
     private var gpuFailed = false
     private var closed = false
 
@@ -147,36 +166,54 @@ public class ComposeFrameRenderer<T> internal constructor(
     internal var drewOnGpu: Boolean = false
         private set
 
-    /** Composes [value] at [time] and draws it into a new pooled frame of [format], shown from [time]. */
+    /**
+     * Composes [value] at [time] and draws it into a new pooled frame of [format], shown from [time]; for a
+     * [VideoTrack.zeroCopy] track, into a frame over the encoder's own buffer, which has no pixels in memory.
+     */
     public suspend fun render(time: Duration, value: T): VideoFrame = copy(time, draw(time, value))
 
     /**
      * Composes [value] at [time] and draws it, on the GPU into a HardwareBuffer, waiting for the GPU to finish, or
-     * onto the software canvas's bitmap: what [copy] then copies. [render] is the two; the export measurement times
-     * them apart.
+     * onto the software canvas's bitmap: what [copy] then copies. For a [VideoTrack.zeroCopy] track the buffer
+     * is the encoder's, taken from it first, and what [copy] wraps. [render] is the two; the export measurement
+     * times them apart.
      */
-    internal suspend fun draw(time: Duration, value: T): Any = withContext(Dispatchers.Main) {
-        check(!closed) { "The renderer is closed" }
-        current.value = value
-        val host = host ?: Host(context, width, height, density, root).also { host = it }
-        host.awaitWindow()
-        awaitPendingMainMessages()
-        host.performFrame(time.inWholeNanoseconds)
-        drawOnGpu(host.view) ?: drawInSoftware(host.view)
-    }
-
-    /** Copies what [draw] drew into a new pooled frame of [format], shown from [time]. */
-    internal suspend fun copy(time: Duration, drawn: Any): VideoFrame = withContext(Dispatchers.Default) {
-        val frame = VideoFrame.of(allocateNativeFrame(format.toNative(), width, height), pts = time, duration = Duration.ZERO)
-        try {
-            frame.useNative { native ->
-                if (drawn is Bitmap) convertFromBitmap(drawn, checkNotNull(native)) else convertGpuCanvas(drawn, checkNotNull(native))
+    internal suspend fun draw(time: Duration, value: T): Any {
+        val buffer = if (opensSurface()) withContext(Dispatchers.Default) { checkNotNull(track).dequeueFrameBuffer() } else null
+        return try {
+            withContext(Dispatchers.Main) {
+                check(!closed) { "The renderer is closed" }
+                current.value = value
+                val host = host ?: Host(context, width, height, density, root).also { host = it }
+                host.awaitWindow()
+                awaitPendingMainMessages()
+                host.performFrame(time.inWholeNanoseconds)
+                buffer?.also { drawIntoSurface(host.view, it) } ?: drawOnGpu(host.view) ?: drawInSoftware(host.view)
             }
         } catch (failure: Throwable) {
-            frame.close()
+            buffer?.release()
             throw failure
         }
-        frame
+    }
+
+    /**
+     * Copies what [draw] drew into a new pooled frame of [format], shown from [time]; a frame over the encoder's
+     * buffer where it drew into that, which copies nothing.
+     */
+    internal suspend fun copy(time: Duration, drawn: Any): VideoFrame {
+        if (drawn is NativeGpuBuffer) return VideoFrame.of(drawn, pts = time, duration = Duration.ZERO, width, height)
+        return withContext(Dispatchers.Default) {
+            val frame = VideoFrame.of(allocateNativeFrame(format.toNative(), width, height), pts = time, duration = Duration.ZERO)
+            try {
+                frame.useNative { native ->
+                    if (drawn is Bitmap) convertFromBitmap(drawn, checkNotNull(native)) else convertGpuCanvas(drawn, checkNotNull(native))
+                }
+            } catch (failure: Throwable) {
+                frame.close()
+                throw failure
+            }
+            frame
+        }
     }
 
     /** Frees the composition and its display. Call it once the last [render] has returned. */
@@ -184,21 +221,42 @@ public class ComposeFrameRenderer<T> internal constructor(
         if (closed) return
         closed = true
         val host = host
-        val canvas = gpuCanvas
+        val canvases = surfaceCanvases.values.toList() + listOfNotNull(gpuCanvas as? AutoCloseable)
         this.host = null
         gpuCanvas = null
+        surfaceCanvases.clear()
         // The Presentation belongs to the main thread.
         android.os.Handler(android.os.Looper.getMainLooper()).post {
             host?.close()
-            (canvas as? AutoCloseable)?.close()
+            canvases.forEach(AutoCloseable::close)
         }
+    }
+
+    /**
+     * Whether frames go into the track's input surface, asking the track once: an 8-bit SDR renderer on the GPU, on
+     * Android 14 and later, for a track that offers one.
+     */
+    private suspend fun opensSurface(): Boolean = surfaceOpen ?: (
+        gpu && Build.VERSION.SDK_INT >= 34 && format == FrameFormat.Rgba8 && track?.openInputSurface() == true
+        ).also { surfaceOpen = it }
+
+    /** Draws the view on the GPU into the encoder's [buffer], waiting for the GPU to finish. */
+    private suspend fun drawIntoSurface(view: View, buffer: NativeGpuBuffer) {
+        check(Build.VERSION.SDK_INT >= 34)
+        val hardwareBuffer = buffer.handle as HardwareBuffer
+        val canvas = surfaceCanvases.getOrPut(hardwareBuffer) {
+            surfaceCanvases.values.removeAll { canvas -> canvas.buffer.isClosed.also { if (it) canvas.close() } }
+            GpuCanvas(hardwareBuffer, width, height, format)
+        }
+        canvas.draw(view)
+        drewOnGpu = true
     }
 
     /** The GPU's canvas once drawn into, or null where it is not available or has failed. */
     private suspend fun drawOnGpu(view: View): Any? {
         if (!gpu || gpuFailed || Build.VERSION.SDK_INT < 34) return null
         return try {
-            val canvas = (gpuCanvas as GpuCanvas?) ?: GpuCanvas(width, height, format).also { gpuCanvas = it }
+            val canvas = (gpuCanvas as GpuCanvas?) ?: GpuCanvas.allocate(width, height, format).also { gpuCanvas = it }
             canvas.draw(view)
             drewOnGpu = true
             canvas
@@ -239,21 +297,16 @@ public class ComposeFrameRenderer<T> internal constructor(
     private object Unset
 }
 
-/** A HardwareBuffer the GPU draws a recorded view into, reused frame to frame. */
+/** The GPU draws a recorded view into [buffer], frame after frame; a buffer it is given stays its lender's to close. */
 @RequiresApi(34)
-private class GpuCanvas(width: Int, height: Int, format: FrameFormat) : AutoCloseable {
+private class GpuCanvas(
+    val buffer: HardwareBuffer,
+    width: Int,
+    height: Int,
+    format: FrameFormat,
+    private val ownsBuffer: Boolean = false,
+) : AutoCloseable {
     private val f16 = format == FrameFormat.RgbaF16
-    val buffer: HardwareBuffer = HardwareBuffer.create(
-        width,
-        height,
-        when (format) {
-            FrameFormat.RgbaF16 -> HardwareBuffer.RGBA_FP16
-            RGBA_1010102 -> HardwareBuffer.RGBA_1010102
-            else -> HardwareBuffer.RGBA_8888
-        },
-        1,
-        HardwareBuffer.USAGE_GPU_COLOR_OUTPUT or HardwareBuffer.USAGE_GPU_SAMPLED_IMAGE or HardwareBuffer.USAGE_CPU_READ_OFTEN,
-    )
     private val node = RenderNode("FFmpegKMP ComposeFrameRenderer").apply { setPosition(0, 0, width, height) }
     private val renderer = HardwareBufferRenderer(buffer).apply { setContentRoot(node) }
     private val colorSpace = ColorSpace.get(if (f16) ColorSpace.Named.LINEAR_EXTENDED_SRGB else ColorSpace.Named.SRGB)
@@ -277,7 +330,25 @@ private class GpuCanvas(width: Int, height: Int, format: FrameFormat) : AutoClos
     override fun close() {
         renderer.close()
         node.discardDisplayList()
-        buffer.close()
+        if (ownsBuffer) buffer.close()
+    }
+
+    companion object {
+        /** A canvas over a new buffer of [format], which it closes with itself. */
+        fun allocate(width: Int, height: Int, format: FrameFormat) = GpuCanvas(
+            HardwareBuffer.create(
+                width,
+                height,
+                when (format) {
+                    FrameFormat.RgbaF16 -> HardwareBuffer.RGBA_FP16
+                    RGBA_1010102 -> HardwareBuffer.RGBA_1010102
+                    else -> HardwareBuffer.RGBA_8888
+                },
+                1,
+                HardwareBuffer.USAGE_GPU_COLOR_OUTPUT or HardwareBuffer.USAGE_GPU_SAMPLED_IMAGE or HardwareBuffer.USAGE_CPU_READ_OFTEN,
+            ),
+            width, height, format, ownsBuffer = true,
+        )
     }
 }
 
