@@ -148,6 +148,8 @@ abstract class FfmpegBuildTask : DefaultTask() {
         install.mkdirs()
 
         val preparedSource = prepareSourceWithIoProtocol(source, work)
+        val swscaleGraph = preparedSource.resolve("libswscale/graph.c")
+        swscaleGraph.writeText(alignUnscaledSlicesToSourceChroma(swscaleGraph.readText()))
         if (targetKind.get() == "android" && androidMediaCodec.get() && hardwareEncoding.get()) {
             val mediaCodecEncoder = preparedSource.resolve("libavcodec/mediacodecenc.c")
             mediaCodecEncoder.writeText(addMediaCodecP010Support(mediaCodecEncoder.readText()))

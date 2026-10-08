@@ -131,6 +131,17 @@ class VideoDecoderSystemTest {
     }
 
     @Test
+    fun anUnscaledConversionSplitIntoOddSlicesStaysInsideTheFrame() = runBlocking {
+        // 120 rows on eight threads are slices of 15: the unscaled YUV420P to RGBA path reads chroma in row pairs, so a
+        // slice must end on an even row or the aarch64 converter writes one row past the last slice (a phone SIGSEGV).
+        decoder("cfr-30-h264-128x120.mp4", VideoOutput.Memory(FrameFormat.Rgba8), threads = DecoderThreads.Fixed(8)).use { decoder ->
+            assertEquals(120, decoder.info.height)
+            val heights = decoder.frames().map { frame -> frame.use { it.height } }.toList()
+            assertEquals(List(30) { 120 }, heights)
+        }
+    }
+
+    @Test
     fun boundariesHoldTheFirstAndLastFrames() = runBlocking {
         decoder("cfr-24.mp4").use { decoder ->
             decoder.frameAt(Duration.ZERO).use { first ->
