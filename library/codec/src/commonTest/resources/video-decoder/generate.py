@@ -242,10 +242,12 @@ def hdr(out, work):
 
 
 def hdr_large(out, work):
-    for index in range(10):
+    # Two seconds at 30 fps: a hardware HEVC decoder holds up to its output delay (19 frames on a Snapdragon 8 Elite)
+    # before the first picture, and a shorter clip only drains at its end, past the decoder's wait for a frame.
+    for index in range(60):
         hdr_frame(os.path.join(work, f"l{index:04d}.png"), LARGE_WIDTH, LARGE_HEIGHT)
     run(
-        "-framerate", "10", "-i", os.path.join(work, "l%04d.png"),
+        "-framerate", "30", "-i", os.path.join(work, "l%04d.png"),
         "-c:v", "hevc_videotoolbox", "-profile:v", "main10", "-pix_fmt", "p010le", "-b:v", "400k",
         "-color_primaries", "bt2020", "-color_trc", "smpte2084", "-colorspace", "bt2020nc",
         "-color_range", "tv", "-tag:v", "hvc1", os.path.join(out, "hdr10-pq-large.mp4"),

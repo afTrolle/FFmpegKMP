@@ -1055,11 +1055,25 @@ torn buffer. The HDR scale is the likely surprise, hence the check. MediaCodec
 starts threads of its own, which change set 17 cannot bound and the budget
 tests report.
 
-Status: the decoder half is built, and checked on the JVM, macOS and in
-headless Chrome, where `GpuBuffers` fails as `Surface` does. No phone was
-connected, so its device tests, the HDR check and the measurement are written
-and compile but have not run, and the encoder half waits for the measurement.
-What the build settled differently from the plan:
+Status: the decoder half is built and, as of 2026-10-08, run on a Galaxy S25
+Ultra (Snapdragon 8 Elite, Android 16). Its device tests pass. The four-source
+4K H.264 export through `GpuBuffers` runs at 34 frames/s with a 521 MB peak
+(update 0.7 ms, GPU draw 3.8 ms, copy 6.3 ms = 22% of a frame), against 5.1
+frames/s and 1381 MB from memory; a 4K `update` takes 0.30 ms through
+`GpuBuffers`, 2.11 ms from memory. The copy share is under the 30% gate, so the
+encoder half is not justified by this plan's rule; the decoder half is a 6.7×
+export speed-up on its own. Two phone findings changed the build: a frame
+recorded one update behind, because `Dispatchers.Main` dispatches the
+renderer's draw as an asynchronous message that a Choreographer sync barrier
+runs ahead of Compose's posted draw invalidation (the renderer now awaits a plain
+main-handler post before each frame); and `FrameImage` wraps a buffer on every
+update, since HWUI's texture for a hardware bitmap never learns of a rewrite.
+The HDR check fails: HWUI maps a BT.2020 PQ hardware bitmap to SDR when it
+composites offscreen (the 1000-nit highlight reads 0.79 on the F16 canvas,
+4.93 from memory), so 10-bit sources keep decoding into memory; the check runs
+on request with `hdrGpuCheck=true`, over a two-second fixture, because the
+hardware decoder holds up to its output delay (19 frames here) before the
+first picture. What the build settled differently from the plan:
 
 - `NativeGpuBuffer` also carries the buffer's id, which `FrameImage` finds its
   wraps by, and the source's HDR type, which picks the colour space a wrap
@@ -1353,9 +1367,12 @@ Verify:
 - On the phone, four 4K 10-bit decoders at `Auto`: at most 2.1 GB, and total
   frames a second at least today's.
 
-Status: built, and checked on the JVM, macOS and in headless Chrome; the phone
-measurement, `ParallelDecoderBudgetDeviceTest`, is written but not yet run, and
-runs only with the `parallelBudget=true` instrumentation argument. The HEVC
+Status: built, and measured on a Galaxy S25 Ultra on 2026-10-08: four 4K HEVC
+10-bit PQ decoders at `Auto`, full size, peak at 1898 MB resident, within the
+2.1 GB target, at 8.4 frames/s in total; at 960×540 they peak at 1099 MB and
+40 frames/s, and `Fixed(2)` threads each give the best throughput (43.7
+frames/s). `ParallelDecoderBudgetDeviceTest` runs only with the
+`parallelBudget=true` instrumentation argument. The HEVC
 fixtures in the thread-count comparison are 96×64, one row of coding blocks, so
 the slices that split are the benchmark's 4K clips, which x265 writes with
 wavefront rows. Auto resolves to `min(cores + 1, 8)`; FFmpeg's own count also
@@ -1493,11 +1510,14 @@ README says so, with `retain` and `convert` as the way out. A drawing thread two
 frames behind `update` would see a bitmap being written; the mixed-frame test
 looks for it, and a third bitmap would fix it.
 
-Status: built, and checked on the JVM, macOS and in headless Chrome; the phone
-measurement, `CompositeExportBudgetDeviceTest` in `ffplay`, and the new
-`FrameImageDeviceTest` cases are written and compile, but no phone was connected
-to run them, so the composite's numbers are still to come. It runs only with the
-`compositeBudget=true` instrumentation argument, over change set 17's clip, and
+Status: built, and measured on a Galaxy S25 Ultra on 2026-10-08: the four-source
+4K composite of the PQ clip into an HDR10 export peaks at 2163 MB with
+`Memory()`, over the 1.6 GB target by about 560 MB, at 1.4 frames/s (update 505
+ms, draw 153 ms, copy 39 ms), with the native heap at 1905 MB after 24 frames
+and 269 MB once closed; `Memory(canvasFormat)` peaks at 2943 MB, and
+`GpuBuffers` takes the memory path for a 10-bit source, with the same numbers.
+The SDR H.264 numbers are under change set 12. `CompositeExportBudgetDeviceTest`
+in `ffplay` runs only with the `compositeBudget=true` instrumentation argument, over change set 17's clip, and
 takes its cases as a list and each frame's phases by name, so change set 12 adds
 `GpuBuffers` and splits `render` into the GPU draw and the copy as one line each.
 
@@ -1549,16 +1569,16 @@ the heap after a collection within 40 KB.
 
 In order:
 
-1. Change set 17's phone measurement: `ParallelDecoderBudgetDeviceTest`, four
-   4K 10-bit decoders at `Auto` within 2.1 GB.
-2. Change set 18's phone runs: `CompositeExportBudgetDeviceTest`, within 1.6 GB
-   with `Memory()` and native memory flat once warm, and the new
-   `FrameImageDeviceTest` cases.
-3. Change set 12's device runs: `VideoDecoderGpuBuffersDeviceTest`, the
-   `GpuBuffers` cases of `FrameImageDeviceTest`, the HDR check, which decides
-   whether 10-bit sources stay on the GPU, and the 4K `update` under 1 ms.
-4. The four-source 4K export on the phone with `clip=h264`, whose copy share
-   decides change set 12's encoder half.
+1. Done on 2026-10-08 (change set 17): 1898 MB, within 2.1 GB.
+2. Done (change set 18): 2163 MB with `Memory()`, over the 1.6 GB target; the
+   `FrameImageDeviceTest` cases pass. Bringing the HDR composite under budget
+   is open.
+3. Done (change set 12): the device tests pass after the two fixes recorded
+   there; the HDR check fails, so 10-bit sources stay in memory until a draw
+   path keeps a PQ hardware bitmap's values on an F16 canvas; the 4K `update`
+   is 0.30 ms.
+4. Done: the copy is 22% of a frame, under the 30% gate, so the encoder half
+   waits; the decoder half alone exports 6.7× faster than from memory.
 5. Follow-ups:
    - fewer copies in the browser renderer, and one copy of the aspect formula in
      `PlatformFFplaySurface.web.kt`'s JavaScript;

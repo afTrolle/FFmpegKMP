@@ -237,6 +237,12 @@ class FrameImageDeviceTest {
     @Test
     fun anHdr10FrameInAGpuBufferKeepsItsHighlightOnAnF16CanvasAsFromMemory() = runBlocking<Unit> {
         assumeGpuBuffers()
+        // The gate on 10-bit sources staying on the GPU. It fails today: HWUI maps a BT.2020 PQ hardware bitmap to SDR
+        // when it composites offscreen, so the 1000-nit highlight reads 0.79 on the F16 canvas where memory reads 4.93.
+        assumeTrue(
+            "Runs only with the hdrGpuCheck=true instrumentation argument",
+            InstrumentationRegistry.getArguments().getString("hdrGpuCheck") == "true",
+        )
         gpuBuffersKeepDeepSources = true
         try {
             val highlights = listOf(VideoOutput.GpuBuffers, VideoOutput.Memory(FrameFormat.RgbaF16)).map { output ->
