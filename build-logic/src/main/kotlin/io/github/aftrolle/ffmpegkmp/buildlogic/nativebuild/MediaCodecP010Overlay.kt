@@ -183,10 +183,107 @@ internal fun addMediaCodecHdrStaticInfoSupport(source: String): String {
         .withModificationNotice("HDR static info (mastering display / content light level) propagation")
 }
 
+/**
+ * Adds an opt-in `ffmpegkmp_wait_timeout` to the MediaCodec video decoders. Upstream,
+ * receive_frame spins without end (dequeueInputBuffer with a zero timeout) while a codec holds
+ * every input buffer and outputs nothing. With the option set, the spin waits on
+ * dequeueInputBuffer and gives up with EAGAIN from both send and receive after the timeout, so
+ * the caller can check its own deadline and retry the pending packet.
+ */
+internal fun addMediaCodecDecoderWaitTimeout(source: String): String {
+    if ("ffmpegkmp_wait_timeout" in source) return source
+
+    return source
+        .replaceRequired(
+            "#include \"libavutil/internal.h\"\n",
+            "#include \"libavutil/internal.h\"\n#include \"libavutil/time.h\"\n",
+        )
+        .replaceRequired(
+            """
+            |    // Ref. MediaFormat KEY_OPERATING_RATE
+            |    int operating_rate;
+            |} MediaCodecH264DecContext;
+            """.trimMargin(),
+            """
+            |    // Ref. MediaFormat KEY_OPERATING_RATE
+            |    int operating_rate;
+            |
+            |    int64_t wait_timeout;
+            |} MediaCodecH264DecContext;
+            |
+            |#define FFMPEGKMP_INPUT_WAIT_US 8000
+            """.trimMargin(),
+        )
+        .replaceRequired(
+            """
+            |static int mediacodec_receive_frame(AVCodecContext *avctx, AVFrame *frame)
+            |{
+            |    MediaCodecH264DecContext *s = avctx->priv_data;
+            |    int ret;
+            |    ssize_t index;
+            """.trimMargin(),
+            """
+            |static int mediacodec_receive_frame(AVCodecContext *avctx, AVFrame *frame)
+            |{
+            |    MediaCodecH264DecContext *s = avctx->priv_data;
+            |    int ret;
+            |    ssize_t index;
+            |    int64_t wait_start = AV_NOPTS_VALUE;
+            """.trimMargin(),
+        )
+        .replaceRequired(
+            """
+            |            index = ff_AMediaCodec_dequeueInputBuffer(s->ctx->codec, 0);
+            |            if (index < 0) {
+            """.trimMargin(),
+            """
+            |            index = ff_AMediaCodec_dequeueInputBuffer(s->ctx->codec,
+            |                    s->wait_timeout && wait_start != AV_NOPTS_VALUE ? FFMPEGKMP_INPUT_WAIT_US : 0);
+            |            if (index < 0) {
+            """.trimMargin(),
+        )
+        .replaceRequired(
+            """
+            |                if (ff_AMediaCodec_infoTryAgainLater(s->ctx->codec, index) &&
+            |                    ret == AVERROR(EAGAIN))
+            |                    continue;
+            |                return ret;
+            """.trimMargin(),
+            """
+            |                if (ff_AMediaCodec_infoTryAgainLater(s->ctx->codec, index) &&
+            |                    ret == AVERROR(EAGAIN)) {
+            |                    if (s->wait_timeout) {
+            |                        int64_t now = av_gettime_relative();
+            |                        if (wait_start == AV_NOPTS_VALUE)
+            |                            wait_start = now;
+            |                        else if (now - wait_start >= s->wait_timeout)
+            |                            return AVERROR(EAGAIN);
+            |                    }
+            |                    continue;
+            |                }
+            |                return ret;
+            """.trimMargin(),
+        )
+        .replaceRequired(
+            """
+            |            OFFSET(operating_rate), AV_OPT_TYPE_INT, {.i64 = 0}, 0, INT_MAX, VD },
+            |    { NULL }
+            """.trimMargin(),
+            """
+            |            OFFSET(operating_rate), AV_OPT_TYPE_INT, {.i64 = 0}, 0, INT_MAX, VD },
+            |    { "ffmpegkmp_wait_timeout", "Return EAGAIN from send and receive after this many microseconds "
+            |                                "of a codec taking no input and outputting nothing, 0 to wait indefinitely",
+            |            OFFSET(wait_timeout), AV_OPT_TYPE_INT64, {.i64 = 0}, 0, INT_MAX, VD },
+            |    { NULL }
+            """.trimMargin(),
+        )
+        .withModificationNotice("bounded MediaCodec decoder waits (ffmpegkmp_wait_timeout)")
+}
+
 private fun String.withModificationNotice(change: String): String =
     "/* Modified by FFmpegKMP contributors in 2026: $change. */\n$this"
 
 private fun String.replaceRequired(marker: String, replacement: String): String {
-    require(marker in this) { "FFmpeg MediaCodec source changed; P010 overlay marker was not found" }
+    require(marker in this) { "FFmpeg MediaCodec source changed; overlay marker was not found: $marker" }
     return replace(marker, replacement)
 }

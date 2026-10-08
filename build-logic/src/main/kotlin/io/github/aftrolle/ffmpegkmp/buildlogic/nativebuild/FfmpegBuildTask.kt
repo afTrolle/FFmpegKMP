@@ -155,6 +155,10 @@ abstract class FfmpegBuildTask : DefaultTask() {
             mediaCodecWrapper.writeText(addMediaCodecHdr10ProfileSupport(mediaCodecWrapper.readText()))
             mediaCodecEncoder.writeText(addMediaCodecHdrStaticInfoSupport(mediaCodecEncoder.readText()))
         }
+        if (targetKind.get() == "android" && androidMediaCodec.get() && hardwareDecoding.get()) {
+            val mediaCodecDecoder = preparedSource.resolve("libavcodec/mediacodecdec.c")
+            mediaCodecDecoder.writeText(addMediaCodecDecoderWaitTimeout(mediaCodecDecoder.readText()))
+        }
         val configure = preparedSource.resolve("configure")
 
         val arguments = mutableListOf<String>()
@@ -285,14 +289,15 @@ abstract class FfmpegBuildTask : DefaultTask() {
         val makefile = prepared.resolve("libavformat/Makefile")
         makefile.appendText("\nOBJS-\$(CONFIG_FFMPEGKMP_PROTOCOL) += ffmpegkmp_protocol.o\n")
 
-        // The bridge includes the two CLI main sources through controlled entry
-        // wrappers. Build only their supporting objects here: the standalone
-        // ffmpeg/ffprobe main objects and executable link steps are not used.
+        // The bridge includes the two CLI main sources, and the option sources whose
+        // state it resets per run, through controlled wrappers. Build only the other
+        // supporting objects here: the standalone ffmpeg/ffprobe main objects and
+        // executable link steps are not used.
         prepared.resolve("fftools/Makefile").appendText(
             """
 
             .PHONY: ffmpegkmp-fftools-objects
-            ffmpegkmp-fftools-objects: ${'$'}(sort ${'$'}(filter-out fftools/ffmpeg.o fftools/ffprobe.o,${'$'}(filter fftools/%.o,${'$'}(OBJS-ffmpeg) ${'$'}(OBJS-ffprobe))))
+            ffmpegkmp-fftools-objects: ${'$'}(sort ${'$'}(filter-out ${wrappedFftoolsObjects.joinToString(" ") { "fftools/$it" }},${'$'}(filter fftools/%.o,${'$'}(OBJS-ffmpeg) ${'$'}(OBJS-ffprobe))))
             """.trimIndent() + "\n",
         )
         return prepared
@@ -525,7 +530,7 @@ abstract class FfmpegBuildTask : DefaultTask() {
         val fftoolsObjects = work.resolve("fftools").walkTopDown()
             .filter { file ->
                 file.isFile && file.extension == "o" &&
-                    file.name !in setOf("ffmpeg.o", "ffprobe.o", "ffplay.o", "ffplay_renderer.o")
+                    file.name !in wrappedFftoolsObjects + setOf("ffplay.o", "ffplay_renderer.o")
             }
             .map(File::getAbsolutePath)
             .toMutableList()
@@ -542,6 +547,7 @@ abstract class FfmpegBuildTask : DefaultTask() {
                     "BRIDGE_INSTALL=${install.absolutePath}",
                     "FFMPEGKMP_EMBEDDED_FFTOOLS=${if (fftoolsObjects.isEmpty()) 0 else 1}",
                     "FFTOOLS_OBJECTS=${fftoolsObjects.joinToString(" ")}",
+                    "FFMPEGKMP_PIXEL_BUFFER=${if (targetKind.get() == "apple") 1 else 0}",
                     "ffmpegkmp-bridge",
                 ),
             )
@@ -770,6 +776,8 @@ abstract class FfmpegBuildTask : DefaultTask() {
     }
 
     private companion object {
+        /** fftools objects that `bridge.mk` compiles through its own wrapper sources instead. */
+        val wrappedFftoolsObjects = setOf("ffmpeg.o", "ffprobe.o", "ffmpeg_opt.o", "opt_common.o")
         val androidMediaCodecDecoders = listOf(
             "aac_mediacodec", "amrnb_mediacodec", "amrwb_mediacodec", "av1_mediacodec",
             "h264_mediacodec", "hevc_mediacodec", "mp3_mediacodec", "mpeg2_mediacodec",

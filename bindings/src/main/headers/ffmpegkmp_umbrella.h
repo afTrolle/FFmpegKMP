@@ -11,6 +11,9 @@
 #include <libswscale/swscale.h>
 #include <ffmpegkmp_bridge.h>
 #include <ffplaykmp_player.h>
+#include <ffmpegkmp_frame.h>
+#include <ffmpegkmp_decoder.h>
+#include <ffmpegkmp_writer.h>
 #include <ffmpegkmp_macros.h>
 
 #endif

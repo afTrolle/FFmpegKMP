@@ -18,7 +18,7 @@ public actual fun createPlatformPlayerBridge(
 ): NativePlayerBridge = createBrowserPlayerBridge(configuration, update, frame, platformFrame)
 
 internal actual fun startBrowserPlayerWorker(
-    decoderPreference: Int,
+    configuration: NativePlayerConfiguration,
     listener: BrowserPlayerWorkerListener,
 ): BrowserPlayerWorker {
     val onSnapshot: (String) -> Unit = listener::onSnapshot
@@ -45,7 +45,15 @@ internal actual fun startBrowserPlayerWorker(
         ).also { accepted -> if (!accepted) releasePlayerVideoFrame(frameId) }
     }
     return JsBrowserPlayerWorker(
-        startPlayerWorker(decoderPreference, onSnapshot, onFrame, onPlatformFrame, onFailure, onAudio),
+        startPlayerWorker(
+            configuration.decoderPreference.ordinal,
+            configuration.decoderThreads,
+            onSnapshot,
+            onFrame,
+            onPlatformFrame,
+            onFailure,
+            onAudio,
+        ),
     )
 }
 
@@ -75,6 +83,7 @@ private fun postPlayerMessage(controller: dynamic, message: JsAny, transfers: Js
 
 private fun startPlayerWorker(
     decoderPreference: Int,
+    decoderThreads: Int,
     onSnapshot: (String) -> Unit,
     onFrame: (dynamic) -> Unit,
     onPlatformFrame: (dynamic) -> Boolean,
@@ -122,7 +131,7 @@ private fun startPlayerWorker(
       worker.onerror = event => {
         onFailure(event.message || `Could not load the FFmpegKMP player worker at ${'$'}{workerUrl}`);
       };
-      controller.post({ type: 'player-init', decoderPreference });
+      controller.post({ type: 'player-init', decoderPreference, decoderThreads });
       return controller;
     })()
     """,
@@ -275,3 +284,22 @@ private const val WORKER_BOOTSTRAP: String = """
       return worker;
     }
 """
+
+internal actual fun copyToJsUint8Array(bytes: ByteArray): JsAny = uint8Copy(bytes)
+
+internal actual fun copyToJsUint8Array(bytes: ByteArray, offset: Int, size: Int): JsAny = uint8RangeCopy(bytes, offset, size)
+
+internal actual fun copyToJsFloat32Array(samples: FloatArray, offset: Int, size: Int): JsAny = float32RangeCopy(samples, offset, size)
+
+private fun float32RangeCopy(samples: dynamic, offset: Int, size: Int): JsAny =
+    js("new Float32Array(samples.buffer, samples.byteOffset + offset * 4, size).slice()")
+
+// A Kotlin/JS ByteArray is an Int8Array.
+internal actual fun jsBufferToByteArray(buffer: JsAny): ByteArray = int8View(buffer)
+
+private fun uint8RangeCopy(bytes: dynamic, offset: Int, size: Int): JsAny =
+    js("new Uint8Array(bytes.buffer, bytes.byteOffset + offset, size).slice()")
+
+private fun int8View(buffer: JsAny): ByteArray = js("new Int8Array(buffer)")
+
+private fun uint8Copy(bytes: dynamic): JsAny = js("new Uint8Array(bytes.buffer, bytes.byteOffset, bytes.byteLength).slice()")

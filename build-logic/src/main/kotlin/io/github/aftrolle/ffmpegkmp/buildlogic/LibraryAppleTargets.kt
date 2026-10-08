@@ -34,7 +34,6 @@ fun Project.configureLibraryAppleTargets(includeTvosAndWatchos: Boolean) {
             if (includeTvosAndWatchos) {
                 add(tvosArm64())
                 add(tvosSimulatorArm64())
-                add(watchosArm32())
                 add(watchosArm64())
                 add(watchosDeviceArm64())
                 add(watchosSimulatorArm64())
@@ -85,7 +84,6 @@ fun Project.configureLibraryAppleTargets(includeTvosAndWatchos: Boolean) {
             dependsOn(
                 "compileTestKotlinTvosArm64",
                 "compileTestKotlinTvosSimulatorArm64",
-                "compileTestKotlinWatchosArm32",
                 "compileTestKotlinWatchosArm64",
                 "compileTestKotlinWatchosDeviceArm64",
                 "compileTestKotlinWatchosSimulatorArm64",

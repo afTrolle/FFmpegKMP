@@ -382,7 +382,7 @@ val buildJavaCppAndroidSurfaceBindings = androidAbis.map { (abi, configuration) 
     val (platform, compiler, taskSuffix) = configuration
     tasks.register<JavaExec>("buildJavaCppAndroid${taskSuffix}Surface") {
         group = "ffmpeg bindings"
-        description = "Builds the Android Surface JNI seam for $abi"
+        description = "Builds the Android Surface and Bitmap JNI seams for $abi"
         dependsOn(compileJavaCppPresets)
         dependsOn(selectedNativeProfileTaskSuffix.map {
             ":native-build:android:buildFfmpeg$it$taskSuffix"
@@ -416,6 +416,7 @@ val buildJavaCppAndroidSurfaceBindings = androidAbis.map { (abi, configuration) 
             ).joinToString(File.pathSeparator)}",
             "-Dplatform.linkpath=${install.get().dir("lib").asFile.absolutePath}",
             "io.github.aftrolle.ffmpegkmp.bindings.javacpp.AndroidPlayerSurface",
+            "io.github.aftrolle.ffmpegkmp.bindings.javacpp.AndroidBitmapFrames",
         )
     }
 }

@@ -66,6 +66,8 @@ public data class NativePlayerVideoInfo(
 @InternalFFmpegKmpApi
 public data class NativePlayerConfiguration(
     val decoderPreference: NativePlayerDecoderPreference = NativePlayerDecoderPreference.AUTO,
+    /** The software decoder's threads, 0 for FFmpeg's automatic count capped at 8. */
+    val decoderThreads: Int = 0,
 )
 
 @InternalFFmpegKmpApi
@@ -99,15 +101,17 @@ public data class NativePlayerSnapshot(
     val droppedFrames: Long = 0,
 )
 
-/** CPU-readable RGBA frame. Secure/protected sources must never produce this type. */
+/**
+ * A CPU-readable frame, as decoded, for a software output: the receiver owns [frame] and closes
+ * it. Secure/protected sources must never produce this type.
+ */
 @InternalFFmpegKmpApi
-public data class NativeVideoFrame(
-    val rgba: ByteArray,
-    val width: Int,
-    val height: Int,
-    val stride: Int,
-    val presentationTimeUs: Long,
-    val queueSerial: UInt,
+public class NativeVideoFrame(
+    public val frame: NativeFrame,
+    public val width: Int,
+    public val height: Int,
+    public val presentationTimeUs: Long,
+    public val queueSerial: UInt,
 )
 
 @InternalFFmpegKmpApi
@@ -138,6 +142,7 @@ public object NativePlayerError {
     public const val ACCESS_DENIED: Int = -1003
     public const val UNSUPPORTED: Int = -1004
     public const val IO: Int = -1005
+    public const val TIMED_OUT: Int = -1007
 }
 
 @InternalFFmpegKmpApi
@@ -205,11 +210,12 @@ public interface NativePlayerAudio : AutoCloseable {
     public fun setProgressListener(listener: (NativeAudioProgress) -> Unit)
 }
 
+/** [frame] owns each frame it receives and closes it. */
 @InternalFFmpegKmpApi
 public expect fun createPlatformPlayerBridge(
     configuration: NativePlayerConfiguration,
     update: (NativePlayerSnapshot) -> Unit,
-    frame: (NativeVideoFrame) -> Unit = {},
+    frame: (NativeVideoFrame) -> Unit = { it.frame.close() },
     platformFrame: (NativePlatformVideoFrame) -> Boolean = { false },
 ): NativePlayerBridge
 

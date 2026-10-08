@@ -9,7 +9,6 @@ import androidx.compose.ui.graphics.ImageBitmap
 import io.github.aftrolle.ffmpegkmp.bindings.NativePlayerError
 import io.github.aftrolle.ffmpegkmp.bindings.NativePlayerBridge
 import io.github.aftrolle.ffmpegkmp.bindings.NativePlayerConfiguration
-import io.github.aftrolle.ffmpegkmp.bindings.NativePlayerDecoderPreference
 import io.github.aftrolle.ffmpegkmp.bindings.NativePlayerDecoderKind
 import io.github.aftrolle.ffmpegkmp.bindings.NativePlayerOutputCapabilities
 import io.github.aftrolle.ffmpegkmp.bindings.NativePlatformVideoFrame
@@ -19,6 +18,10 @@ import io.github.aftrolle.ffmpegkmp.bindings.NativePlayerState
 import io.github.aftrolle.ffmpegkmp.bindings.NativeVideoFrame
 import io.github.aftrolle.ffmpegkmp.bindings.createInMemoryPlayerBridge
 import io.github.aftrolle.ffmpegkmp.bindings.createPlatformPlayerBridge
+import io.github.aftrolle.ffmpegkmp.codec.VideoFrame
+import io.github.aftrolle.ffmpegkmp.codec.toNative
+import io.github.aftrolle.ffmpegkmp.codec.toPublic
+import io.github.aftrolle.ffmpegkmp.codec.toPublicVideoInfo
 import io.github.aftrolle.ffmpegkmp.core.toNativeMounts
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.microseconds
@@ -41,15 +44,16 @@ internal interface FFplayVideoOutput {
     fun submit(frame: FFplayFrame): Boolean
 
     /**
-     * Accepts the bridge frame at the renderer boundary. Native/GPU outputs may override this to
-     * avoid constructing a Compose bitmap; Canvas outputs use the color-managed default.
+     * Accepts a decoded frame at the renderer boundary and takes its reference. Native outputs may
+     * override this to draw the frame's memory themselves; Canvas outputs use the default, which
+     * converts it once into a Compose bitmap with [toImageBitmap].
      */
-    fun submitNative(frame: NativeVideoFrame, video: FFplayVideoInfo?): Boolean = submit(
+    fun submitNative(frame: VideoFrame, video: FFplayVideoInfo?): Boolean = submit(
         FFplayFrame(
-            image = frame.toImageBitmap(),
-            presentationTime = frame.presentationTimeUs.microseconds,
-            sampleAspectRatio = video.sampleAspectRatioValue(),
-            rotationDegrees = video?.rotationDegrees ?: 0.0,
+            image = frame.use { it.toImageBitmap() },
+            presentationTime = frame.pts,
+            sampleAspectRatio = frame.sampleAspectRatio,
+            rotationDegrees = frame.rotationDegrees,
         ),
     )
 
@@ -368,16 +372,29 @@ private class FFplayBridgeEngine(
     }
 
     private fun acceptNativeFrame(native: NativeVideoFrame) {
-        if (closed || native.queueSerial != nativeQueueSerial) return
+        val video = snapshot.video
+        val frame = VideoFrame.of(
+            native = native.frame,
+            pts = native.presentationTimeUs.microseconds,
+            duration = Duration.ZERO,
+            width = native.width,
+            height = native.height,
+            rotationDegrees = video?.rotationDegrees ?: 0.0,
+            sampleAspectRatio = video.sampleAspectRatioValue(),
+        )
+        if (closed || native.queueSerial != nativeQueueSerial) return frame.close()
         if (source?.protection == FFplayContentProtection.REQUIRE_SECURE_PATH) {
+            frame.close()
             emit(FFplayEvent.Fatal("A protected source attempted to cross the CPU-readable frame boundary"))
             return
         }
-        val target = output ?: return
-        if (!negotiated.softwareFrameUpload) return
+        val target = output ?: return frame.close()
+        if (!negotiated.softwareFrameUpload) return frame.close()
         val accepted = try {
-            target.submitNative(native, snapshot.video)
+            target.submitNative(frame, video)
         } catch (failure: Throwable) {
+            // The output took the reference; closing again is a no-op, and releases it if the output did not.
+            frame.close()
             emit(
                 FFplayEvent.Warning(
                     "Unable to submit the preview frame: " +
@@ -423,11 +440,7 @@ private class FFplayBridgeEngine(
         val capabilities = negotiated
         val color = decideColorOutput(video, capabilities, configuration.hdrPolicy)
         return FFplayOutputInfo(
-            decoder = when (activeDecoder) {
-                NativePlayerDecoderKind.HARDWARE -> FFplayDecoderKind.HARDWARE
-                NativePlayerDecoderKind.SOFTWARE -> FFplayDecoderKind.SOFTWARE
-                NativePlayerDecoderKind.UNKNOWN -> FFplayDecoderKind.UNKNOWN
-            },
+            decoder = activeDecoder.toPublic(),
             renderer = kind,
             zeroCopy = capabilities.zeroCopy && activeDecoder == NativePlayerDecoderKind.HARDWARE,
             sourceColorSpace = color.sourceColorSpace,
@@ -495,13 +508,7 @@ internal fun FFplayVideoInfo?.sampleAspectRatioValue(): Double {
     return (numerator / denominator).takeIf { it.isFinite() && it > 0.0 } ?: 1.0
 }
 
-private fun FFplayConfiguration.toNative() = NativePlayerConfiguration(
-    decoderPreference = when (decoderPreference) {
-        FFplayDecoderPreference.AUTO -> NativePlayerDecoderPreference.AUTO
-        FFplayDecoderPreference.REQUIRE_HARDWARE -> NativePlayerDecoderPreference.REQUIRE_HARDWARE
-        FFplayDecoderPreference.SOFTWARE -> NativePlayerDecoderPreference.SOFTWARE
-    },
-)
+private fun FFplayConfiguration.toNative() = NativePlayerConfiguration(decoderPreference.toNative(), threads.toNative())
 
 private fun FFplayOutputCapabilities.toNative() = NativePlayerOutputCapabilities(
     hardwareFrameImport = hardwareFrameImport,

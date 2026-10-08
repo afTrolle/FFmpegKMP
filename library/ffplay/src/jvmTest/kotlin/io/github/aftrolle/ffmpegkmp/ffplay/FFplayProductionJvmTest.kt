@@ -2,7 +2,7 @@
 package io.github.aftrolle.ffmpegkmp.ffplay
 
 import io.github.aftrolle.ffmpegkmp.bindings.InternalFFmpegKmpApi
-import io.github.aftrolle.ffmpegkmp.bindings.NativeVideoFrame
+import io.github.aftrolle.ffmpegkmp.codec.VideoFrame
 import io.github.aftrolle.ffmpegkmp.core.CommandIo
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
@@ -105,7 +105,8 @@ private class ProductionOutput : FFplayVideoOutput {
 
     override fun submit(frame: FFplayFrame): Boolean = true
 
-    override fun submitNative(frame: NativeVideoFrame, video: FFplayVideoInfo?): Boolean {
+    override fun submitNative(frame: VideoFrame, video: FFplayVideoInfo?): Boolean {
+        frame.close()
         framesReceived++
         return true
     }

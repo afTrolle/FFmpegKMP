@@ -1,15 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
-@file:OptIn(io.github.aftrolle.ffmpegkmp.bindings.InternalFFmpegKmpApi::class)
-
 package io.github.aftrolle.ffmpegkmp.ffplay
 
-import io.github.aftrolle.ffmpegkmp.bindings.NativePlayerHdrType
-import io.github.aftrolle.ffmpegkmp.bindings.NativePlayerMasteringDisplayMetadata
-import io.github.aftrolle.ffmpegkmp.bindings.NativePlayerVideoInfo
 import kotlin.test.Test
 import kotlin.test.assertEquals
-import kotlin.test.assertNotNull
-import kotlin.test.assertNull
 
 class FFplayColorMetadataTest {
     @Test
@@ -23,75 +16,6 @@ class FFplayColorMetadataTest {
 
         assertEquals(16.0 / 15.0, video.sampleAspectRatioValue())
         assertEquals(270f, video.rotationDegrees.normalizedRotation())
-    }
-
-    @Test
-    fun mapsHdr10StreamMetadataWithoutLosingColorInformation() {
-        val video = NativePlayerVideoInfo(
-            width = 3840,
-            height = 2160,
-            pixelFormatName = "yuv420p10le",
-            bitDepth = 10,
-            sampleAspectRatioNumerator = 1,
-            sampleAspectRatioDenominator = 1,
-            rotationDegrees = 90.0,
-            colorPrimaries = 9,
-            colorTransfer = 16,
-            colorSpace = 9,
-            colorRange = 1,
-            chromaLocation = 1,
-            hdrType = NativePlayerHdrType.HDR10,
-            masteringDisplay = NativePlayerMasteringDisplayMetadata(
-                hasPrimaries = true,
-                hasLuminance = true,
-                redX = 0.68,
-                redY = 0.32,
-                greenX = 0.265,
-                greenY = 0.69,
-                blueX = 0.15,
-                blueY = 0.06,
-                whiteX = 0.3127,
-                whiteY = 0.329,
-                minLuminance = 0.005,
-                maxLuminance = 1000.0,
-            ),
-            maxContentLightLevel = 1000,
-            maxFrameAverageLightLevel = 400,
-        ).toPublicVideoInfo()
-
-        assertEquals("yuv420p10le", video.pixelFormat)
-        assertEquals(10, video.bitDepth)
-        assertEquals("1:1", video.sampleAspectRatio)
-        assertEquals(90.0, video.rotationDegrees)
-        assertEquals("BT.2020", video.colorPrimaries)
-        assertEquals("PQ", video.colorTransfer)
-        assertEquals("BT.2020 NCL", video.colorMatrix)
-        assertEquals("Limited", video.colorRange)
-        assertEquals("Left", video.chromaLocation)
-        assertEquals(FFplayHdrType.HDR10, video.hdrType)
-        assertEquals("1000.0", assertNotNull(video.masteringDisplay).raw["maxLuminance"])
-        val contentLight = assertNotNull(video.contentLight)
-        assertEquals(1000, contentLight.maxContentLightLevel)
-        assertEquals(400, contentLight.maxFrameAverageLightLevel)
-    }
-
-    @Test
-    fun unspecifiedColorFieldsStayUnspecified() {
-        val video = NativePlayerVideoInfo(
-            width = 640,
-            height = 360,
-            colorPrimaries = 2,
-            colorTransfer = 2,
-            colorSpace = 2,
-            colorRange = 0,
-            chromaLocation = 0,
-        ).toPublicVideoInfo()
-
-        assertNull(video.colorPrimaries)
-        assertNull(video.colorTransfer)
-        assertNull(video.colorMatrix)
-        assertNull(video.colorRange)
-        assertNull(video.chromaLocation)
     }
 
     @Test

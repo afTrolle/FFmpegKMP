@@ -66,6 +66,7 @@ typedef enum ffplaykmp_error {
     FFPLAYKMP_ERROR_UNSUPPORTED = -1004,
     FFPLAYKMP_ERROR_IO = -1005,
     FFPLAYKMP_ERROR_STALE = -1006,
+    FFPLAYKMP_ERROR_TIMED_OUT = -1007,
 } ffplaykmp_error;
 
 typedef enum ffplaykmp_source_flags {
@@ -77,13 +78,18 @@ typedef enum ffplaykmp_output_flags {
     FFPLAYKMP_OUTPUT_SOFTWARE_FRAME_UPLOAD = 1u << 1,
     FFPLAYKMP_OUTPUT_ZERO_COPY = 1u << 2,
     FFPLAYKMP_OUTPUT_PROTECTED_CONTENT = 1u << 3,
-    /** Software-uploaded HDR frames must be converted to bounded BT.709/sRGB. */
+    /** The browser worker's RGBA frames of HDR sources are tone mapped to BT.709/sRGB. */
     FFPLAYKMP_OUTPUT_TONE_MAP_HDR_TO_SDR = 1u << 4,
 } ffplaykmp_output_flags;
 
 typedef struct ffplaykmp_configuration {
     uint32_t size;
     ffplaykmp_decoder_preference decoder_preference;
+    /*
+     * The software video decoder's frame and slice threads, 0 (the default)
+     * for FFmpeg's automatic count capped at 8. Hardware decoders ignore it.
+     */
+    int32_t decoder_threads;
 } ffplaykmp_configuration;
 
 typedef struct ffplaykmp_output_capabilities {
@@ -131,13 +137,18 @@ typedef struct ffplaykmp_snapshot {
     uint64_t dropped_frames;
 } ffplaykmp_snapshot;
 
+/* One reference to a decoded frame (ffmpegkmp_frame.h). */
+struct ffmpegkmp_frame;
+
 typedef struct ffplaykmp_video_frame {
     uint32_t size;
-    const uint8_t *rgba;
-    uint64_t rgba_size;
+    /*
+     * The frame as decoded, hardware frames downloaded. Borrowed for the
+     * duration of the callback: ffmpegkmp_frame_ref it to keep it.
+     */
+    const struct ffmpegkmp_frame *frame;
     int32_t width;
     int32_t height;
-    int32_t stride;
     int64_t presentation_time_us;
     uint32_t queue_serial;
 } ffplaykmp_video_frame;
@@ -178,7 +189,7 @@ typedef void (*ffplaykmp_state_callback)(
         void *opaque,
         const ffplaykmp_snapshot *snapshot);
 
-/** The frame memory is valid only for the duration of this callback. */
+/** The frame is borrowed only for the duration of this callback. */
 typedef void (*ffplaykmp_video_frame_callback)(
         void *opaque,
         const ffplaykmp_video_frame *frame);
@@ -281,6 +292,7 @@ typedef void (*ffplaykmp_web_decoder_config_callback)(
         int32_t color_primaries,
         int32_t color_transfer,
         int32_t color_space);
+/* `pts` and `duration` are the packet's own, in the stream's time base; AV_NOPTS_VALUE and 0 when it has none. */
 typedef void (*ffplaykmp_web_encoded_packet_callback)(
         void *opaque,
         const uint8_t *data,
@@ -288,10 +300,13 @@ typedef void (*ffplaykmp_web_encoded_packet_callback)(
         int64_t timestamp_us,
         int64_t duration_us,
         int32_t key_frame,
-        uint32_t queue_serial);
+        uint32_t queue_serial,
+        int64_t pts,
+        int64_t duration);
 
 FFPLAYKMP_EXPORT ffplaykmp_player *ffplaykmp_web_player_create(
         int32_t decoder_preference,
+        int32_t decoder_threads,
         ffplaykmp_web_state_callback state_callback,
         ffplaykmp_web_video_frame_callback frame_callback,
         void *opaque);
@@ -320,6 +335,16 @@ FFPLAYKMP_EXPORT int ffplaykmp_web_player_read_packet(
         ffplaykmp_web_encoded_packet_callback callback,
         void *opaque);
 FFPLAYKMP_EXPORT void ffplaykmp_web_player_close_packets(ffplaykmp_player *player);
+/*
+ * The packet reader's stream timing, for a caller that decodes frame by frame: `values` takes
+ * the time base's numerator and denominator, then ffplaykmp_stream_timing's origin, default
+ * duration and stream end, in that time base.
+ */
+FFPLAYKMP_EXPORT int ffplaykmp_web_player_packet_timing(ffplaykmp_player *player, int64_t *values);
+/* Moves the packet reader to the keyframe at or before `target`, in the stream's time base. */
+FFPLAYKMP_EXPORT int ffplaykmp_web_player_seek_packets(ffplaykmp_player *player, int64_t target);
+/* The index's last keyframe at or before `target`, in the stream's time base; AV_NOPTS_VALUE when it has none. */
+FFPLAYKMP_EXPORT int64_t ffplaykmp_web_player_keyframe_before(ffplaykmp_player *player, int64_t target);
 FFPLAYKMP_EXPORT int ffplaykmp_web_player_set_webcodecs_output(
         ffplaykmp_player *player,
         uint32_t output_flags);

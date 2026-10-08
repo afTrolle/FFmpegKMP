@@ -57,6 +57,31 @@ kotlin {
         nativeMain {
             kotlin.srcDir("src/systemMain/kotlin")
         }
+        // The same split for the tests' host-file helpers.
+        jvmTest {
+            kotlin.srcDir("src/systemTest/kotlin")
+        }
+        getByName("androidHostTest") {
+            kotlin.srcDir("src/systemTest/kotlin")
+        }
+        getByName("androidDeviceTest") {
+            kotlin.srcDir("src/systemTest/kotlin")
+        }
+        // The integration tests run real commands, so the device-test APK links the Android runtime an app would.
+        getByName("androidDeviceTest").dependencies {
+            runtimeOnly(
+                files(
+                    selectedNativeProfile.map { profile ->
+                        rootProject.layout.projectDirectory.file(
+                            "bindings/build/generated/android-runtime/ffmpegkmp-runtime-$profile-local.aar",
+                        )
+                    },
+                ).builtBy(":bindings:assembleJavaCppAndroidRuntime"),
+            )
+        }
+        nativeTest {
+            kotlin.srcDir("src/systemTest/kotlin")
+        }
         webTest {
             resources.srcDir(stageCoreWasmTestRuntime)
         }

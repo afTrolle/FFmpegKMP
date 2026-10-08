@@ -7,6 +7,7 @@
 package io.github.aftrolle.ffmpegkmp.bindings
 
 import io.github.aftrolle.ffmpegkmp.bindings.cinterop.FFPLAYKMP_PLATFORM_FRAME_CV_PIXEL_BUFFER
+import io.github.aftrolle.ffmpegkmp.bindings.cinterop.ffmpegkmp_frame_ref
 import io.github.aftrolle.ffmpegkmp.bindings.cinterop.FFPLAYKMP_SOURCE_REQUIRE_SECURE_PATH
 import io.github.aftrolle.ffmpegkmp.bindings.cinterop.ffplaykmp_configuration
 import io.github.aftrolle.ffmpegkmp.bindings.cinterop.ffplaykmp_configuration_default
@@ -44,7 +45,6 @@ import kotlinx.cinterop.asStableRef
 import kotlinx.cinterop.memScoped
 import kotlinx.cinterop.pointed
 import kotlinx.cinterop.ptr
-import kotlinx.cinterop.readBytes
 import kotlinx.cinterop.staticCFunction
 
 @InternalFFmpegKmpApi
@@ -67,6 +67,7 @@ private class NativeCInteropPlayerBridge(
         val nativeConfiguration = alloc<ffplaykmp_configuration>()
         ffplaykmp_configuration_default(nativeConfiguration.ptr)
         nativeConfiguration.decoder_preference = configuration.decoderPreference.ordinal.toUInt()
+        nativeConfiguration.decoder_threads = configuration.decoderThreads
         ffplaykmp_player_create(
             nativeConfiguration.ptr,
             staticCFunction(::receiveNativePlayerState),
@@ -104,13 +105,9 @@ private class NativeCInteropPlayerBridge(
                 replayableSource = true,
             )
         }.toMap()
-        val mountedInput = source.mounts.indexOfFirst { it.path == source.input }
-            .takeIf { it >= 0 }
-            ?.let { protocolUrl(it.toLong() + 1L, source.input) }
-            ?: source.input
         return ffplaykmp_player_prepare(
             player,
-            mountedInput,
+            source.protocolInput(),
             if (source.requireSecurePath) FFPLAYKMP_SOURCE_REQUIRE_SECURE_PATH else 0u,
         ).also { result -> if (result < 0) callbackState.mounts = emptyMap() }
     }
@@ -227,19 +224,18 @@ private fun receiveNativeVideoFrame(
 ) {
     if (nativeFrame == null) return
     val value = nativeFrame.pointed
-    val data = value.rgba ?: return
-    val size = value.rgba_size
-    if (size == 0uL || size > Int.MAX_VALUE.toULong()) return
+    val borrowed = value.frame ?: return
     opaque.withCallbackState(Unit) { state ->
+        // The frame is borrowed for the callback; the receiver gets a reference of its own.
+        val retained = ffmpegkmp_frame_ref(borrowed).toNativeFrame() ?: return@withCallbackState
         state.frame(
-        NativeVideoFrame(
-            rgba = data.readBytes(size.toInt()),
-            width = value.width,
-            height = value.height,
-            stride = value.stride,
-            presentationTimeUs = value.presentation_time_us,
-            queueSerial = value.queue_serial,
-        ),
+            NativeVideoFrame(
+                frame = retained,
+                width = value.width,
+                height = value.height,
+                presentationTimeUs = value.presentation_time_us,
+                queueSerial = value.queue_serial,
+            ),
         )
     }
 }
@@ -263,7 +259,7 @@ private fun receiveNativePlayerIo(
     state.mounts[resourceId]?.dispatch(operation.toInt(), offset, data, size) ?: -1L
 }
 
-private fun ffplaykmp_snapshot.toNativeSnapshot(): NativePlayerSnapshot = nativePlayerSnapshot(
+internal fun ffplaykmp_snapshot.toNativeSnapshot(): NativePlayerSnapshot = nativePlayerSnapshot(
     state = state.toInt(),
     positionUs = position_us,
     durationUs = duration_us,

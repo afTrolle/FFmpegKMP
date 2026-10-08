@@ -38,7 +38,7 @@ abstract class AppleXcframeworkTask : DefaultTask() {
         val installs = targetDirectories.get().mapValues { File(it.value) }
         val required = listOf(
             "iosArm64", "iosSimulatorArm64", "macosArm64", "tvosArm64", "tvosSimulatorArm64",
-            "watchosArm32", "watchosArm64", "watchosDeviceArm64", "watchosSimulatorArm64",
+            "watchosArm64", "watchosDeviceArm64", "watchosSimulatorArm64",
         )
         required.forEach { target -> require(installs[target]?.isDirectory == true) { "Missing Apple install tree: $target" } }
 
@@ -54,7 +54,6 @@ abstract class AppleXcframeworkTask : DefaultTask() {
             execOperations.exec {
                 commandLine(
                     "xcrun", "lipo", "-create",
-                    installs.getValue("watchosArm32").resolve("lib/lib$library.a"),
                     installs.getValue("watchosArm64").resolve("lib/lib$library.a"),
                     installs.getValue("watchosDeviceArm64").resolve("lib/lib$library.a"),
                     "-output", watchFat,

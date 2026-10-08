@@ -29,6 +29,7 @@ include(
     ":native-build:jvm",
     ":native-build:wasm",
     ":library:core",
+    ":library:codec",
     ":library:ffmpeg",
     ":library:ffprobe",
     ":library:ffplay",

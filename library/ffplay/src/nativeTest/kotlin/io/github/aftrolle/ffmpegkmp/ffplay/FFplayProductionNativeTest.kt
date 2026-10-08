@@ -6,7 +6,7 @@
 
 package io.github.aftrolle.ffmpegkmp.ffplay
 
-import io.github.aftrolle.ffmpegkmp.bindings.NativeVideoFrame
+import io.github.aftrolle.ffmpegkmp.codec.VideoFrame
 import io.github.aftrolle.ffmpegkmp.core.CommandIo
 import kotlinx.cinterop.addressOf
 import kotlinx.cinterop.usePinned
@@ -57,7 +57,8 @@ private class NativeProductionOutput : FFplayVideoOutput {
 
     override fun submit(frame: FFplayFrame): Boolean = true
 
-    override fun submitNative(frame: NativeVideoFrame, video: FFplayVideoInfo?): Boolean {
+    override fun submitNative(frame: VideoFrame, video: FFplayVideoInfo?): Boolean {
+        frame.close()
         framesReceived++
         return true
     }
@@ -65,7 +66,7 @@ private class NativeProductionOutput : FFplayVideoOutput {
     override fun discard() = Unit
 }
 
-private fun bundledTestResource(name: String): ByteArray {
+internal fun bundledTestResource(name: String): ByteArray {
     val resourcePath = checkNotNull(NSBundle.mainBundle.resourcePath) {
         "The native test bundle has no resource path"
     }

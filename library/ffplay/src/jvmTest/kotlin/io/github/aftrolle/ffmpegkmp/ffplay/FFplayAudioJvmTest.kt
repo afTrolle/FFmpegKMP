@@ -13,6 +13,7 @@ import io.github.aftrolle.ffmpegkmp.bindings.NativePlayerSource
 import io.github.aftrolle.ffmpegkmp.bindings.NativePlayerState
 import io.github.aftrolle.ffmpegkmp.bindings.NativeVideoFrame
 import io.github.aftrolle.ffmpegkmp.bindings.createPlatformPlayerBridge
+import io.github.aftrolle.ffmpegkmp.codec.VideoFrame
 import io.github.aftrolle.ffmpegkmp.core.AudioLevel
 import io.github.aftrolle.ffmpegkmp.core.CommandIo
 import io.github.aftrolle.ffmpegkmp.core.toNativeMounts
@@ -48,7 +49,10 @@ class FFplayAudioJvmTest {
         createPlatformPlayerBridge(
             NativePlayerConfiguration(NativePlayerDecoderPreference.SOFTWARE),
             update = {},
-            frame = { frame: NativeVideoFrame -> presented += frame.presentationTimeUs },
+            frame = { frame: NativeVideoFrame ->
+                    presented += frame.presentationTimeUs
+                    frame.frame.close()
+                },
         ).use { bridge ->
             val io = CommandIo { input(FIXTURE, Buffer().write(bytes)) }
             assertEquals(0, bridge.setOutput(NativePlayerOutputCapabilities()))
@@ -127,7 +131,10 @@ class FFplayAudioJvmTest {
             createPlatformPlayerBridge(
                 NativePlayerConfiguration(NativePlayerDecoderPreference.SOFTWARE),
                 update = {},
-                frame = { frame: NativeVideoFrame -> presented += frame.presentationTimeUs },
+                frame = { frame: NativeVideoFrame ->
+                    presented += frame.presentationTimeUs
+                    frame.frame.close()
+                },
             ).use { bridge ->
                 val io = CommandIo { input(AV_FIXTURE, fileHandle) }
                 assertEquals(0, bridge.setOutput(NativePlayerOutputCapabilities()))
@@ -196,7 +203,8 @@ class FFplayAudioJvmTest {
 
         override fun submit(frame: FFplayFrame): Boolean = true
 
-        override fun submitNative(frame: NativeVideoFrame, video: FFplayVideoInfo?): Boolean {
+        override fun submitNative(frame: VideoFrame, video: FFplayVideoInfo?): Boolean {
+        frame.close()
             presentedFrames++
             return true
         }

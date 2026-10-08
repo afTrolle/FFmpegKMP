@@ -3,6 +3,7 @@
 
 package io.github.aftrolle.ffmpegkmp.bindings
 
+import io.github.aftrolle.ffmpegkmp.bindings.generated.bridge.ffmpegkmp_frame
 import io.github.aftrolle.ffmpegkmp.bindings.generated.bridge.ffplaykmp_configuration
 import io.github.aftrolle.ffmpegkmp.bindings.generated.bridge.ffplaykmp_io_callback
 import io.github.aftrolle.ffmpegkmp.bindings.generated.bridge.ffplaykmp_output_capabilities
@@ -60,17 +61,15 @@ private class JavaCppPlayerBridge(
         frameCallback = object : ffplaykmp_video_frame_callback() {
             override fun call(opaque: Pointer?, nativeFrame: ffplaykmp_video_frame?) {
                 if (nativeFrame == null || !guard.isOpen) return
-                val size = nativeFrame.rgba_size()
-                val data = nativeFrame.rgba()
-                if (data == null || size <= 0 || size > Int.MAX_VALUE) return
-                val rgba = ByteArray(size.toInt())
-                data.get(rgba)
+                // The frame is borrowed for the callback; the receiver gets a reference of its own.
+                val retained = nativeFrame.frame()?.takeUnless(ffmpegkmp_frame::isNull)
+                    ?.let(bridge::ffmpegkmp_frame_ref)
+                    .toNativeFrame() ?: return
                 frame(
                     NativeVideoFrame(
-                        rgba = rgba,
+                        frame = retained,
                         width = nativeFrame.width(),
                         height = nativeFrame.height(),
-                        stride = nativeFrame.stride(),
                         presentationTimeUs = nativeFrame.presentation_time_us(),
                         queueSerial = nativeFrame.queue_serial().toUInt(),
                     ),
@@ -113,6 +112,7 @@ private class JavaCppPlayerBridge(
         val nativeConfiguration = ffplaykmp_configuration()
         bridge.ffplaykmp_configuration_default(nativeConfiguration)
         nativeConfiguration.decoder_preference(configuration.decoderPreference.ordinal)
+        nativeConfiguration.decoder_threads(configuration.decoderThreads)
         player = bridge.ffplaykmp_player_create(nativeConfiguration, stateCallback, null)
             ?: run {
                 nativeConfiguration.close()
@@ -140,13 +140,9 @@ private class JavaCppPlayerBridge(
                 replayableSource = true,
             )
         }.toMap()
-        val mountedInput = source.mounts.indexOfFirst { it.path == source.input }
-            .takeIf { it >= 0 }
-            ?.let { protocolUrl(it.toLong() + 1L, source.input) }
-            ?: source.input
         return bridge.ffplaykmp_player_prepare(
             player,
-            mountedInput,
+            source.protocolInput(),
             if (source.requireSecurePath) bridge.FFPLAYKMP_SOURCE_REQUIRE_SECURE_PATH else 0,
         ).also { result -> if (result < 0) mounts = emptyMap() }
     }
@@ -225,7 +221,7 @@ private class JavaCppPlayerBridge(
     private fun closedError(): Nothing = throw IllegalStateException("The native player bridge is closed")
 }
 
-private fun ffplaykmp_snapshot.toNativeSnapshot(): NativePlayerSnapshot = nativePlayerSnapshot(
+internal fun ffplaykmp_snapshot.toNativeSnapshot(): NativePlayerSnapshot = nativePlayerSnapshot(
     state = state(),
     positionUs = position_us(),
     durationUs = duration_us(),

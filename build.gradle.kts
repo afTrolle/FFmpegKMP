@@ -16,6 +16,7 @@ val verifyMavenPublicationScope = tasks.register<PublicationScopeVerificationTas
         setOf(
             ":bindings",
             ":library:core",
+            ":library:codec",
             ":library:ffmpeg",
             ":library:ffprobe",
             ":library:ffplay",

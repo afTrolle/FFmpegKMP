@@ -544,7 +544,6 @@ object NativeBuildRegistration {
         AppleTargetSpec("macosArm64", "aarch64", "macosx", extension.apple.macosDeploymentTarget.map { "arm64-apple-macos$it" }, extension.apple.macosDeploymentTarget),
         AppleTargetSpec("tvosArm64", "aarch64", "appletvos", extension.apple.tvosDeploymentTarget.map { "arm64-apple-tvos$it" }, extension.apple.tvosDeploymentTarget),
         AppleTargetSpec("tvosSimulatorArm64", "aarch64", "appletvsimulator", extension.apple.tvosDeploymentTarget.map { "arm64-apple-tvos$it-simulator" }, extension.apple.tvosDeploymentTarget),
-        AppleTargetSpec("watchosArm32", "arm", "watchos", extension.apple.watchosDeploymentTarget.map { "armv7k-apple-watchos$it" }, extension.apple.watchosDeploymentTarget),
         AppleTargetSpec("watchosArm64", "aarch64", "watchos", extension.apple.watchosDeploymentTarget.map { "arm64_32-apple-watchos$it" }, extension.apple.watchosDeploymentTarget),
         AppleTargetSpec("watchosDeviceArm64", "aarch64", "watchos", extension.apple.watchosDeploymentTarget.map { "arm64-apple-watchos$it" }, extension.apple.watchosDeploymentTarget),
         AppleTargetSpec("watchosSimulatorArm64", "aarch64", "watchsimulator", extension.apple.watchosDeploymentTarget.map { "arm64-apple-watchos$it-simulator" }, extension.apple.watchosDeploymentTarget),

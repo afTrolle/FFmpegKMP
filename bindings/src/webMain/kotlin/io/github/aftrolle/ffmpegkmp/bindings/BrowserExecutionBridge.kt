@@ -5,7 +5,6 @@
 
 package io.github.aftrolle.ffmpegkmp.bindings
 
-import kotlin.coroutines.resume
 import kotlinx.coroutines.CancellableContinuation
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.serialization.json.JsonArray
@@ -38,10 +37,12 @@ internal expect fun startBrowserWorker(
 
 internal fun createBrowserExecutionBridge(): NativeExecutionBridge = BrowserWorkerExecutionBridge()
 
+/**
+ * Runs each execution in a Worker of its own, so several can run at once; they are tracked by
+ * execution id.
+ */
 private class BrowserWorkerExecutionBridge : NativeExecutionBridge {
-    private var activeId: Long? = null
-    private var activeWorker: BrowserWorker? = null
-    private var activeContinuation: CancellableContinuation<NativeExecutionResult>? = null
+    private val active = mutableMapOf<Long, ActiveExecution>()
     private var closed = false
 
     override suspend fun execute(
@@ -49,81 +50,80 @@ private class BrowserWorkerExecutionBridge : NativeExecutionBridge {
         emit: (NativeExecutionEvent) -> Unit,
     ): NativeExecutionResult = suspendCancellableCoroutine { continuation ->
         check(!closed) { "The browser execution bridge is closed" }
-        check(activeWorker == null) { "The browser execution bridge is already executing" }
+        check(request.id !in active) { "Execution ${request.id} is already running" }
 
-        activeId = request.id
-        activeContinuation = continuation
-        val worker = startBrowserWorker(
-            requestJson = request.toWorkerJson().toString(),
-            mountBytes = request.readMountBytes(),
-            listener = object : BrowserWorkerListener {
-                override fun onEvent(kind: Int, level: Int, text: String) {
-                    if (activeId != request.id) return
-                    emit(kind.toNativeEvent(level, text))
-                }
-
-                override fun onComplete(returnCode: Int, outputs: List<BrowserWorkerOutput>) {
-                    if (activeId != request.id) return
-                    try {
-                        outputs.writeTo(request.mounts)
-                        completeActive(request.id, NativeExecutionResult(returnCode))
-                    } catch (failure: Throwable) {
-                        failActive(
-                            request.id,
-                            NativeBridgeUnavailableException(
-                                "Invalid response from the FFmpegKMP Web Worker: ${failure.message}",
-                            ),
-                        )
-                    }
-                }
-
-                override fun onFailure(message: String) {
-                    if (activeId != request.id) return
-                    failActive(
-                        request.id,
-                        NativeBridgeUnavailableException(
-                            message.ifEmpty { "The FFmpegKMP Web Worker failed" },
-                        ),
-                    )
-                }
-            },
-        )
-        activeWorker = worker
+        val execution = ActiveExecution(continuation)
+        active[request.id] = execution
+        execution.worker = try {
+            startBrowserWorker(
+                requestJson = request.toWorkerJson().toString(),
+                mountBytes = request.readMountBytes(),
+                listener = listener(request, execution, emit),
+            )
+        } catch (failure: Throwable) {
+            active.remove(request.id)
+            throw failure
+        }
         continuation.invokeOnCancellation {
-            if (activeId == request.id) {
-                worker.terminate()
-                takeActive()
-            }
+            if (active[request.id] === execution) active.remove(request.id)?.worker?.terminate()
+        }
+    }
+
+    private fun cancelActive(executionId: Long) {
+        active.remove(executionId)?.let { execution ->
+            execution.worker?.terminate()
+            execution.resume(Result.success(NativeExecutionResult(returnCode = CANCELLED_RETURN_CODE)))
         }
     }
 
     override fun close() {
         if (closed) return
         closed = true
-        activeWorker?.terminate()
-        activeId?.let { executionId ->
-            completeActive(executionId, NativeExecutionResult(returnCode = CANCELLED_RETURN_CODE))
+        active.keys.toList().forEach(::cancelActive)
+    }
+
+    /** Ignores whatever [execution]'s worker sends after it was cancelled or completed. */
+    private fun listener(
+        request: NativeExecutionRequest,
+        execution: ActiveExecution,
+        emit: (NativeExecutionEvent) -> Unit,
+    ) = object : BrowserWorkerListener {
+        override fun onEvent(kind: Int, level: Int, text: String) {
+            if (active[request.id] !== execution) return
+            emit(kind.toNativeEvent(level, text))
+        }
+
+        override fun onComplete(returnCode: Int, outputs: List<BrowserWorkerOutput>) {
+            if (active[request.id] !== execution) return
+            val result = runCatching {
+                outputs.writeTo(request.mounts)
+                NativeExecutionResult(returnCode)
+            }.recoverCatching { failure ->
+                throw NativeBridgeUnavailableException(
+                    "Invalid response from the FFmpegKMP Web Worker: ${failure.message}",
+                )
+            }
+            active.remove(request.id)
+            execution.resume(result)
+        }
+
+        override fun onFailure(message: String) {
+            if (active[request.id] !== execution) return
+            active.remove(request.id)
+            execution.resume(
+                Result.failure(
+                    NativeBridgeUnavailableException(message.ifEmpty { "The FFmpegKMP Web Worker failed" }),
+                ),
+            )
         }
     }
+}
 
-    private fun completeActive(executionId: Long, result: NativeExecutionResult) {
-        if (activeId != executionId) return
-        val continuation = takeActive()
-        if (continuation?.isActive == true) continuation.resume(result)
-    }
+private class ActiveExecution(private val continuation: CancellableContinuation<NativeExecutionResult>) {
+    var worker: BrowserWorker? = null
 
-    private fun failActive(executionId: Long, failure: Throwable) {
-        if (activeId != executionId) return
-        val continuation = takeActive()
-        if (continuation?.isActive == true) continuation.resumeWith(Result.failure(failure))
-    }
-
-    private fun takeActive(): CancellableContinuation<NativeExecutionResult>? {
-        val continuation = activeContinuation
-        activeContinuation = null
-        activeId = null
-        activeWorker = null
-        return continuation
+    fun resume(result: Result<NativeExecutionResult>) {
+        if (continuation.isActive) continuation.resumeWith(result)
     }
 }
 

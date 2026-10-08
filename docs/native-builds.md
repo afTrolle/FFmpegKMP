@@ -160,7 +160,10 @@ FFmpeg licence texts, and the redistribution disclaimer.
 Apple builds require macOS with Xcode. SDK paths and compiler tools are resolved
 through `xcrun`. Deployment defaults are iOS/tvOS 15, macOS 11, and watchOS 8.
 The configured Kotlin/Native device and simulator targets receive static
-libraries under `native-build/apple/out/<profile>/<kotlin-target>/`.
+libraries under `native-build/apple/out/<profile>/<kotlin-target>/`. On watchOS
+these are `watchosArm64` (arm64_32), `watchosDeviceArm64` and
+`watchosSimulatorArm64`; 32-bit `watchosArm32` (armv7k) is not built, because
+Xcode no longer links it.
 
 `standard` and `full` enable VideoToolbox and AudioToolbox decode and encode on
 iOS, macOS, and tvOS. Those integrations are disabled on watchOS. The assembled
@@ -206,7 +209,9 @@ disclaimer, and `build-manifest.json`. `linkFfmpegKmpWorker` links these archive
 and the bridge into ignored local `ffmpegkmp.mjs` and `.wasm` outputs. The
 committed worker facade keeps execution off the browser UI thread.
 
-Activate Emscripten in the shell before running the task:
+Activate Emscripten in the shell before running the task. Current Emscripten
+releases need Python 3.10 or newer; where the first `python3` on the `PATH` is
+older (Xcode's is 3.9), put a newer one first or point `EMSDK_PYTHON` at it:
 
 ```shell
 source /path/to/emsdk/emsdk_env.sh

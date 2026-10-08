@@ -31,6 +31,27 @@ color space; otherwise PQ and HLG are tone mapped to BT.709 (`TONE_MAPPED`) and 
 are `UNSUPPORTED`. `FFplayHdrPolicy.FORCE_SDR` keeps HDR sources off the direct surfaces and tone maps
 them in software.
 
+## Types from `codec`
+
+The source, decoder and stream types come from the Compose-free [`codec`](../codec/README.md)
+module, which `ffplay` exposes as an API dependency. FFplay keeps its own names for them as
+typealiases:
+
+| FFplay name | `codec` type |
+| --- | --- |
+| `FFplaySource` | `MediaSource` |
+| `FFplayContentProtection` | `ContentProtection` |
+| `FFplayDecoderPreference` | `DecoderPreference` |
+| `FFplayDecoderKind` | `DecoderKind` |
+| `FFplayVideoInfo` | `VideoInfo` |
+| `FFplayHdrType` | `HdrType` |
+| `FFplayMasteringDisplayMetadata` | `MasteringDisplayMetadata` |
+| `FFplayContentLightMetadata` | `ContentLightMetadata` |
+
+Source code written against 0.2 compiles unchanged, but the classes now live in
+`io.github.aftrolle.ffmpegkmp.codec`, so binaries built against 0.2 need recompiling.
+`DecoderThreads` is only in `codec` (`io.github.aftrolle.ffmpegkmp.codec.DecoderThreads`).
+
 ## Platforms
 
 | Target | Output | Hardware decode |
@@ -106,6 +127,185 @@ immediately, while track changes are heard after the quarter second decoded ahea
 start audio after a user gesture: until then video plays on its own, the player emits one
 `FFplayEvent.Warning`, and the audio rejoins at the current position on the first gesture.
 
+## Frames as images
+
+`VideoFrame.toImageBitmap()` turns a [`codec`](../codec/README.md) frame, from `VideoDecoder` for
+example, into a Compose `ImageBitmap`, converting it once, straight into the bitmap's own memory:
+
+```kotlin
+VideoDecoder.open(MediaSource("clip.mp4")).use { decoder ->
+    val image = decoder.frameAt(position).use { it.toImageBitmap() }
+}
+```
+
+- An RGB frame keeps its format where a bitmap holds it: a `FrameFormat.RgbaF16` frame becomes a
+  half-float bitmap in linear extended sRGB, so HDR highlights stay above 1.0. YUV frames become
+  RGBA8 in sRGB, with PQ and HLG tone mapped to SDR, as `FrameFormat.Rgba8` does.
+- On Skiko (JVM, Apple and the web) one implementation, `src/skikoMain`, allocates a Skia `Bitmap`,
+  converts into its pixels (`peekPixels().addr`), marks it immutable and wraps it with
+  `asComposeImageBitmap()`. RGBA8, BGRA8, RGBA_1010102 and RGBA_F16 frames in sRGB, Display P3 or
+  (half floats) linear extended sRGB keep their layout. The browser's frames are RGBA8 bytes in
+  the page, which `installPixels` copies into Skia's heap once.
+- On Android it converts into an `ARGB_8888` `Bitmap`, or `RGBA_F16` in linear extended sRGB for
+  half-float frames (Android 8.0, API 26), through `AndroidBitmap_lockPixels`.
+
+A frame as decoded is then in two buffers, the decoder's and the bitmap's, with no copy in
+between. `toImageBitmap` leaves the frame open.
+
+The Compose Canvas fallback draws the player's frames the same way: the player hands over each
+frame as decoded (hardware frames downloaded), and the canvas output converts it with
+`toImageBitmap` on the player's thread. The browser's worker converts its frames into RGBA8 bytes
+before they cross to the page.
+
+`FFplayConfiguration(threads = …)` sets the software decoder's threads, as `VideoDecoder.open`
+does (see [`codec`](../codec/README.md#decoder-threads)). The player decodes with FFmpeg's frame and
+slice threads, as `ffplay` does, since it shows one video in real time. A `VideoDecoder` uses slice
+threads only, keeping one frame in progress: HEVC with wavefront rows keeps most of its speed there,
+single-slice H.264 decodes as if on one thread, and hardware decoders and libaom are unaffected.
+
+### Two bitmaps per source
+
+`toImageBitmap` allocates a bitmap for every frame, which only the garbage collector frees: four
+4K sources leave about 130 MB behind them each tick in SDR, and 265 MB in HDR. A `FrameImage`
+keeps one source's frames in two bitmaps instead, and draws them upright:
+
+```kotlin
+val image = remember { FrameImage() }
+DisposableEffect(image) { onDispose { image.close() } }
+LaunchedEffect(decoder) {
+    // Off the UI thread: update writes the bitmap that is not on screen.
+    withContext(Dispatchers.Default) {
+        decoder.frames(step = FrameStep.Rate(FrameRate(30))).collect { frame -> frame.use(image::update) }
+    }
+}
+Canvas(Modifier.fillMaxSize()) { drawFrameImage(image) }
+```
+
+- `update(frame)` converts the frame only when its pts differs from the last one converted, into
+  the bitmap that is not on screen, then shows that one. It allocates bitmaps for the first two
+  frames of each size and format only. It takes the formats `toImageBitmap` does, and leaves the
+  frame open.
+- Each `update` changes snapshot state, written once the bitmap is complete, so whatever draws or
+  measures the image is invalidated and draws a whole frame, in ordinary UI and inside a
+  `ComposeFrameRenderer` alike.
+- The bitmap on screen is never written, so `update` can run off the drawing thread: a preview
+  collects on `Dispatchers.Default` and the UI thread never converts, and an export calls `update`
+  then `render`. Updates run one at a time. A drawing still under way two updates later would see
+  its bitmap written, which one update per drawn frame never does. `close()` frees both bitmaps.
+- `DrawScope.drawFrameImage(image, topLeft, size)` turns the frame upright by its rotation and
+  stretches it to fill the rectangle, on the GPU where Compose draws on one. `displaySize` is the
+  frame's size after its sample aspect ratio and its rotation; give the rectangle that aspect to
+  show the picture undistorted. Frames themselves stay as coded.
+- FFmpeg reports rotation anticlockwise, as `av_display_rotation_get` does, so a frame with
+  `rotationDegrees = 90.0` is drawn turned a quarter anticlockwise, as FFmpeg's own tools show
+  it. The player's surfaces turn their frames the same way.
+- On Skiko the bitmaps stay mutable, and each write gives one a new generation: Skia draws a
+  mutable bitmap from a copy of its pixels, and caches what it uploads by generation. That copy
+  is small beside the drawing: on an M4 Pro a warm 4K render takes 8.3 ms drawing a `FrameImage`
+  and 8.1 ms drawing a `toImageBitmap` bitmap in RGBA8, 11.1 and 10.3 ms in RGBA F16. In the
+  browser each write replaces the bitmap's pixels in Skia's heap rather than writing over them,
+  as `toImageBitmap` does.
+- On Android `AndroidBitmap_unlockPixels` gives a bitmap a new generation after each write,
+  which is what the renderer uploads it by.
+- On Android 14 (API 34) and later, frames from `VideoOutput.GpuBuffers` lie in GPU memory, and
+  `update` shows them with no copy and no bitmap of its own: it wraps each of the decoder's
+  `HardwareBuffer`s once, with `Bitmap.wrapHardwareBuffer`, and draws the frame's crop of it, SDR as
+  sRGB. A wrap shows its buffer only while the buffer's frame is open, so the image keeps the
+  frames of its last two updates, the one on screen and the one a drawing may still use, and
+  closes each two updates later. That is two of the decoder's ring of three; the third is the
+  frame `frames()` decodes ahead, so the loop above never waits on itself. Such frames draw only
+  on a GPU canvas, a window's or `ComposeFrameRenderer`'s GPU path, and drawing one on a software
+  canvas, such as the renderer's software path, fails with the reason.
+
+## Rendering Compose into frames
+
+`ComposeFrameRenderer` composes content and draws it straight into frames FFmpeg owns, for an
+export: overlays, titles, or a whole scene. Each `render(time, value)` composes the content with
+`value`, drives the frame clock from `time`, so `withFrameNanos` and animations land exactly on each
+frame, and returns a new pooled `VideoFrame` that the caller owns:
+
+```kotlin
+MediaWriter.open(MediaOutput.File("export.mp4")).use { writer ->
+    VideoDecoder.open(source, VideoOutput.Memory(DynamicRange.HDR10.canvasFormat)).use { decoder ->
+        val config = VideoEncoderConfig(
+            3840, 2160, FrameRate(30), VideoCodec.HEVC, DynamicRange.HDR10,
+            // Rendered frames carry no HDR10 metadata: take the source's.
+            hdrMetadata = decoder.info.hdrMetadata,
+        )
+        val track = writer.addVideoTrack(config)
+        FrameImage().use { background ->
+            ComposeFrameRenderer<FrameImage>(track) { image ->
+                Canvas(Modifier.fillMaxSize()) { drawFrameImage(image) }
+                Titles()
+            }.use { renderer ->
+                // One frame ahead: the next frame decodes and converts while this one renders and encodes.
+                decoder.frames(step = FrameStep.Rate(FrameRate(30))).collect { frame ->
+                    frame.use(background::update)
+                    track.write(renderer.render(frame.pts, background))
+                }
+            }
+        }
+    }
+    writer.finish()
+}
+```
+
+- The canvas is an RGB layout, since Skia draws RGB: `RGBA8` or `BGRA8` in sRGB or Display P3,
+  `RGBA_1010102` for 10-bit SDR, and `RGBA_F16` in linear extended sRGB for HDR. The
+  `ComposeFrameRenderer(track)` constructor takes the track's `canvasFormat`, which its dynamic range
+  and bit depth decide, and `track.write` converts the canvas into the encoder's format once, on the
+  track's thread. Android draws 10-bit bitmaps from Android 13 (API 33); before it, a 10-bit SDR
+  track's renderer draws into `Rgba8`, which the track converts to 10 bits.
+- On HDR canvases, the shapes and text Compose draws sit at SDR white, 1.0, which is 203 nits
+  once encoded, BT.2408's graphics white, because Compose sets paint colours as 8-bit sRGB. Drawn
+  images keep their highlights, such as a decoded HDR frame drawn through a `FrameImage` from an
+  F16 frame.
+- A rendered frame carries no HDR10 metadata, so an HDR10 export has none unless
+  `VideoEncoderConfig.hdrMetadata` gives it, and nothing fills it for you. For several sources,
+  `HdrMetadata.combine(main, others)` takes the main source's mastering display and the highest
+  MaxCLL and MaxFALL of all the sources' `VideoInfo.hdrMetadata`. MaxFALL is then an upper bound,
+  not the composite's own frame average.
+- Each source costs its decoder's frames, the ring of three it converts into, and the
+  `FrameImage`'s two bitmaps: at 4K in `RgbaF16` about 200 MB for the ring and 133 MB for the
+  bitmaps. `VideoOutput.Memory()` has no ring to convert into, but `FrameImage` then converts the
+  YUV frames into `Rgba8` bitmaps, tone mapping HDR, so an HDR export decodes into
+  `Memory(track.canvasFormat)` as above, and an SDR one may take either.
+  On Android 14 and later an 8-bit source through `VideoOutput.GpuBuffers` costs neither:
+  `FrameImage` draws MediaCodec's buffers as they are. `CompositeExportBudgetDeviceTest` measures four 4K sources all three ways on
+  a phone.
+- A source drawn smaller than the export, such as a 4K clip in a 960x540 tile, can decode at that
+  size: `VideoOutput.Memory(format, FrameSize(960, 540))` scales each frame as it converts, so the
+  tone map and the `FrameImage` bitmap work at the tile's size. The frames report the sample aspect
+  ratio of the new size, which `drawFrameImage` applies as before.
+- What the content leaves uncovered is transparent black, and pixels are premultiplied, so
+  transparency comes out as if drawn over black.
+- Each renderer composes on a thread of its own, one frame at a time, so several renderers can run
+  at once. A 4K frame with a translucent shape and a title renders in about 2 ms on the JVM.
+- It uses Compose's own scene API (`FrameRecomposer` and `CanvasLayersComposeScene`, Compose 1.12),
+  as `ImageComposeScene` does inside, pointed at the frame. Where the Compose an app resolves lacks
+  that API, it falls back to `ImageComposeScene`, which renders into a surface of its own and replays
+  the content into the frame, at the cost of that 8-bit surface; it logs the fallback once. A test
+  renders the same content through both and compares the pixels.
+- It runs on the JVM, macOS and iOS. In the browser Skia has a heap of its own, so the drawn frame
+  takes three copies to reach the RGBA8 frame: Skia reads its surface into a bitmap, the bitmap
+  into a Kotlin array, and the array's rows into the frame. A `VideoTrack` then copies the frame
+  into the buffer it hands its worker, twice on Kotlin/Wasm, and WebCodecs copies that buffer into
+  the `VideoFrame` it encodes.
+- On Android the constructors take a `Context`. A composition needs a window there, so the
+  renderer hosts the content in a `Presentation` on a private `VirtualDisplay`, which needs no
+  permission, and hides the window, since only the renderer draws it. The composition has a
+  `Recomposer` and frame clock of the renderer's own, as on Skiko: each `render` composes at `time`,
+  runs the frame's animations and effects, then measures, lays out and draws the view itself, so
+  `withFrameNanos`, `animate*AsState` and infinite transitions follow `time`, and the system's
+  animation scale does not apply. Only the first `render` waits for the display, until the window
+  has attached the view, and fails with the reason if that takes 5 seconds. It draws on Android 14 (API 34) and later on the GPU, recording the view
+  into a `RenderNode` that `HardwareBufferRenderer` draws into a `HardwareBuffer`, and earlier, or
+  where that fails, onto a software canvas over a bitmap. One conversion copies the pixels into the
+  pooled frame. The canvas is `Rgba8`, or `RgbaF16` from API 26. On a Galaxy S25 Ultra, whose
+  display runs at 120 Hz, a small scene renders about 260 times a second on the GPU and 790 in
+  software, and a 4K scene 70 and 22, where the copy out of the GPU's buffer takes most of a GPU
+  frame's 14 ms.
+
 ## Deferred picture-in-picture
 
 Android PiP can wrap the existing external surface with a media session and PiP action adapter.
@@ -122,3 +322,25 @@ tests on every supported target with:
 ```shell
 ./gradlew :library:ffplay:commonTestAllTargets
 ```
+
+`toImageBitmap` runs against the real bridge and the decoder's golden references on the JVM and
+Kotlin/Native (`src/systemTest`, e.g. `./gradlew :library:ffplay:jvmTest
+:library:ffplay:macosArm64Test`), over the clips in codec's `src/commonTest/resources/video-decoder`.
+`ComposeFrameRendererTest` renders into every canvas format through both routes, drives the frame
+clock and encodes an HDR canvas, on the same targets. `FrameImageTest` checks that 100 updates over
+ten pts convert ten times into the same two bitmaps in turn, that an update off the drawing thread
+while a renderer draws gives the old frame or the new one, never a mix, and that two renderers
+drawing two `FrameImage`s updated from two coroutines each match their own source; it draws a
+rotated clip and synthesised anamorphic frames upright at their display aspect, and checks that a
+renderer drawing a `FrameImage` matches one drawing `toImageBitmap`. `FrameImageDeviceTest` does
+the same on both Android paths, the GPU and the software canvas, and draws `GpuBuffers` frames
+against the same frames from memory; `ComposeFrameRendererDeviceTest` checks the
+Android formats, the GPU and software paths against each other, and a MediaCodec encode.
+`src/jvmTest` checks that a 4K frame reaches its bitmap without a bridge allocation, and that 300
+frames of 1080p through `frames()`, `update`, `render` and `close` keep the native frame counts flat
+after the first 10 and the heap within 16 MB, and the
+Android conversion through `AndroidBitmap_lockPixels` is a device test
+(`./gradlew :library:ffplay:connectedAndroidDeviceTest`). `CompositeExportBudgetDeviceTest` measures a
+four-source 4K export on a phone, timing each frame's GPU draw apart from the copy out of its
+`HardwareBuffer`, and runs only with the `compositeBudget=true` instrumentation argument, after
+`scripts/generate-budget-clip.sh` has made its clips.

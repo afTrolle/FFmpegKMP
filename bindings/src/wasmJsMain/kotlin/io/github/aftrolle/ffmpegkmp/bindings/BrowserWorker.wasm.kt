@@ -11,6 +11,7 @@ import kotlin.js.JsAny
 import kotlin.js.JsArray
 import org.khronos.webgl.Int8Array
 import org.khronos.webgl.toByteArray
+import org.khronos.webgl.toFloat32Array
 import org.khronos.webgl.toInt8Array
 
 @InternalFFmpegKmpApi
@@ -26,7 +27,7 @@ public actual fun createPlatformPlayerBridge(
 ): NativePlayerBridge = createBrowserPlayerBridge(configuration, update, frame, platformFrame)
 
 internal actual fun startBrowserPlayerWorker(
-    decoderPreference: Int,
+    configuration: NativePlayerConfiguration,
     listener: BrowserPlayerWorkerListener,
 ): BrowserPlayerWorker {
     val onSnapshot: (String) -> Unit = listener::onSnapshot
@@ -53,7 +54,15 @@ internal actual fun startBrowserPlayerWorker(
         ).also { accepted -> if (!accepted) releasePlayerVideoFrame(frameId) }
     }
     return WasmBrowserPlayerWorker(
-        startPlayerWorker(decoderPreference, onSnapshot, onFrame, onPlatformFrame, onFailure, onAudio),
+        startPlayerWorker(
+            configuration.decoderPreference.ordinal,
+            configuration.decoderThreads,
+            onSnapshot,
+            onFrame,
+            onPlatformFrame,
+            onFailure,
+            onAudio,
+        ),
     )
 }
 
@@ -84,6 +93,7 @@ private fun postPlayerMessage(controller: JsAny, message: JsAny, transfers: JsAn
 
 private fun startPlayerWorker(
     decoderPreference: Int,
+    decoderThreads: Int,
     onSnapshot: (String) -> Unit,
     onFrame: (JsAny) -> Unit,
     onPlatformFrame: (JsAny) -> Boolean,
@@ -131,7 +141,7 @@ private fun startPlayerWorker(
       worker.onerror = event => {
         onFailure(event.message || `Could not load the FFmpegKMP player worker at ${'$'}{workerUrl}`);
       };
-      controller.post({ type: 'player-init', decoderPreference });
+      controller.post({ type: 'player-init', decoderPreference, decoderThreads });
       return controller;
     })()
     """,
@@ -299,3 +309,21 @@ private const val WORKER_BOOTSTRAP: String = """
       return worker;
     }
 """
+
+internal actual fun copyToJsUint8Array(bytes: ByteArray): JsAny = bytes.toJsUint8Array()
+
+internal actual fun copyToJsUint8Array(bytes: ByteArray, offset: Int, size: Int): JsAny =
+    unsignedView(bytes.copyOfRange(offset, offset + size).toInt8Array())
+
+internal actual fun copyToJsFloat32Array(samples: FloatArray, offset: Int, size: Int): JsAny =
+    samples.copyOfRange(offset, offset + size).toFloat32Array()
+
+internal actual fun jsBufferToByteArray(buffer: JsAny): ByteArray = int8View(buffer).toByteArray()
+
+// toInt8Array's array has a buffer of its own, which a worker can take over without another copy.
+private fun unsignedView(bytes: Int8Array): JsAny = js(
+    "bytes.byteOffset === 0 && bytes.buffer.byteLength === bytes.length " +
+        "? new Uint8Array(bytes.buffer) : new Uint8Array(bytes.buffer, bytes.byteOffset, bytes.length).slice()",
+)
+
+private fun int8View(buffer: JsAny): Int8Array = js("new Int8Array(buffer)")

@@ -6,6 +6,9 @@
 
 package io.github.aftrolle.ffmpegkmp.ffplay
 
+import io.github.aftrolle.ffmpegkmp.bindings.NativeFrame
+import io.github.aftrolle.ffmpegkmp.bindings.NativeFrameFormat
+import io.github.aftrolle.ffmpegkmp.bindings.NativeFramePlane
 import io.github.aftrolle.ffmpegkmp.bindings.NativePlayerBridge
 import io.github.aftrolle.ffmpegkmp.bindings.NativePlayerConfiguration
 import io.github.aftrolle.ffmpegkmp.bindings.NativePlayerOutputCapabilities
@@ -16,6 +19,7 @@ import io.github.aftrolle.ffmpegkmp.bindings.NativePlatformVideoFrameKind
 import io.github.aftrolle.ffmpegkmp.bindings.NativeVideoFrame
 import io.github.aftrolle.ffmpegkmp.bindings.NativePlayerError
 import io.github.aftrolle.ffmpegkmp.bindings.createInMemoryPlayerBridge
+import io.github.aftrolle.ffmpegkmp.codec.VideoFrame
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNull
@@ -282,18 +286,7 @@ private class ControllablePlayerBridge(
     var nextOutputFailure: Int? = null
 
     fun emitFrame(serial: UInt) {
-        frame(
-            NativeVideoFrame(
-                rgba = ByteArray(16).also { bytes ->
-                    for (alphaIndex in 3 until bytes.size step 4) bytes[alphaIndex] = -1
-                },
-                width = 2,
-                height = 2,
-                stride = 8,
-                presentationTimeUs = 0,
-                queueSerial = serial,
-            ),
-        )
+        frame(NativeVideoFrame(frame = PixelFreeFrame(), width = 2, height = 2, presentationTimeUs = 0, queueSerial = serial))
     }
 
     fun emitPlatformFrame(serial: UInt): Boolean = platformFrame(
@@ -355,7 +348,8 @@ private class CountingOutput(
         return acceptFrames
     }
 
-    override fun submitNative(frame: NativeVideoFrame, video: FFplayVideoInfo?): Boolean {
+    override fun submitNative(frame: VideoFrame, video: FFplayVideoInfo?): Boolean {
+        frame.close()
         submitCount++
         return acceptFrames
     }
@@ -366,4 +360,23 @@ private class CountingOutput(
     }
 
     override fun discard() = Unit
+}
+
+/** A 2x2 RGBA8 frame whose pixels the boundary tests never read. */
+private class PixelFreeFrame : NativeFrame {
+    override val width = 2
+    override val height = 2
+    override val format = NativeFrameFormat(layout = 0, primaries = 0, transfer = 0, matrix = 0, range = 1)
+    override val mappable = false
+    override val pixelBuffer: Any? = null
+
+    override fun retain(): NativeFrame = PixelFreeFrame()
+
+    override fun <R> usePlanes(block: (List<NativeFramePlane>) -> R): R = error("No pixels")
+
+    override fun convert(format: NativeFrameFormat): NativeFrame = error("No pixels")
+
+    override fun convertInto(target: NativeFrame) = error("No pixels")
+
+    override fun close() = Unit
 }

@@ -30,3 +30,7 @@ extensions.configure<KotlinMultiplatformExtension> {
 tasks.withType<Jar>().matching { it.name == "jsJar" }.configureEach {
     exclude("skiko.mjs", "skiko.wasm", "skikod8.mjs", "js-reexport-symbols.mjs")
 }
+
+// Under the KMP Android library plugin, Compose's asset copy for device tests is never given an output directory, which
+// fails the device-test APK. These libraries ship no Compose resources, so there is nothing for it to copy.
+tasks.matching { it.name == "copyAndroidDeviceTestComposeResourcesToAndroidAssets" }.configureEach { enabled = false }

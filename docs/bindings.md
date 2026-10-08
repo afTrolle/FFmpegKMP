@@ -85,6 +85,15 @@ frame side data present on the encoder's `AVCodecContext` to Android's
 MaxCLL/MaxFALL metadata from an HDR source survives re-encoding instead of
 being silently dropped.
 
+The same preparation gives FFmpeg's MediaCodec decoders an opt-in
+`ffmpegkmp_wait_timeout` option (microseconds, 0 by default). Upstream,
+`receive_frame` spins on a zero-timeout `dequeueInputBuffer` for as long as a
+codec holds every input buffer without outputting a frame; with the option set it
+waits on the input queue instead and, once the timeout passes, returns `EAGAIN`
+from both `avcodec_send_packet` and `avcodec_receive_frame`. `VideoDecoder` sets
+it so its decode loop can keep checking its deadline. Callers that do not set it,
+including fftools commands, keep the upstream behaviour.
+
 The Android HDR10 profile is selected from `avctx->profile`, not inferred from
 pixel format or color metadata, so a caller must set it explicitly. A minimal
 HDR10-to-HDR10 command on Android looks like:
@@ -107,7 +116,34 @@ submodule, compiles it for each target, and adds
 it to the install manifest. The bridge serializes embedded command entry, turns
 `exit()` into a return to the host, resets the wrapper-controlled tool state,
 routes `av_log` events, captures FFprobe output, and checks cancellation in the
-FFmpeg scheduler and FFprobe packet-read path.
+FFmpeg main loop and FFprobe packet-read path. Before every FFprobe run it clears
+the option state `ffprobe.c` keeps in statics (`-show_*` flags,
+`-select_streams`, `-show_entries` selections, output format, file names, forced
+decoders and the cmdutils option dictionaries), so one probe's options never
+carry into the next. Before every FFmpeg run it does the same for the globals of
+`ffmpeg_opt.c`: `bridge.mk` compiles `ffmpeg_opt.c` and `opt_common.c` through
+the wrappers `ffmpeg_opt_reset.c` and `opt_common_reset.c`, which reach their
+statics (`-y`/`-n`, the `-report` file), in place of the objects FFmpeg's own
+build makes. After every run the bridge restores the libavutil state that
+`-loglevel`, `-cpuflags`, `-cpucount` and `-max_alloc` change for the whole
+process.
+
+`ffmpeg_entry.c` replaces fftools' `term_init` with one that installs no signal
+handlers, leaves `SIGPIPE` and the terminal alone, and forces
+`stdin_interaction` off: an embedded command never reads keystrokes or overwrite
+prompts from the host's standard input, so `-stdin` is ignored with a warning and
+an existing output file is kept unless the command passes `-y`. The
+`ffmpeg_opt.c` wrapper also turns `-timelimit` into a warning, since
+`RLIMIT_CPU` would limit the host process. Cancellation stands in for the
+missing handlers: `ffmpegkmp_cancel` records a signal the way fftools' `SIGTERM`
+handler did, so the main loop stops within one `-stats_period` (0.5 s by
+default), writes the trailers and returns, and an input still being opened is
+interrupted.
+
+The JVM, Android and Apple bindings call `ffmpegkmp_execute` synchronously, on
+`Dispatchers.IO`. The browser bridge suspends instead and tracks each execution
+by id, each in its own Worker, so cancelling a caller and `close` reach every
+running command.
 
 Cancellation follows the coroutine. On JVM, Android and Apple,
 `NativeExecutionBridge.execute` runs the blocking native entry point on
@@ -121,13 +157,48 @@ do right before each run, so a cancel that lands while FFmpeg is still
 resetting its own flags is picked up by the entry wrapper rather than lost. The
 browser bridge terminates its Web Worker from the continuation's cancellation
 handler instead; each run there has a fresh context. In `library:core` a
-session is a coroutine `Job`, and the process-wide queue is a FIFO of ticket
-jobs taken at submission, so `ExecutionSession.cancel()`, closing the client,
+session is a coroutine `Job`, and the process-wide queue is a FIFO of tickets
+taken at submission and handed to one session per command lane, so `ExecutionSession.cancel()`, closing the client,
 and cancelling the caller of `execute()` are all the same path.
 
 If the bridge is compiled without its `fftools` objects, its weak fallback
 returns `-ENOSYS`; Kotlin converts that condition to
 `NativeBridgeUnavailableException` rather than pretending a command ran.
+
+## Frame handles
+
+`ffmpegkmp_frame.h` is the frame ABI the decoder and player hand frames through,
+bound like the rest of the bridge: JavaCPP generates `ffmpegkmp_frame` and its
+structs into the `bridge` family, and the Apple umbrella interop includes the
+header. A `ffmpegkmp_frame *` is one reference to an `AVFrame`:
+
+- `ffmpegkmp_frame_ref` and `ffmpegkmp_frame_unref` make and release
+  references; `ffmpegkmp_frame_get_info` reports the layout, colour and size as
+  the ordinals of codec's `PixelLayout` and `FrameColor` enums, and the
+  `CVPixelBufferRef` on Apple.
+- `ffmpegkmp_frame_map` and `ffmpegkmp_frame_unmap` bracket reading the planes
+  and strides: a CVPixelBuffer is locked for reading, and another hardware frame
+  is downloaded once per handle.
+- `ffmpegkmp_frame_pool_get` allocates from a pool keyed by layout and size, a
+  ring when `ffmpegkmp_frame_pool_alloc` gave it a capacity, where it fails with
+  `EAGAIN` rather than wait while the ring is out;
+  `ffmpegkmp_frame_convert_to` and `ffmpegkmp_frame_convert_into` convert
+  through `ffmpegkmp_frame_convert`, and `ffmpegkmp_frame_wrap` makes a frame
+  over memory the caller owns, such as a Skia bitmap's.
+- `ffmpegkmp_frame_get_statistics` counts the pixel memory the bridge allocated
+  (pool buffers, converter intermediates and hardware downloads), which the
+  tests use to show where a frame's pixels are.
+
+Kotlin wraps each reference in a `NativeFrame` (`JavaCppFrame`,
+`CInteropFrame`), whose planes are direct `ByteBuffer`s on the JVM and Android
+and `CPointer`s on Kotlin/Native; `codec`'s `VideoFrame` guards it against use
+after close. In the browser, frames stay RGBA8 bytes the worker converts and
+transfers to the page (`BrowserRgbaFrame`). On Android,
+`ffmpegkmp_frame_convert_into_android_bitmap` (`ffmpegkmp_android_bitmap.c`)
+converts into a `Bitmap`'s pixels through `AndroidBitmap_lockPixels`; it is kept
+out of the generated declarations and reached through the raw-JNI seam
+`AndroidBitmapFrames`, built with `AndroidPlayerSurface` by
+`buildJavaCppAndroid<Abi>Surface`, so only that library links `libjnigraphics`.
 
 ## Web
 

@@ -24,7 +24,6 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.viewinterop.UIKitView
 import io.github.aftrolle.ffmpegkmp.bindings.NativePlatformVideoFrame
 import io.github.aftrolle.ffmpegkmp.bindings.NativePlatformVideoFrameKind
-import io.github.aftrolle.ffmpegkmp.bindings.NativeVideoFrame
 import kotlinx.cinterop.CPointer
 import kotlinx.cinterop.alloc
 import kotlinx.cinterop.memScoped
@@ -34,7 +33,6 @@ import kotlinx.cinterop.reinterpret
 import kotlinx.cinterop.useContents
 import kotlinx.cinterop.value
 import kotlinx.coroutines.flow.MutableStateFlow
-import kotlin.time.Duration.Companion.microseconds
 import platform.AVFoundation.AVLayerVideoGravityResize
 import platform.AVFoundation.AVLayerVideoGravityResizeAspect
 import platform.AVFoundation.AVLayerVideoGravityResizeAspectFill
@@ -166,16 +164,6 @@ private class IOSSampleBufferOutput : FFplayVideoOutput {
 
     override fun submit(frame: FFplayFrame): Boolean {
         frames.value = frame
-        return true
-    }
-
-    override fun submitNative(frame: NativeVideoFrame, video: FFplayVideoInfo?): Boolean {
-        frames.value = FFplayFrame(
-            image = frame.toImageBitmap(),
-            presentationTime = frame.presentationTimeUs.microseconds,
-            sampleAspectRatio = video.sampleAspectRatioValue(),
-            rotationDegrees = video?.rotationDegrees ?: 0.0,
-        )
         return true
     }
 

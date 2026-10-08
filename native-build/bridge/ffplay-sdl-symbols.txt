@@ -1,4 +1,4 @@
-# Reviewed SDL surface of FFmpeg n9.0.1 fftools/ffplay.c.
+# Reviewed SDL surface of FFmpeg n9.0.2 fftools/ffplay.c (unchanged since n9.0.1).
 SDL_AUDIO_ALLOW_CHANNELS_CHANGE
 SDL_AUDIO_ALLOW_FREQUENCY_CHANGE
 SDL_AUDIO_ALSA_SET_BUFFER_SIZE

@@ -1,31 +1,45 @@
 // SPDX-License-Identifier: Apache-2.0
 package io.github.aftrolle.ffmpegkmp.ffplay
 
-import io.github.aftrolle.ffmpegkmp.core.CommandIo
+import io.github.aftrolle.ffmpegkmp.codec.ContentLightMetadata
+import io.github.aftrolle.ffmpegkmp.codec.ContentProtection
+import io.github.aftrolle.ffmpegkmp.codec.DecoderKind
+import io.github.aftrolle.ffmpegkmp.codec.DecoderPreference
+import io.github.aftrolle.ffmpegkmp.codec.DecoderThreads
+import io.github.aftrolle.ffmpegkmp.codec.HdrType
+import io.github.aftrolle.ffmpegkmp.codec.MasteringDisplayMetadata
+import io.github.aftrolle.ffmpegkmp.codec.MediaSource
+import io.github.aftrolle.ffmpegkmp.codec.VideoInfo
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.ZERO
 
-public data class FFplaySource(
-    val input: String,
-    val io: CommandIo = CommandIo.Empty,
-    /**
-     * Use [REQUIRE_SECURE_PATH] for DRM content whose decoded pixels must remain in a
-     * platform-protected decoder/surface path. Such sources never fall back to Canvas.
-     */
-    val protection: FFplayContentProtection = FFplayContentProtection.CLEAR_OR_AUTO_DETECT,
-) {
-    init {
-        require(input.isNotBlank()) { "FFplay input must not be blank" }
-        require('\u0000' !in input) { "FFplay input must not contain NUL" }
-    }
-}
+// The source and stream types live in :library:codec, shared with its decoders. FFplay keeps its
+// own names for them, so source code written against 0.2 still compiles.
 
-public enum class FFplayContentProtection {
-    CLEAR_OR_AUTO_DETECT,
-    REQUIRE_SECURE_PATH,
-}
+/** FFplay's name for [MediaSource]. */
+public typealias FFplaySource = MediaSource
 
-public enum class FFplayDecoderPreference { AUTO, REQUIRE_HARDWARE, SOFTWARE }
+/** FFplay's name for [ContentProtection]. */
+public typealias FFplayContentProtection = ContentProtection
+
+/** FFplay's name for [DecoderPreference]. */
+public typealias FFplayDecoderPreference = DecoderPreference
+
+/** FFplay's name for [DecoderKind]. */
+public typealias FFplayDecoderKind = DecoderKind
+
+/** FFplay's name for [VideoInfo]. */
+public typealias FFplayVideoInfo = VideoInfo
+
+/** FFplay's name for [HdrType]. */
+public typealias FFplayHdrType = HdrType
+
+/** FFplay's name for [MasteringDisplayMetadata]. */
+public typealias FFplayMasteringDisplayMetadata = MasteringDisplayMetadata
+
+/** FFplay's name for [ContentLightMetadata]. */
+public typealias FFplayContentLightMetadata = ContentLightMetadata
+
 public enum class FFplayOutputPreference { AUTO, NATIVE_SURFACE, COMPOSE_CANVAS }
 public enum class FFplayHdrPolicy {
     /** Shows HDR as HDR where the whole output path can, and tone maps it elsewhere. */
@@ -48,6 +62,8 @@ public data class FFplayConfiguration(
      * silent previews; volume, mute and tracks are controlled on [FFplayPlayer].
      */
     val audio: Boolean = true,
+    /** The software video decoder's threads; see [DecoderThreads]. */
+    val threads: DecoderThreads = DecoderThreads.Auto,
 )
 
 public enum class FFplayState {
@@ -64,40 +80,8 @@ public enum class FFplayState {
     CLOSED,
 }
 
-public enum class FFplayHdrType { SDR, HDR10, HLG, HDR10_PLUS, DOLBY_VISION, UNKNOWN_HDR }
-public enum class FFplayDecoderKind { UNKNOWN, HARDWARE, SOFTWARE }
 public enum class FFplayRendererKind { NATIVE_SURFACE, GPU_TEXTURE, COMPOSE_CANVAS }
 public enum class FFplayHdrResult { NOT_HDR, PRESERVED, TONE_MAPPED, UNSUPPORTED }
-
-public data class FFplayMasteringDisplayMetadata(
-    val raw: Map<String, String> = emptyMap(),
-)
-
-public data class FFplayContentLightMetadata(
-    val maxContentLightLevel: Int? = null,
-    val maxFrameAverageLightLevel: Int? = null,
-)
-
-public data class FFplayVideoInfo(
-    val width: Int,
-    val height: Int,
-    val sampleAspectRatio: String? = null,
-    val rotationDegrees: Double = 0.0,
-    val pixelFormat: String? = null,
-    val bitDepth: Int? = null,
-    val colorPrimaries: String? = null,
-    val colorTransfer: String? = null,
-    val colorMatrix: String? = null,
-    val colorRange: String? = null,
-    val chromaLocation: String? = null,
-    val hdrType: FFplayHdrType = FFplayHdrType.SDR,
-    val masteringDisplay: FFplayMasteringDisplayMetadata? = null,
-    val contentLight: FFplayContentLightMetadata? = null,
-) {
-    init {
-        require(width > 0 && height > 0) { "Video dimensions must be positive" }
-    }
-}
 
 public data class FFplayOutputInfo(
     val decoder: FFplayDecoderKind,
