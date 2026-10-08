@@ -992,11 +992,14 @@ The decoder, in Kotlin only:
 
 `FrameImage` on Android:
 
-- A frame with a `hardwareBuffer` shows through a `HardwareFrameBitmap`:
-  `Bitmap.wrapHardwareBuffer`, cached by buffer id for the ring's three buffers,
-  with the crop as `source`, which `drawUpright` already takes. `FrameImage`
-  retains the frame it shows and closes it on the next update, since a wrap is
-  valid only while its image is held. Nothing is written.
+- A frame with a `hardwareBuffer` shows through a new
+  `Bitmap.wrapHardwareBuffer` on every update, with the crop as `source`, which
+  `drawUpright` already takes. A wrap is not cached by buffer id: the ring's
+  buffers take turns, and HWUI keeps the GPU texture of a hardware bitmap with
+  the bitmap, so a wrap made once goes on drawing the first frame its buffer
+  held. `FrameImage` retains the frame it shows and closes it on the next
+  update, since a wrap is valid only while its image is held, and keeps the last
+  two wraps open beside the last two frames. Nothing is written.
 - SDR buffers wrap as sRGB. 10-bit buffers would wrap as `BT2020_PQ` or
   `BT2020_HLG`; until the HDR check below passes, 10-bit sources take the memory
   path and `GpuBuffers` is SDR.
@@ -1016,8 +1019,9 @@ Verify:
   fallback and 10-bit sources give memory frames.
 - `FrameImageDeviceTest`: a `GpuBuffers` frame drawn through `FrameImage` matches
   the same position from `Memory()` within 4 per component on flat regions, with
-  crop, rotation and aspect right; no bitmap allocations and at most three wraps
-  over 100 updates; the software path fails clearly.
+  crop, rotation and aspect right; no bitmap allocations, one wrap per update
+  and each frame drawn showing its own contents over 150 updates; the software
+  path fails clearly.
 - The HDR check: `hdr10-pq.mp4` through `GpuBuffers` into an F16 renderer reads
   about 4.9 (1,000/203) at the fixture's highlight, as the memory path does.
 - On the phone, a 4K H.264 `update` falls from a 4K conversion to under 1 ms.
@@ -1078,11 +1082,11 @@ What the build settled differently from the plan:
   prefetch into one `FrameImage` uses exactly the three and never waits on
   itself. `VideoOutput.GpuBuffers`' KDoc and the codec README say what a caller
   may hold.
-- "At most three wraps" assumes the reader's three images are the only
-  buffers; MediaCodec dequeues buffers of its own from the same queue, so the
-  frames may take turns in more. The device test checks one wrap per buffer and
-  logs how many there are; `FrameImage` keeps up to 16, recycling the least
-  recently used.
+- The plan's "cached by buffer id, at most three wraps" did not survive the
+  phone (see the first phone run below): `FrameImage` wraps on every update and
+  keeps the last two wraps open. The device test checks one wrap per update and
+  logs how many buffers the frames took turns in; MediaCodec dequeues buffers of
+  its own from the reader's queue, so there may be more than three.
 - On a software canvas `drawFrameImage` fails with the reason itself, rather
   than leaving it to `Canvas`'s own error for a hardware bitmap.
 - The measurement's `GpuBuffers` case decodes `clip=h264`, a 4K H.264 clip
@@ -1097,6 +1101,29 @@ What the build settled differently from the plan:
     -Pandroid.testInstrumentationRunnerArguments.compositeBudget=true \
     -Pandroid.testInstrumentationRunnerArguments.clip=h264
   ```
+
+First phone run (Galaxy S25 Ultra, SM-S938B, Snapdragon 8 Elite, Android 16),
+three findings, all fixed:
+
+- A wrap of a `HardwareBuffer` kept showing the first frame its buffer held.
+  `framesUpdatingAFrameImageBeforeEachRender…` failed with "the frame drawn at 3
+  expected:<3> but was:<2>": the ring's buffers take turns, and when buffer X
+  came round again with frame 3, the wrap cached for X still drew frame 2. HWUI
+  keeps the GPU texture of a hardware bitmap with the bitmap, and a hardware
+  bitmap's generation never changes, so nothing tells it the decoder wrote the
+  buffer again; there is no call that invalidates it short of making a new
+  bitmap. `update` now wraps the frame's buffer anew each time, which copies and
+  allocates no pixels, and closes the wrap two updates later. The test asserts
+  one wrap per update and zero bitmap allocations. The 4K `update` stays a
+  wrap, not a conversion; its under-1-ms check runs again on the phone.
+- `pts` differed from `index.seconds / 30` by 1 ns ("frame 2
+  expected:<66.666666ms> but was:<66.666667ms>"): the decoder rescales with
+  `av_rescale_q`, which rounds to the nearest, and Kotlin's division truncates.
+  Rounding to the nearest stays the contract, now in `VideoFrame`'s KDoc, and
+  the GPU tests compute their expectation with the same rounding.
+- The hardware HEVC decoder refused the 96x64 HDR10 fixture, so the HDR check
+  skipped. `hdr10-pq-large.mp4`, 320x192 with the same recipe, replaces it in
+  that test; whether the phone's decoder takes it is the next run's answer.
 
 ### 13. Decode at a size
 

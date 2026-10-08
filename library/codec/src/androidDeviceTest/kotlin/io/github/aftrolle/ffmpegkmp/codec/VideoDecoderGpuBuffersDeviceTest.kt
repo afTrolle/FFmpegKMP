@@ -32,7 +32,7 @@ class VideoDecoderGpuBuffersDeviceTest {
             assertEquals(DecoderKind.HARDWARE, decoder.decoderKind, "MediaCodec decodes H.264 on every device")
             for (index in listOf(0, 1, 2, 30, 31, 90, 12, 149)) {
                 decoder.frameAt(index.seconds / 30).use { frame ->
-                    assertEquals(index.seconds / 30, frame.pts, "frame $index")
+                    assertEquals(framePts(index), frame.pts, "frame $index")
                     assertNull(frame.format, "A frame in GPU memory has no pixels in memory")
                     assertNull(frame.usePlanes { it })
                     assertFailsWith<IllegalStateException> { frame.convert(FrameFormat.Rgba8) }
@@ -89,7 +89,7 @@ class VideoDecoderGpuBuffersDeviceTest {
                     pts += it.pts
                 }
             }
-            assertEquals((0 until 150).map { it.seconds / 30 }, pts)
+            assertEquals((0 until 150).map(::framePts), pts)
         }
     }
 

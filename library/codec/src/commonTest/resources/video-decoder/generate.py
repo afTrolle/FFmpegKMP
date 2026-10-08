@@ -2,9 +2,10 @@
 # SPDX-License-Identifier: Apache-2.0
 """Regenerates the VideoDecoder fixtures in this directory.
 
-Usage: FFMPEG=/path/to/ffmpeg python3 generate.py [hdr]
+Usage: FFMPEG=/path/to/ffmpeg python3 generate.py [hdr | hdr-large]
 
-With `hdr`, only hdr10-pq.mp4 and hlg.mp4 are regenerated.
+With `hdr`, only hdr10-pq.mp4, hlg.mp4 and hdr10-pq-large.mp4 are regenerated; with `hdr-large`,
+only hdr10-pq-large.mp4.
 
 FFMPEG must be an ffmpeg CLI built from this repository's pinned FFmpeg (the build has no lavfi
 device, so every clip is encoded from PNG frames written here). hdr10-pq.mp4, hlg.mp4 and the -h264
@@ -22,6 +23,8 @@ import tempfile
 import zlib
 
 WIDTH, HEIGHT = 96, 64
+# hdr10-pq-large.mp4: Qualcomm's hardware HEVC decoders refuse 10-bit pictures as small as the 96x64 ones.
+LARGE_WIDTH, LARGE_HEIGHT = 320, 192
 CELL = 16
 BITS = (WIDTH // CELL) * (32 // CELL)
 FONT = {
@@ -47,8 +50,8 @@ def chunk(kind, data):
     return struct.pack(">I", len(data)) + body + struct.pack(">I", zlib.crc32(body) & 0xFFFFFFFF)
 
 
-def png(path, rows, bit_depth=8, extra_chunks=b""):
-    header = struct.pack(">IIBBBBB", WIDTH, HEIGHT, bit_depth, 2, 0, 0, 0)
+def png(path, rows, bit_depth=8, extra_chunks=b"", width=WIDTH, height=HEIGHT):
+    header = struct.pack(">IIBBBBB", width, height, bit_depth, 2, 0, 0, 0)
     raw = b"".join(b"\x00" + row for row in rows)
     with open(path, "wb") as file:
         file.write(b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", header) + extra_chunks)
@@ -87,11 +90,11 @@ def pq_code(nits):
 SWSCALE_10_BIT = 256 / 257
 
 
-def hdr_frame(path):
+def hdr_frame(path, width=WIDTH, height=HEIGHT):
     # Left half: 100 nit grey. Right half: a 1000 nit highlight. Full-range 16-bit PQ RGB, BT.2020.
     left = round(pq_code(100) * SWSCALE_10_BIT * 65535)
     right = round(pq_code(1000) * SWSCALE_10_BIT * 65535)
-    row = b"".join(struct.pack(">HHH", *(3 * [left if x < WIDTH // 2 else right])) for x in range(WIDTH))
+    row = b"".join(struct.pack(">HHH", *(3 * [left if x < width // 2 else right])) for x in range(width))
     cicp = chunk(b"cICP", bytes([9, 16, 0, 1]))
     # BT.2020 primaries and D65 in 0.00002 units, then 1000 and 0.0001 nits in 0.0001 units.
     mdcv = chunk(
@@ -100,7 +103,7 @@ def hdr_frame(path):
         + struct.pack(">II", 1000 * 10000, 1),
     )
     clli = chunk(b"cLLI", struct.pack(">II", 1000 * 10000, 400 * 10000))
-    png(path, [row] * HEIGHT, bit_depth=16, extra_chunks=cicp + mdcv + clli)
+    png(path, [row] * height, bit_depth=16, extra_chunks=cicp + mdcv + clli, width=width, height=height)
 
 
 def hlg_frame(path):
@@ -120,19 +123,19 @@ def run(*arguments):
     subprocess.run([os.environ["FFMPEG"], "-hide_banner", "-loglevel", "error", "-y", *arguments], check=True)
 
 
-def check_codes(path, expected):
+def check_codes(path, expected, width=WIDTH, height=HEIGHT):
     """Checks the first frame's 10-bit Y, Cb and Cr at each (x, y) against BT.2100's limited-range codes."""
     raw = subprocess.run(
         [os.environ["FFMPEG"], "-hide_banner", "-loglevel", "error", "-i", path, "-frames:v", "1",
          "-f", "rawvideo", "-pix_fmt", "yuv420p10le", "-"],
         check=True, capture_output=True).stdout
-    chroma = WIDTH * HEIGHT * 2
+    chroma = width * height * 2
     for (x, y), rgb in expected.items():
         luma = 0.2627 * rgb[0] + 0.6780 * rgb[1] + 0.0593 * rgb[2]
         want = (64 + 876 * luma, 512 + 896 * (rgb[2] - luma) / 1.8814, 512 + 896 * (rgb[0] - luma) / 1.4746)
-        chroma_index = (y // 2) * (WIDTH // 2) + x // 2
+        chroma_index = (y // 2) * (width // 2) + x // 2
         got = (
-            struct.unpack_from("<H", raw, (y * WIDTH + x) * 2)[0],
+            struct.unpack_from("<H", raw, (y * width + x) * 2)[0],
             struct.unpack_from("<H", raw, chroma + chroma_index * 2)[0],
             struct.unpack_from("<H", raw, chroma + chroma // 4 + chroma_index * 2)[0],
         )
@@ -234,7 +237,22 @@ def hdr(out, work):
     )
     grey = lambda nits: (pq_code(nits),) * 3
     check_codes(os.path.join(out, "hdr10-pq.mp4"), {(12, 32): grey(100), (84, 32): grey(1000)})
+    hdr_large(out, work)
     hlg(out, work)
+
+
+def hdr_large(out, work):
+    for index in range(10):
+        hdr_frame(os.path.join(work, f"l{index:04d}.png"), LARGE_WIDTH, LARGE_HEIGHT)
+    run(
+        "-framerate", "10", "-i", os.path.join(work, "l%04d.png"),
+        "-c:v", "hevc_videotoolbox", "-profile:v", "main10", "-pix_fmt", "p010le", "-b:v", "400k",
+        "-color_primaries", "bt2020", "-color_trc", "smpte2084", "-colorspace", "bt2020nc",
+        "-color_range", "tv", "-tag:v", "hvc1", os.path.join(out, "hdr10-pq-large.mp4"),
+    )
+    grey = lambda nits: (pq_code(nits),) * 3
+    check_codes(os.path.join(out, "hdr10-pq-large.mp4"), {(40, 96): grey(100), (280, 96): grey(1000)},
+                LARGE_WIDTH, LARGE_HEIGHT)
 
 
 def hlg(out, work):
@@ -252,7 +270,8 @@ def hlg(out, work):
 
 
 if __name__ == "__main__":
-    if sys.argv[1:] == ["hdr"]:
+    if sys.argv[1:] in (["hdr"], ["hdr-large"]):
         with tempfile.TemporaryDirectory() as scratch:
-            sys.exit(hdr(os.path.dirname(os.path.abspath(__file__)), scratch))
+            step = hdr if sys.argv[1] == "hdr" else hdr_large
+            sys.exit(step(os.path.dirname(os.path.abspath(__file__)), scratch))
     sys.exit(main())

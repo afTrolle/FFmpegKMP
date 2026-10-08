@@ -33,13 +33,14 @@ internal actual fun DrawScope.checkDrawsGpuImages() = check(drawContext.canvas.n
 }
 
 /**
- * Hardware bitmaps over a decoder's buffers, by buffer id, which draw whatever frame their buffer
- * holds with no copy: SDR as sRGB, PQ and HLG as BT.2020 PQ and HLG. The decoder's frames take turns
- * in a few buffers, so after the first frames every update finds its wrap here. Beyond [MAX_WRAPS]
- * the least recently used is recycled, by then a buffer of a decoder no longer shown.
+ * A new hardware bitmap over the buffer of every frame, which draws that frame with no copy: SDR as
+ * sRGB, PQ and HLG as BT.2020 PQ and HLG. A wrap made once for a buffer would go on drawing its first
+ * frame, since the GPU texture HWUI makes of a hardware bitmap is cached with the bitmap and never
+ * learns that the decoder wrote the buffer again. The last two wraps stay open, as [FrameImage]
+ * keeps the last two frames, since a drawing may still use the previous one.
  */
 private class HardwareFrameBitmaps : GpuFrameWraps {
-    private val bitmaps = LinkedHashMap<Long, HardwareFrameBitmap>(MAX_WRAPS, 0.75f, true)
+    private val live = ArrayDeque<Bitmap>(3)
 
     override var count: Int = 0
         private set
@@ -51,37 +52,18 @@ private class HardwareFrameBitmaps : GpuFrameWraps {
             NativePlayerHdrType.HLG -> ColorSpace.Named.BT2020_HLG
             else -> ColorSpace.Named.BT2020_PQ
         }
-        bitmaps[gpu.id]?.takeIf { it.colorSpace == colorSpace }?.let { return it.image }
         val buffer = checkNotNull(frame.hardwareBuffer) { "The frame's GPU buffer is no HardwareBuffer: $frame" }
-        val wrapped = HardwareFrameBitmap(
-            checkNotNull(Bitmap.wrapHardwareBuffer(buffer, ColorSpace.get(colorSpace))) { "Could not wrap $buffer in a bitmap" },
-            colorSpace,
-        )
+        val wrapped = checkNotNull(Bitmap.wrapHardwareBuffer(buffer, ColorSpace.get(colorSpace))) { "Could not wrap $buffer in a bitmap" }
         count++
-        bitmaps.put(gpu.id, wrapped)?.close()
-        val eldest = bitmaps.entries.iterator()
-        while (bitmaps.size > MAX_WRAPS) {
-            eldest.next().value.close()
-            eldest.remove()
-        }
-        return wrapped.image
+        live.addLast(wrapped)
+        while (live.size > 2) live.removeFirst().recycle()
+        return wrapped.asImageBitmap()
     }
 
     override fun close() {
-        bitmaps.values.forEach(HardwareFrameBitmap::close)
-        bitmaps.clear()
+        live.forEach(Bitmap::recycle)
+        live.clear()
     }
-
-    private companion object {
-        const val MAX_WRAPS = 16
-    }
-}
-
-/** `Bitmap.wrapHardwareBuffer` over one of a decoder's buffers: nothing is copied or allocated for the pixels. */
-private class HardwareFrameBitmap(private val bitmap: Bitmap, val colorSpace: ColorSpace.Named) : AutoCloseable {
-    val image: ImageBitmap = bitmap.asImageBitmap()
-
-    override fun close() = bitmap.recycle()
 }
 
 /**

@@ -208,9 +208,11 @@ Canvas(Modifier.fillMaxSize()) { drawFrameImage(image) }
 - On Android `AndroidBitmap_unlockPixels` gives a bitmap a new generation after each write,
   which is what the renderer uploads it by.
 - On Android 14 (API 34) and later, frames from `VideoOutput.GpuBuffers` lie in GPU memory, and
-  `update` shows them with no copy and no bitmap of its own: it wraps each of the decoder's
-  `HardwareBuffer`s once, with `Bitmap.wrapHardwareBuffer`, and draws the frame's crop of it, SDR as
-  sRGB. A wrap shows its buffer only while the buffer's frame is open, so the image keeps the
+  `update` shows them with no copy and no bitmap of its own: it wraps the frame's `HardwareBuffer`
+  anew each time, with `Bitmap.wrapHardwareBuffer`, and draws the frame's crop of it, SDR as sRGB.
+  It wraps every time because HWUI keeps a hardware bitmap's GPU texture with the bitmap, so a wrap
+  of a buffer the decoder has since rewritten would still draw the old frame. A wrap shows its
+  buffer only while the buffer's frame is open, so the image keeps the
   frames of its last two updates, the one on screen and the one a drawing may still use, and
   closes each two updates later. That is two of the decoder's ring of three; the third is the
   frame `frames()` decodes ahead, so the loop above never waits on itself. Such frames draw only

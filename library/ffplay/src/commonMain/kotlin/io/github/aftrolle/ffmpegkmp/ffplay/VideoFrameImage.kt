@@ -47,14 +47,18 @@ internal interface FrameBitmap : AutoCloseable {
 }
 
 /**
- * Images over the GPU buffers of frames from `VideoOutput.GpuBuffers`, one for each buffer and kept
- * for its next frames, since a decoder's frames take turns in a few buffers.
+ * Images over the GPU buffers of frames from `VideoOutput.GpuBuffers`, a new one for each frame:
+ * an image of a buffer keeps showing what the buffer held when it was made, however often the
+ * decoder writes it again.
  */
 internal interface GpuFrameWraps : AutoCloseable {
-    /** The wraps made so far. */
+    /** The images made so far. */
     val count: Int
 
-    /** An image of [frame]'s whole buffer, which shows the frame while it is open, without a copy. */
+    /**
+     * A new image of [frame]'s whole buffer, which shows the frame while it is open, without a copy.
+     * It stays valid until two more have been made, and is closed with the wraps.
+     */
     fun wrap(frame: VideoFrame): ImageBitmap
 }
 

@@ -19,6 +19,11 @@ import kotlin.time.Duration
  * One video frame, shown from [pts] for [duration], whose memory FFmpeg owns. Rotation and sample
  * aspect ratio are reported, never applied to the pixels.
  *
+ * The decoder rescales [pts] and [duration] from the stream's time base to nanoseconds as FFmpeg's
+ * `av_rescale_q` does, to the nearest, so frame 2 of a 30 fps clip is 66,666,667 ns, not the
+ * truncated 66,666,666 that `2.seconds / 30` gives. Compare against a rounded time, or within a
+ * microsecond.
+ *
  * A `VideoFrame` is one reference to that memory:
  * - [close] releases it, and the memory goes back to its pool when the last reference closes.
  * - [retain] makes another reference, which needs a [close] of its own.

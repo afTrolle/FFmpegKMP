@@ -190,7 +190,7 @@ class FrameImageDeviceTest {
     }
 
     @Test
-    fun framesUpdatingAFrameImageBeforeEachRenderNeverWaitAndWrapEachBufferOnce() = runBlocking<Unit> {
+    fun framesUpdatingAFrameImageBeforeEachRenderNeverWaitAndShowEachFramesOwnContentsWrappingOnEveryUpdate() = runBlocking<Unit> {
         assumeGpuBuffers()
         open("cfr-30-h264-128.mp4", VideoOutput.GpuBuffers, DecoderPreference.AUTO).use { decoder ->
             FrameImage().use { image ->
@@ -198,6 +198,7 @@ class FrameImageDeviceTest {
                     val buffers = mutableSetOf<Long>()
                     var index = 0
                     // The ordinary loop: the decoder's ring of three is the frame decoded ahead and the FrameImage's two.
+                    // Each buffer comes round with a new frame, which a wrap made for its earlier one would not show.
                     decoder.frames().collect { frame ->
                         buffers += assertNotNull(frame.hardwareBuffer).id
                         frame.use(image::update)
@@ -208,7 +209,8 @@ class FrameImageDeviceTest {
                     assertEquals(150, index)
                     assertEquals(0, image.allocations, "bitmaps allocated")
                     println("FrameImageDeviceTest: ${image.wrapCount} wraps over $index updates, ${buffers.size} buffers")
-                    assertEquals(buffers.size, image.wrapCount, "one wrap per buffer")
+                    assertTrue(buffers.size < index, "the ${buffers.size} buffers take turns, so the frames reuse them")
+                    assertEquals(index, image.wrapCount, "one wrap per update")
                 }
             }
         }
@@ -238,12 +240,12 @@ class FrameImageDeviceTest {
         gpuBuffersKeepDeepSources = true
         try {
             val highlights = listOf(VideoOutput.GpuBuffers, VideoOutput.Memory(FrameFormat.RgbaF16)).map { output ->
-                open("hdr10-pq.mp4", output, DecoderPreference.AUTO).use { decoder ->
+                open("hdr10-pq-large.mp4", output, DecoderPreference.AUTO).use { decoder ->
                     if (output == VideoOutput.GpuBuffers) {
-                        assumeTrue("a hardware decoder takes the 96x64 HDR10 fixture", decoder.decoderKind == DecoderKind.HARDWARE)
+                        assumeTrue("a hardware decoder takes the 320x192 HDR10 fixture", decoder.decoderKind == DecoderKind.HARDWARE)
                     }
                     FrameImage().use { image ->
-                        ComposeFrameRenderer<FrameImage>(context, 96, 64, FrameFormat.RgbaF16, Density(1f), true) {
+                        ComposeFrameRenderer<FrameImage>(context, 320, 192, FrameFormat.RgbaF16, Density(1f), true) {
                             Canvas(Modifier.fillMaxSize()) { drawFrameImage(it) }
                         }.use { renderer ->
                             decoder.frameAt(0.5.seconds).use { frame ->
@@ -251,7 +253,7 @@ class FrameImageDeviceTest {
                                 image.update(frame)
                                 renderer.render(frame.pts, image).use { drawn ->
                                     assertTrue(renderer.drewOnGpu)
-                                    assertNotNull(drawn.usePlanes { planes -> planes.single().half(y = 32, x = 84) })
+                                    assertNotNull(drawn.usePlanes { planes -> planes.single().half(y = 96, x = 280) })
                                 }
                             }
                         }

@@ -43,10 +43,10 @@ import kotlin.time.Duration
  * later would see its bitmap written; one update per drawn frame never does. [close] frees both.
  *
  * On Android a frame in GPU memory, from `VideoOutput.GpuBuffers`, is shown with no copy and no
- * bitmap of its own: [update] wraps its `HardwareBuffer`, once for each of the decoder's buffers,
- * and draws its crop. A wrap shows the buffer only while its frame is open, so the image retains
- * the frames of its last two updates, the one on screen and the one a drawing may still be using,
- * and closes each once two more updates have come. With a decoder's ring of three, that leaves
+ * bitmap of its own: [update] wraps its `HardwareBuffer` anew, since a wrap of a buffer shows
+ * only the frame the buffer held when it was made, and draws its crop. A wrap shows its frame only
+ * while the frame is open, so the image retains the frames of its last two updates, the one on
+ * screen and the one a drawing may still be using, and closes each once two more updates have come. With a decoder's ring of three, that leaves
  * room for the frame `frames()` decodes ahead. Such frames need a GPU canvas: drawing one onto a
  * software canvas, such as `ComposeFrameRenderer`'s software path, fails.
  */
@@ -78,7 +78,7 @@ public class FrameImage : AutoCloseable {
     internal var conversions: Int = 0
         private set
 
-    /** GPU buffers wrapped, for tests. */
+    /** Frames in GPU memory wrapped, for tests. */
     internal val wrapCount: Int get() = wraps.count
 
     /**
