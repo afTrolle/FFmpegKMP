@@ -9,12 +9,16 @@ package io.github.aftrolle.ffmpegkmp.ffplay
 import android.app.Presentation
 import android.content.Context
 import android.graphics.Bitmap
+import android.graphics.BitmapShader
 import android.graphics.BlendMode
 import android.graphics.Canvas
 import android.graphics.ColorSpace
 import android.graphics.HardwareBufferRenderer
+import android.graphics.Paint
 import android.graphics.PixelFormat
 import android.graphics.RenderNode
+import android.graphics.RuntimeShader
+import android.graphics.Shader
 import android.hardware.HardwareBuffer
 import android.hardware.display.DisplayManager
 import android.hardware.display.VirtualDisplay
@@ -44,6 +48,7 @@ import io.github.aftrolle.ffmpegkmp.bindings.NativeGpuBuffer
 import io.github.aftrolle.ffmpegkmp.bindings.allocateNativeFrame
 import io.github.aftrolle.ffmpegkmp.bindings.convertFromBitmap
 import io.github.aftrolle.ffmpegkmp.bindings.convertFromHardwareBuffer
+import io.github.aftrolle.ffmpegkmp.codec.DynamicRange
 import io.github.aftrolle.ffmpegkmp.codec.FrameColor
 import io.github.aftrolle.ffmpegkmp.codec.FrameFormat
 import io.github.aftrolle.ffmpegkmp.codec.PixelLayout
@@ -78,11 +83,14 @@ import kotlinx.coroutines.withTimeoutOrNull
  * into a new pooled frame the caller owns.
  *
  * A renderer made for a [VideoTrack] can skip that copy. On Android 14 and later, for an 8-bit SDR H.264
- * or HEVC track on a hardware encoder, the first [render] turns the track [VideoTrack.zeroCopy]: the GPU then draws
- * into buffers of the encoder's own input surface, and [render] returns a frame over the buffer it drew, which
- * [VideoTrack.write] queues to the encoder with its [VideoFrame.pts], so no pixel is copied or converted. Such a
- * frame lies in GPU memory like a `GpuBuffers` one, and its buffer goes back to the encoder when the frame closes,
- * so a caller holds at most a few at a time. The renderer then draws on the GPU only, and fails where it cannot.
+ * or HEVC track, or an HDR10 or HLG HEVC track, on a hardware encoder, the first [render] turns the track
+ * [VideoTrack.zeroCopy]: the GPU then draws into buffers of the encoder's own input surface, and [render] returns a
+ * frame over the buffer it drew, which [VideoTrack.write] queues to the encoder with its [VideoFrame.pts], so no
+ * pixel is copied or converted. Such a frame lies in GPU memory like a `GpuBuffers` one, and its buffer goes back
+ * to the encoder when the frame closes, so a caller holds at most a few at a time. The renderer then draws on the
+ * GPU only, and fails where it cannot. An HDR track's buffers hold 10-bit PQ or HLG codes, which the GPU makes in
+ * a second pass of its own from the F16 canvas the view is drawn onto, with the same curves and matrix the
+ * one-copy path's converter applies.
  *
  * [format] is [FrameFormat.Rgba8] (sRGB, `ARGB_8888`), 10-bit RGB in sRGB (`RGBA_1010102`, API 33
  * and later) for 10-bit SDR, or [FrameFormat.RgbaF16] (linear extended sRGB, `RGBA_F16`, API 26
@@ -150,6 +158,9 @@ public class ComposeFrameRenderer<T> internal constructor(
     private var host: Host? = null
     private var bitmap: Bitmap? = null
     private var gpuCanvas: Any? = null
+
+    /** The shader encoding the F16 canvas into an HDR track's buffers, made for the first frame that needs it. */
+    private var encodeShader: Any? = null
 
     /** The track whose encoder's input surface to draw into, where it offers one; set for a renderer made for a track. */
     private var track: VideoTrack? = null
@@ -233,30 +244,49 @@ public class ComposeFrameRenderer<T> internal constructor(
     }
 
     /**
-     * Whether frames go into the track's input surface, asking the track once: an 8-bit SDR renderer on the GPU, on
-     * Android 14 and later, for a track that offers one.
+     * Whether frames go into the track's input surface, asking the track once: an 8-bit SDR or an HDR renderer on
+     * the GPU, on Android 14 and later, for a track that offers one.
      */
     private suspend fun opensSurface(): Boolean = surfaceOpen ?: (
-        gpu && Build.VERSION.SDK_INT >= 34 && format == FrameFormat.Rgba8 && track?.openInputSurface() == true
+        gpu && Build.VERSION.SDK_INT >= 34 && (format == FrameFormat.Rgba8 || format == FrameFormat.RgbaF16) &&
+            track?.openInputSurface() == true
         ).also { surfaceOpen = it }
 
-    /** Draws the view on the GPU into the encoder's [buffer], waiting for the GPU to finish. */
+    /**
+     * Draws the view on the GPU into the encoder's [buffer], waiting for the GPU to finish. An HDR track's buffer
+     * takes PQ or HLG codes, which HWUI cannot be told to write, so the view is drawn onto the F16 canvas first and
+     * [ENCODE_SHADER] turns that into the codes.
+     */
     private suspend fun drawIntoSurface(view: View, buffer: NativeGpuBuffer) {
         check(Build.VERSION.SDK_INT >= 34)
         val hardwareBuffer = buffer.handle as HardwareBuffer
         val canvas = surfaceCanvases.getOrPut(hardwareBuffer) {
             surfaceCanvases.values.removeAll { canvas -> canvas.buffer.isClosed.also { if (it) canvas.close() } }
-            GpuCanvas(hardwareBuffer, width, height, format)
+            GpuCanvas(hardwareBuffer, width, height, ColorSpace.get(ColorSpace.Named.SRGB))
         }
-        canvas.draw(view)
+        if (hardwareBuffer.format == HardwareBuffer.RGBA_1010102) {
+            val scene = ownGpuCanvas()
+            scene.draw(view)
+            canvas.draw(scene.buffer, encodeShader())
+        } else {
+            canvas.draw(view)
+        }
         drewOnGpu = true
     }
+
+    @RequiresApi(34)
+    private fun ownGpuCanvas(): GpuCanvas = (gpuCanvas as GpuCanvas?) ?: GpuCanvas.allocate(width, height, format).also { gpuCanvas = it }
+
+    @RequiresApi(34)
+    private fun encodeShader(): RuntimeShader = (encodeShader as RuntimeShader?) ?: RuntimeShader(ENCODE_SHADER).apply {
+        setFloatUniform("hlg", if (checkNotNull(track).config.dynamicRange == DynamicRange.HLG) 1f else 0f)
+    }.also { encodeShader = it }
 
     /** The GPU's canvas once drawn into, or null where it is not available or has failed. */
     private suspend fun drawOnGpu(view: View): Any? {
         if (!gpu || gpuFailed || Build.VERSION.SDK_INT < 34) return null
         return try {
-            val canvas = (gpuCanvas as GpuCanvas?) ?: GpuCanvas.allocate(width, height, format).also { gpuCanvas = it }
+            val canvas = ownGpuCanvas()
             canvas.draw(view)
             drewOnGpu = true
             canvas
@@ -297,26 +327,52 @@ public class ComposeFrameRenderer<T> internal constructor(
     private object Unset
 }
 
-/** The GPU draws a recorded view into [buffer], frame after frame; a buffer it is given stays its lender's to close. */
+/**
+ * The GPU draws a recorded view, or another buffer through a shader, into [buffer] in [colorSpace], frame after
+ * frame; a buffer it is given stays its lender's to close.
+ */
 @RequiresApi(34)
 private class GpuCanvas(
     val buffer: HardwareBuffer,
-    width: Int,
-    height: Int,
-    format: FrameFormat,
+    private val width: Int,
+    private val height: Int,
+    private val colorSpace: ColorSpace,
     private val ownsBuffer: Boolean = false,
 ) : AutoCloseable {
-    private val f16 = format == FrameFormat.RgbaF16
     private val node = RenderNode("FFmpegKMP ComposeFrameRenderer").apply { setPosition(0, 0, width, height) }
     private val renderer = HardwareBufferRenderer(buffer).apply { setContentRoot(node) }
-    private val colorSpace = ColorSpace.get(if (f16) ColorSpace.Named.LINEAR_EXTENDED_SRGB else ColorSpace.Named.SRGB)
+    private val paint = Paint()
 
-    suspend fun draw(view: View) {
+    /**
+     * The wraps of the buffers drawn through a shader, the last two kept: a wrap made once would go on showing its
+     * first frame, as the decode side found, since HWUI caches the texture it makes of a hardware bitmap, and the
+     * display list may still name the previous wrap.
+     */
+    private val wraps = ArrayDeque<Bitmap>(3)
+
+    suspend fun draw(view: View) = render { canvas ->
+        // The buffer holds the last frame: what the content leaves uncovered is transparent black.
+        canvas.drawColor(0, BlendMode.CLEAR)
+        view.draw(canvas)
+    }
+
+    /**
+     * Fills the buffer with [shader] over [scene], labelled sRGB so that, drawn into an sRGB canvas, Skia hands the
+     * shader the scene's values as they are and writes its output back untouched.
+     */
+    suspend fun draw(scene: HardwareBuffer, shader: RuntimeShader) {
+        val wrap = checkNotNull(Bitmap.wrapHardwareBuffer(scene, ColorSpace.get(ColorSpace.Named.SRGB))) { "Could not wrap the scene in a bitmap" }
+        wraps.addLast(wrap)
+        while (wraps.size > 2) wraps.removeFirst().recycle()
+        shader.setInputShader("scene", BitmapShader(wrap, Shader.TileMode.CLAMP, Shader.TileMode.CLAMP))
+        paint.shader = shader
+        render { canvas -> canvas.drawRect(0f, 0f, width.toFloat(), height.toFloat(), paint) }
+    }
+
+    private suspend fun render(record: (Canvas) -> Unit) {
         val canvas = node.beginRecording()
         try {
-            // The buffer holds the last frame: what the content leaves uncovered is transparent black.
-            canvas.drawColor(0, BlendMode.CLEAR)
-            view.draw(canvas)
+            record(canvas)
         } finally {
             node.endRecording()
         }
@@ -330,6 +386,8 @@ private class GpuCanvas(
     override fun close() {
         renderer.close()
         node.discardDisplayList()
+        wraps.forEach(Bitmap::recycle)
+        wraps.clear()
         if (ownsBuffer) buffer.close()
     }
 
@@ -347,10 +405,44 @@ private class GpuCanvas(
                 1,
                 HardwareBuffer.USAGE_GPU_COLOR_OUTPUT or HardwareBuffer.USAGE_GPU_SAMPLED_IMAGE or HardwareBuffer.USAGE_CPU_READ_OFTEN,
             ),
-            width, height, format, ownsBuffer = true,
+            width, height,
+            ColorSpace.get(if (format == FrameFormat.RgbaF16) ColorSpace.Named.LINEAR_EXTENDED_SRGB else ColorSpace.Named.SRGB),
+            ownsBuffer = true,
         )
     }
 }
+
+/**
+ * The F16 canvas's linear light, 1.0 at 203 nits, to the full-range PQ or HLG codes an HDR track's BT.2020 buffer
+ * holds: the inverse of the decode shader in `VideoFrameImage.android.kt`, with the same matrix the other way round.
+ * The scene is premultiplied over transparent black, so its RGB is the light and the output is opaque. HLG takes
+ * the inverse of BT.2100's OOTF for a 1000-nit display before its OETF, as the one-copy path's converter does; the
+ * log's argument is floored since `mix` keeps a NaN from the branch it discards.
+ */
+private val ENCODE_SHADER = """
+uniform shader scene;
+uniform float hlg;
+
+half4 main(float2 coord) {
+    float3 light = max(float3(scene.eval(coord).rgb), 0.0);
+    float3 wide = ${Bt2020Matrices.agsl(Bt2020Matrices.fromSrgb, "light")};
+    float3 code;
+    if (hlg > 0.5) {
+        float3 display = min(wide * (203.0 / 1000.0), 1.0);
+        float luminance = dot(display, float3(0.2627, 0.6780, 0.0593));
+        float3 sceneLight = luminance > 0.0 ? min(display * pow(luminance, -1.0 / 6.0), 1.0) : float3(0.0);
+        code = mix(
+            sqrt(3.0 * sceneLight),
+            0.17883277 * log(max(12.0 * sceneLight - 0.28466892, 1e-6)) + 0.55991073,
+            step(float3(1.0 / 12.0), sceneLight)
+        );
+    } else {
+        float3 signal = pow(min(wide * (203.0 / 10000.0), 1.0), float3(0.1593017578125));
+        code = pow((0.8359375 + 18.8515625 * signal) / (1.0 + 18.6875 * signal), float3(78.84375));
+    }
+    return half4(half3(clamp(code, 0.0, 1.0)), 1.0);
+}
+"""
 
 /**
  * Lets the main looper run what was posted before this frame. Compose posts a draw invalidation to the main handler

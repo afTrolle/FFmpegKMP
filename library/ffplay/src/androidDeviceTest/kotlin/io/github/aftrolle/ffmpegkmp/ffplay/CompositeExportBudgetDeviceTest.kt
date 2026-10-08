@@ -58,7 +58,8 @@ import org.junit.Assume.assumeTrue
  * which `GpuBuffers` keeps on the GPU. The export is HDR10 for the PQ
  * clip where the phone encodes it and SDR otherwise; `range` (`SDR` or `HDR10`) picks one.
  * `cases` (such as `GpuBuffers+GpuBuffersToSurface`) narrows the cases by name, and `rounds` (1 by default)
- * repeats them. `GpuBuffersToSurface` needs an SDR export on Android 14 or later and is skipped for an HDR one.
+ * repeats them. `GpuBuffersToSurface` needs Android 14 or later; its `zeroCopy` line says whether the
+ * encoder took the surface, for an HDR export through the renderer's encode pass.
  */
 class CompositeExportBudgetDeviceTest {
     private val context = InstrumentationRegistry.getInstrumentation().targetContext
@@ -67,7 +68,7 @@ class CompositeExportBudgetDeviceTest {
     private class Case(
         val name: String,
         val decoder: DecoderPreference = DecoderPreference.SOFTWARE,
-        /** Draw into the encoder's input surface, with no copy, where the track allows it: SDR only. */
+        /** Draw into the encoder's input surface, with no copy, where the track allows it. */
         val surface: Boolean = false,
         val output: (VideoTrack) -> VideoOutput,
     )
@@ -117,10 +118,6 @@ class CompositeExportBudgetDeviceTest {
         val names = arguments.getString("cases")?.split('+')
         for (round in 1..rounds) {
             for (case in cases.filter { names == null || it.name in names }) {
-                if (case.surface && range != DynamicRange.SDR) {
-                    Log.i(TAG, "${case.name} skipped: the input surface takes SDR exports only")
-                    continue
-                }
                 coolDown()
                 export(clip, hdr.copy(dynamicRange = range), case, round)
             }

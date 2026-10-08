@@ -129,7 +129,7 @@ private object CodedShaders {
  * extended-range canvas keeps. `origin` and `scale` map the draw's coordinates into the image, and
  * `crop` holds the sampling to the picture.
  */
-private const val CODED_IMAGE_SHADER = """
+private val CODED_IMAGE_SHADER = """
 uniform shader image;
 uniform float2 origin;
 uniform float2 scale;
@@ -147,11 +147,7 @@ half4 main(float2 coord) {
         float3 signal = pow(code, float3(1.0 / 78.84375));
         light = pow(max(signal - 0.8359375, 0.0) / (18.8515625 - 18.6875 * signal), float3(1.0 / 0.1593017578125)) * (10000.0 / 203.0);
     }
-    return half4(half3(
-        dot(float3(1.660491, -0.587641, -0.072850), light),
-        dot(float3(-0.124550, 1.132900, -0.008349), light),
-        dot(float3(-0.018151, -0.100579, 1.118730), light)
-    ), 1.0);
+    return half4(half3(${Bt2020Matrices.agsl(Bt2020Matrices.toSrgb, "light")}), 1.0);
 }
 """
 

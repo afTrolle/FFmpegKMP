@@ -299,7 +299,8 @@ public class VideoTrack internal constructor(
     /**
      * Whether this track's frames reach the encoder with no copy at all, drawn by a
      * `ComposeFrameRenderer` on the GPU straight into the hardware encoder's input surface, which
-     * Android 14 (API 34) and later give 8-bit SDR H.264 and HEVC tracks. A renderer made for the
+     * Android 14 (API 34) and later give 8-bit SDR H.264 and HEVC tracks and HDR10 and HLG HEVC
+     * ones. A renderer made for the
      * track asks for it as it renders its first frame, so this is true from then on, and false for
      * every other track, whose frames the writer converts once (see [write]). Such a track takes
      * only frames from its renderer; [inputFormat] describes the other kind.
