@@ -1003,9 +1003,9 @@ The decoder, in Kotlin only:
   held. `FrameImage` retains the frame it shows and closes it on the next
   update, since a wrap is valid only while its image is held, and keeps the last
   two wraps open beside the last two frames. Nothing is written.
-- SDR buffers wrap as sRGB. 10-bit buffers would wrap as `BT2020_PQ` or
-  `BT2020_HLG`; until the HDR check below passes, 10-bit sources take the memory
-  path and `GpuBuffers` is SDR.
+- SDR buffers wrap as sRGB. 10-bit buffers first wrapped as `BT2020_PQ` or
+  `BT2020_HLG`, which failed the HDR check below on the phone; they now wrap as
+  linear sRGB and draw through the renderer's own shader (see the status).
 - The renderer's software path cannot draw a hardware bitmap, so `GpuBuffers`
   frames need the GPU renderer.
 - `Host.awaitWindow()` in `ComposeFrameRenderer.android.kt` stops waiting after
@@ -1019,7 +1019,8 @@ Verify:
   frame has a GPU-sampled buffer with a 128×128 crop and null `format`; the same
   position twice gives the same buffer; holding three frames, a fourth returns
   once one closes and times out otherwise; `frames()` delivers frames 0–149; the
-  fallback and 10-bit sources give memory frames.
+  fallback gives memory frames, and a 10-bit source stays in a buffer when a
+  hardware decoder takes it.
 - `FrameImageDeviceTest`: a `GpuBuffers` frame drawn through `FrameImage` matches
   the same position from `Memory()` within 4 per component on flat regions, with
   crop, rotation and aspect right; no bitmap allocations, one wrap per update
@@ -1027,6 +1028,9 @@ Verify:
   path fails clearly.
 - The HDR check: `hdr10-pq.mp4` through `GpuBuffers` into an F16 renderer reads
   about 4.9 (1,000/203) at the fixture's highlight, as the memory path does.
+  The precision check: a grey PQ ramp (`hdr10-pq-gradient.mp4`, 256 steps four
+  codes apart) drawn the same two ways stays within one PQ code, in linear
+  light, in every column.
 - On the phone, a 4K H.264 `update` falls from a 4K conversion to under 1 ms.
 
 The gate for the encoder half: a four-source composite export on the phone
@@ -1071,23 +1075,33 @@ renderer's draw as an asynchronous message that a Choreographer sync barrier
 runs ahead of Compose's posted draw invalidation (the renderer now awaits a plain
 main-handler post before each frame); and `FrameImage` wraps a buffer on every
 update, since HWUI's texture for a hardware bitmap never learns of a rewrite.
-The HDR check fails: HWUI maps a BT.2020 PQ hardware bitmap to SDR when it
-composites offscreen (the 1000-nit highlight reads 0.79 on the F16 canvas,
-4.93 from memory), so 10-bit sources keep decoding into memory; the check runs
-on request with `hdrGpuCheck=true`, over a two-second fixture, because the
+The HDR check failed first: HWUI maps a BT.2020 PQ hardware bitmap to SDR when
+it composites offscreen (the 1000-nit highlight read 0.79 on the F16 canvas,
+4.93 from memory), through its own colour management, which a `BT2020_PQ` or
+`BT2020_HLG` label cannot avoid. The check is now met by decoding PQ and HLG in
+the renderer's own shader over a `LINEAR_SRGB`-labelled wrap: HWUI then applies
+no tone map and no curve, the GPU converts the P010 YUV with the buffer's
+BT.2020 matrix, and an AGSL `RuntimeShader` takes the codes as plain numbers,
+applies the PQ EOTF (or the HLG inverse OETF with the OOTF for 1000 nits) as
+the CPU converter does, divides by 203 nits, and maps BT.2020 to sRGB primaries.
+10-bit sources therefore stay on the GPU by default (`gpuBuffersKeepDeepSources`
+is gone, and `GpuBufferVideoDecoder` no longer reopens them into memory). The
+gradient test (`hdr10-pq-gradient.mp4`) is the precision proof that the GPU's
+sampler keeps 10 bits. Phone numbers for the highlight and the ramp's worst
+column: to be filled in after the next run. Both checks run on request with
+`hdrGpuCheck=true`, over two-second fixtures, because the
 hardware decoder holds up to its output delay (19 frames here) before the
 first picture. What the build settled differently from the plan:
 
 - `NativeGpuBuffer` also carries the buffer's id, which `FrameImage` finds its
-  wraps by, and the source's HDR type, which picks the colour space a wrap
-  takes.
+  wraps by, and the source's transfer, which picks the wrap's colour space and
+  whether the draw uses the HDR shader (`FrameImage.Shown.transfer`).
 - The reader is made at a nominal 128×128 and `ffmpegkmp_video_decoder_start`
   stays whole, as the probe's reader suggests; the first device run confirms
   it.
 - `GPU_BUFFERS` reaches C as Surface output, which keeps sources deeper than
-  8 bits in hardware, so `GpuBufferVideoDecoder` opens such a source a second
-  time, for memory output, once `start` has read its depth. An internal switch,
-  `gpuBuffersKeepDeepSources`, keeps them on the GPU for the HDR check.
+  8 bits in hardware. `GpuBufferVideoDecoder` first opened such a source a
+  second time, for memory output, until the HDR check passed; it no longer does.
 - The wait for an image counts against the call's deadline and is reported
   through `timeLeftMicros`, so one that runs out is a timeout like the ring's,
   and leaves the decoder timed out. Each image's fence is awaited before its
@@ -1107,8 +1121,8 @@ first picture. What the build settled differently from the plan:
 - On a software canvas `drawFrameImage` fails with the reason itself, rather
   than leaving it to `Canvas`'s own error for a hardware bitmap.
 - The measurement's `GpuBuffers` case decodes `clip=h264`, a 4K H.264 clip
-  `scripts/generate-budget-clip.sh` now makes too, since a 10-bit source takes
-  the memory path. `render` splits into `draw`, which includes waiting for the
+  `scripts/generate-budget-clip.sh` now makes too, since a 10-bit source took
+  the memory path then. `render` splits into `draw`, which includes waiting for the
   GPU, and `copy`, and the log gives the copy's share of a frame's time, which
   decides the encoder half:
 
@@ -1699,13 +1713,13 @@ In order:
    `FrameImageDeviceTest` cases pass. Bringing the HDR composite under budget
    is open.
 3. Done (change set 12): the device tests pass after the two fixes recorded
-   there; the HDR check fails, so 10-bit sources stay in memory until a draw
-   path keeps a PQ hardware bitmap's values on an F16 canvas; the 4K `update`
-   is 0.30 ms.
+   there; the HDR check failed through HWUI's colour management and is now met
+   by the renderer's own PQ and HLG shader over a linear sRGB wrap, with the
+   phone numbers to come; the 4K `update` is 0.30 ms.
 4. The copy is 22% of a frame, under the 30% gate, and the decoder half alone
    exports 6.7× faster than from memory; the owner built the encoder half
-   anyway. Built; its device tests and the `GpuBuffersToSurface` measurement
-   are to run on the phone.
+   anyway. Built; its device tests pass on the phone and the
+   `GpuBuffersToSurface` measurement's numbers are to come.
 5. Follow-ups:
    - fewer copies in the browser renderer, and one copy of the aspect formula in
      `PlatformFFplaySurface.web.kt`'s JavaScript;
@@ -1774,7 +1788,8 @@ Decided:
 - **The ring is three frames, fixed** (change set 18): the caller's, the one
   ahead, and one to spare. A fourth waits, then times out.
 - **Android GPU frames are a `VideoOutput`** (change set 12): `GpuBuffers`, on
-  Android 14 and later, SDR until the HDR check passes.
+  Android 14 and later, 10-bit sources included: PQ and HLG draw through the
+  renderer's own shader.
 - **Android zero-copy comes in two halves** (change set 12): the decoder half
   first, the encoder half only if, in a measured composite export, the copy out
   of the `HardwareBuffer` is at least 30% of a frame's time.

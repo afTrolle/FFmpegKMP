@@ -2,10 +2,10 @@
 # SPDX-License-Identifier: Apache-2.0
 """Regenerates the VideoDecoder fixtures in this directory.
 
-Usage: FFMPEG=/path/to/ffmpeg python3 generate.py [hdr | hdr-large]
+Usage: FFMPEG=/path/to/ffmpeg python3 generate.py [hdr | hdr-large | hdr-gradient]
 
-With `hdr`, only hdr10-pq.mp4, hlg.mp4 and hdr10-pq-large.mp4 are regenerated; with `hdr-large`,
-only hdr10-pq-large.mp4.
+With `hdr`, only hdr10-pq.mp4, hlg.mp4, hdr10-pq-large.mp4 and hdr10-pq-gradient.mp4 are
+regenerated; with `hdr-large` or `hdr-gradient`, only that one.
 
 FFMPEG must be an ffmpeg CLI built from this repository's pinned FFmpeg (the build has no lavfi
 device, so every clip is encoded from PNG frames written here). hdr10-pq.mp4, hlg.mp4 and the -h264
@@ -25,6 +25,7 @@ import zlib
 WIDTH, HEIGHT = 96, 64
 # hdr10-pq-large.mp4: Qualcomm's hardware HEVC decoders refuse 10-bit pictures as small as the 96x64 ones.
 LARGE_WIDTH, LARGE_HEIGHT = 320, 192
+GRADIENT_STEPS = 256
 CELL = 16
 BITS = (WIDTH // CELL) * (32 // CELL)
 FONT = {
@@ -90,11 +91,8 @@ def pq_code(nits):
 SWSCALE_10_BIT = 256 / 257
 
 
-def hdr_frame(path, width=WIDTH, height=HEIGHT):
-    # Left half: 100 nit grey. Right half: a 1000 nit highlight. Full-range 16-bit PQ RGB, BT.2020.
-    left = round(pq_code(100) * SWSCALE_10_BIT * 65535)
-    right = round(pq_code(1000) * SWSCALE_10_BIT * 65535)
-    row = b"".join(struct.pack(">HHH", *(3 * [left if x < width // 2 else right])) for x in range(width))
+def hdr_png(path, row, width, height):
+    # Full-range 16-bit PQ RGB, BT.2020, with the HDR10 metadata a PNG carries.
     cicp = chunk(b"cICP", bytes([9, 16, 0, 1]))
     # BT.2020 primaries and D65 in 0.00002 units, then 1000 and 0.0001 nits in 0.0001 units.
     mdcv = chunk(
@@ -104,6 +102,26 @@ def hdr_frame(path, width=WIDTH, height=HEIGHT):
     )
     clli = chunk(b"cLLI", struct.pack(">II", 1000 * 10000, 400 * 10000))
     png(path, [row] * height, bit_depth=16, extra_chunks=cicp + mdcv + clli, width=width, height=height)
+
+
+def hdr_frame(path, width=WIDTH, height=HEIGHT):
+    # Left half: 100 nit grey. Right half: a 1000 nit highlight.
+    left = round(pq_code(100) * SWSCALE_10_BIT * 65535)
+    right = round(pq_code(1000) * SWSCALE_10_BIT * 65535)
+    row = b"".join(struct.pack(">HHH", *(3 * [left if x < width // 2 else right])) for x in range(width))
+    hdr_png(path, row, width, height)
+
+
+def gradient_code(x):
+    # Column x holds the 10-bit PQ code 4 * x, up to 1020 where the 256 steps end; the columns beyond repeat it.
+    return 4 * min(x, GRADIENT_STEPS - 1)
+
+
+def hdr_gradient_frame(path, width=LARGE_WIDTH, height=LARGE_HEIGHT):
+    # Grey, every row the same: 256 steps of 4 PQ codes across the 10-bit range.
+    row = b"".join(
+        struct.pack(">HHH", *(3 * [round(gradient_code(x) / 1023 * SWSCALE_10_BIT * 65535)])) for x in range(width))
+    hdr_png(path, row, width, height)
 
 
 def hlg_frame(path):
@@ -238,6 +256,7 @@ def hdr(out, work):
     grey = lambda nits: (pq_code(nits),) * 3
     check_codes(os.path.join(out, "hdr10-pq.mp4"), {(12, 32): grey(100), (84, 32): grey(1000)})
     hdr_large(out, work)
+    hdr_gradient(out, work)
     hlg(out, work)
 
 
@@ -257,6 +276,20 @@ def hdr_large(out, work):
                 LARGE_WIDTH, LARGE_HEIGHT)
 
 
+def hdr_gradient(out, work):
+    # The grey ramp of hdr_gradient_frame, as long as hdr10-pq-large.mp4 and at a bitrate that keeps its 10-bit codes.
+    hdr_gradient_frame(os.path.join(work, "gradient.png"))
+    run(
+        "-loop", "1", "-framerate", "30", "-i", os.path.join(work, "gradient.png"), "-frames:v", "60",
+        "-c:v", "hevc_videotoolbox", "-profile:v", "main10", "-pix_fmt", "p010le", "-b:v", "20M",
+        "-color_primaries", "bt2020", "-color_trc", "smpte2084", "-colorspace", "bt2020nc",
+        "-color_range", "tv", "-tag:v", "hvc1", os.path.join(out, "hdr10-pq-gradient.mp4"),
+    )
+    grey = lambda x: (gradient_code(x) / 1023,) * 3
+    check_codes(os.path.join(out, "hdr10-pq-gradient.mp4"), {(x, 96): grey(x) for x in range(0, LARGE_WIDTH, 8)},
+                LARGE_WIDTH, LARGE_HEIGHT)
+
+
 def hlg(out, work):
     for index in range(10):
         hlg_frame(os.path.join(work, f"g{index:04d}.png"))
@@ -272,8 +305,9 @@ def hlg(out, work):
 
 
 if __name__ == "__main__":
-    if sys.argv[1:] in (["hdr"], ["hdr-large"]):
+    steps = {"hdr": hdr, "hdr-large": hdr_large, "hdr-gradient": hdr_gradient}
+    if sys.argv[1:] and sys.argv[1] in steps and len(sys.argv) == 2:
         with tempfile.TemporaryDirectory() as scratch:
-            step = hdr if sys.argv[1] == "hdr" else hdr_large
+            step = steps[sys.argv[1]]
             sys.exit(step(os.path.dirname(os.path.abspath(__file__)), scratch))
     sys.exit(main())

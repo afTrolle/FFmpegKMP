@@ -54,6 +54,11 @@ import org.junit.Assume.assumeTrue
 class FrameImageDeviceTest {
     private val context = InstrumentationRegistry.getInstrumentation().targetContext
 
+    private companion object {
+        /** The steps of hdr10-pq-gradient.mp4's ramp, one per column from the left. */
+        const val RAMP_STEPS = 256
+    }
+
     @Test
     fun manyUpdatesWithFewPtsConvertOncePerPtsIntoTwoBitmapsInTurn() = runBlocking<Unit> {
         open("cfr-30.mp4", VideoOutput.Memory()).use { decoder ->
@@ -237,33 +242,48 @@ class FrameImageDeviceTest {
     @Test
     fun anHdr10FrameInAGpuBufferKeepsItsHighlightOnAnF16CanvasAsFromMemory() = runBlocking<Unit> {
         assumeGpuBuffers()
-        assumeTrue(
-            "Runs only with the hdrGpuCheck=true instrumentation argument",
-            InstrumentationRegistry.getArguments().getString("hdrGpuCheck") == "true",
-        )
+        assumeHdrGpuCheck()
         val highlights = listOf(VideoOutput.GpuBuffers, VideoOutput.Memory(FrameFormat.RgbaF16)).map { output ->
-            open("hdr10-pq-large.mp4", output, DecoderPreference.AUTO).use { decoder ->
-                if (output == VideoOutput.GpuBuffers) {
-                    assumeTrue("a hardware decoder takes the 320x192 HDR10 fixture", decoder.decoderKind == DecoderKind.HARDWARE)
-                }
-                FrameImage().use { image ->
-                    ComposeFrameRenderer<FrameImage>(context, 320, 192, FrameFormat.RgbaF16, Density(1f), true) {
-                        Canvas(Modifier.fillMaxSize()) { drawFrameImage(it) }
-                    }.use { renderer ->
-                        decoder.frameAt(0.5.seconds).use { frame ->
-                            assertEquals(output == VideoOutput.GpuBuffers, frame.hardwareBuffer != null, "$output")
-                            image.update(frame)
-                            renderer.render(frame.pts, image).use { drawn ->
-                                assertTrue(renderer.drewOnGpu)
-                                assertNotNull(drawn.usePlanes { planes -> planes.single().half(y = 96, x = 280) })
-                            }
-                        }
-                    }
-                }
-            }
+            drawnOnF16("hdr10-pq-large.mp4", output) { it.half(y = 96, x = 280) }
         }
         println("FrameImageDeviceTest: HDR10 highlight ${highlights[0]} through GpuBuffers, ${highlights[1]} from memory")
         highlights.forEach { assertEquals(1000.0 / 203.0, it, 0.15) }
+    }
+
+    /**
+     * The precision check: a grey PQ ramp of 256 steps, 4 codes apart across the 10-bit range, through `GpuBuffers` and
+     * from memory, drawn on an F16 canvas. Each column's light from the GPU stays within one PQ code, in linear light,
+     * of the memory path's, which proves the GPU's sampler keeps the buffer's 10 bits. The tolerance adds the half-float
+     * rounding of both values.
+     */
+    @Test
+    fun aPqRampInAGpuBufferStaysWithinOnePqCodeOfTheMemoryPathInEveryColumn() = runBlocking<Unit> {
+        assumeGpuBuffers()
+        assumeHdrGpuCheck()
+        val (gpu, memory) = listOf(VideoOutput.GpuBuffers, VideoOutput.Memory(FrameFormat.RgbaF16)).map { output ->
+            drawnOnF16("hdr10-pq-gradient.mp4", output) { plane ->
+                DoubleArray(RAMP_STEPS * 3) { plane.half(y = 96, x = it / 3, channel = it % 3) }
+            }
+        }
+        var worst = 0.0
+        var worstColumn = 0
+        for (column in 0 until RAMP_STEPS) {
+            val code = 4 * column
+            val tolerance = (pqLight(code + 1) - pqLight(code - 1)) / 2
+            for (channel in 0 until 3) {
+                val expected = memory[column * 3 + channel]
+                val share = abs(gpu[column * 3 + channel] - expected) / (tolerance + abs(expected) / 512)
+                if (share > worst) {
+                    worst = share
+                    worstColumn = column
+                }
+            }
+        }
+        println(
+            "FrameImageDeviceTest: PQ ramp, worst column $worstColumn (code ${4 * worstColumn}): " +
+                "${gpu[worstColumn * 3]} through GpuBuffers, ${memory[worstColumn * 3]} from memory, ${worst} of one code",
+        )
+        assertTrue(worst <= 1.0, "column $worstColumn is $worst of one PQ code from the memory path")
     }
 
     /** A 4K H.264 update: a wrap of the frame's buffer through `GpuBuffers`, a 4K conversion from memory. */
@@ -378,6 +398,45 @@ class FrameImageDeviceTest {
         }
         return if (bits and 0x8000 != 0) -magnitude else magnitude
     }
+
+    /** The frame at 0.5 s of [name] through [output], drawn on a 320x192 F16 canvas and read from the canvas's plane. */
+    private suspend fun <T : Any> drawnOnF16(name: String, output: VideoOutput, read: (FramePlane) -> T): T =
+        open(name, output, DecoderPreference.AUTO).use { decoder ->
+            if (output == VideoOutput.GpuBuffers) {
+                assumeTrue("a hardware decoder takes the 320x192 HDR10 fixtures", decoder.decoderKind == DecoderKind.HARDWARE)
+            }
+            FrameImage().use { image ->
+                ComposeFrameRenderer<FrameImage>(context, 320, 192, FrameFormat.RgbaF16, Density(1f), true) {
+                    Canvas(Modifier.fillMaxSize()) { drawFrameImage(it) }
+                }.use { renderer ->
+                    decoder.frameAt(0.5.seconds).use { frame ->
+                        assertEquals(output == VideoOutput.GpuBuffers, frame.hardwareBuffer != null, "$output")
+                        image.update(frame)
+                        renderer.render(frame.pts, image).use { drawn ->
+                            assertTrue(renderer.drewOnGpu)
+                            checkNotNull(drawn.usePlanes { planes -> read(planes.single()) })
+                        }
+                    }
+                }
+            }
+        }
+
+    /** PQ's light at the 10-bit [code], in units of 203 nits: the EOTF of ST 2084. */
+    private fun pqLight(code: Int): Double {
+        val m1 = 2610.0 / 16384
+        val m2 = 2523.0 / 32
+        val c1 = 3424.0 / 4096
+        val c2 = 2413.0 / 128
+        val c3 = 2392.0 / 128
+        val signal = Math.pow(code.coerceIn(0, 1023) / 1023.0, 1 / m2)
+        return Math.pow(maxOf(signal - c1, 0.0) / (c2 - c3 * signal), 1 / m1) * 10000 / 203
+    }
+
+    /** The HDR checks run only with the `hdrGpuCheck=true` instrumentation argument. */
+    private fun assumeHdrGpuCheck() = assumeTrue(
+        "Runs only with the hdrGpuCheck=true instrumentation argument",
+        InstrumentationRegistry.getArguments().getString("hdrGpuCheck") == "true",
+    )
 
     /** The emulator's decoders reject FFmpeg's input, so `GpuBuffers` needs a real device of Android 14 or later. */
     private fun assumeGpuBuffers() {

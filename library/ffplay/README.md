@@ -199,6 +199,16 @@ Canvas(Modifier.fillMaxSize()) { drawFrameImage(image) }
 - On Android 14 (API 34) and later, frames from `VideoOutput.GpuBuffers` lie in GPU memory, and
   `update` shows them with no copy and no bitmap of its own: it wraps the frame's `HardwareBuffer`
   anew each time, with `Bitmap.wrapHardwareBuffer`, and draws the frame's crop of it, SDR as sRGB.
+  PQ and HLG buffers wrap as linear sRGB and draw through the renderer's own AGSL shader (Android
+  13 and later, which `GpuBuffers` already exceeds): the HDR bitmap colour spaces failed the HDR check:
+  below, because HWUI tone maps a `BT2020_PQ` bitmap to SDR when it composites offscreen, the
+  1000-nit highlight reading 0.79 on an F16 canvas against 4.93 from memory. A linear sRGB label
+  makes HWUI apply no tone map and no curve, so the GPU's external-texture path converts the P010
+  YUV with the buffer's BT.2020 matrix and the shader receives the PQ or HLG codes as numbers. It
+  decodes them as the CPU converter does, to linear light with 1.0 at 203 nits (PQ's EOTF; HLG's
+  inverse OETF with the BT.2100 OOTF for a 1000-nit display) in sRGB primaries, and the F16 canvas
+  keeps values above 1.0 and below 0. Draw such frames on an `RgbaF16` canvas: they are not tone
+  mapped, so an SDR export takes HDR sources from `Memory(canvasFormat)`.
   It wraps every time because HWUI keeps a hardware bitmap's GPU texture with the bitmap, so a wrap
   of a buffer the decoder has since rewritten would still draw the old frame. A wrap shows its
   buffer only while the buffer's frame is open, so the image keeps the
@@ -337,7 +347,10 @@ drawing two `FrameImage`s updated from two coroutines each match their own sourc
 rotated clip and synthesised anamorphic frames upright at their display aspect, and checks that a
 renderer drawing a `FrameImage` matches one drawing `toImageBitmap`. `FrameImageDeviceTest` does
 the same on both Android paths, the GPU and the software canvas, and draws `GpuBuffers` frames
-against the same frames from memory; `ComposeFrameRendererDeviceTest` checks the
+against the same frames from memory. With `hdrGpuCheck=true` it also runs the HDR checks: an HDR10
+highlight reads 1000/203 on an F16 canvas through `GpuBuffers` as from memory, and a PQ ramp of 256
+grey steps four codes apart (`hdr10-pq-gradient.mp4`) stays within one PQ code of the memory path in
+every column, which shows the GPU's sampler keeps 10 bits; `ComposeFrameRendererDeviceTest` checks the
 Android formats, the GPU and software paths against each other, and a MediaCodec encode;
 `SurfaceEncoderDeviceTest` encodes 30 rendered frames through the encoder's input surface and decodes them
 back frame for frame, and compares their colours with the one-copy path's.
