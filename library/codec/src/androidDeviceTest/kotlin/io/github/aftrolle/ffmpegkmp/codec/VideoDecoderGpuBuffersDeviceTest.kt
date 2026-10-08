@@ -93,7 +93,7 @@ class VideoDecoderGpuBuffersDeviceTest {
     }
 
     @Test
-    fun theSoftwareDecoderGivesFramesInMemory() = runBlocking {
+    fun theSoftwareDecoderGivesFramesInMemory() = runBlocking<Unit> {
         assumeGpuBuffers()
         open("cfr-30-h264-128.mp4", DecoderPreference.SOFTWARE).use { decoder ->
             assertEquals(DecoderKind.SOFTWARE, decoder.decoderKind)
@@ -105,7 +105,7 @@ class VideoDecoderGpuBuffersDeviceTest {
     }
 
     @Test
-    fun aTenBitSourceStaysInGpuMemoryWhenAHardwareDecoderTakesIt() = runBlocking {
+    fun aTenBitSourceStaysInGpuMemoryWhenAHardwareDecoderTakesIt() = runBlocking<Unit> {
         assumeGpuBuffers()
         open("hdr10-pq-large.mp4").use { decoder ->
             assumeTrue("a hardware decoder takes the 320x192 HDR10 fixture", decoder.decoderKind == DecoderKind.HARDWARE)

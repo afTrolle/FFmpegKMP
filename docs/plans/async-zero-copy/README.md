@@ -1714,12 +1714,20 @@ In order:
    is open.
 3. Done (change set 12): the device tests pass after the two fixes recorded
    there; the HDR check failed through HWUI's colour management and is now met
-   by the renderer's own PQ and HLG shader over a linear sRGB wrap, with the
-   phone numbers to come; the 4K `update` is 0.30 ms.
+   by the renderer's own PQ and HLG shader over a linear sRGB wrap: on the phone
+   the 1000-nit highlight reads 4.93 through `GpuBuffers` and 4.95 from memory,
+   and the PQ ramp's worst column is 0.86 of one code, so 10-bit sources stay on
+   the GPU; the 4K `update` is 0.30 ms. The four-source 4K HDR10 composite then
+   runs at 10.5 frames/s with a 910 MB peak (1.4 frames/s and 2163 MB from
+   memory), within change set 18's 1.6 GB; its frame is now the 51 ms copy of the
+   F16 canvas into the encoder (53%), which a 10-bit input surface would remove.
 4. The copy is 22% of a frame, under the 30% gate, and the decoder half alone
    exports 6.7× faster than from memory; the owner built the encoder half
-   anyway. Built; its device tests pass on the phone and the
-   `GpuBuffersToSurface` measurement's numbers are to come.
+   anyway. Built and measured on the phone: `GpuBuffersToSurface` exports the
+   four-source 4K H.264 composite at 31.7 frames/s with the copy at 0 ms, 400 MB
+   resident (519 MB with the copy) and a 25 MB native heap (320 MB): the rate is
+   now bounded by the four concurrent 4K hardware decoders, since the draw with
+   its wait for the encoder's next buffer is 9.6 ms of a 10.6 ms frame.
 5. Follow-ups:
    - fewer copies in the browser renderer, and one copy of the aspect formula in
      `PlatformFFplaySurface.web.kt`'s JavaScript;
