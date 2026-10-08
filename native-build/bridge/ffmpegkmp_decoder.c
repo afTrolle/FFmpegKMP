@@ -432,8 +432,7 @@ static int ffmpegkmp_as_decoded(ffmpegkmp_video_decoder *decoder, const AVFrame 
         format.range = rgb || current->color_range == AVCOL_RANGE_JPEG || current->format == AV_PIX_FMT_YUVJ420P
                 ? FFMPEGKMP_RANGE_FULL
                 : FFMPEGKMP_RANGE_LIMITED;
-        if ((result = ffmpegkmp_frame_pool_take(decoder->pool, &format, current->width, current->height,
-                ffmpegkmp_decoder_interrupted, decoder, frame)) < 0)
+        if ((result = ffmpegkmp_frame_pool_take(decoder->pool, &format, current->width, current->height, frame)) < 0)
             return result;
         if ((result = ffmpegkmp_frame_convert_with(decoder->converter, *frame, current, 1)) < 0) {
             ffmpegkmp_frame_unref(*frame);
@@ -498,13 +497,11 @@ static int ffmpegkmp_hand_out(ffmpegkmp_video_decoder *decoder) {
     }
 #endif
     if (decoder->has_memory_format) {
-        /* Converted here, on the decoder's thread, so it overlaps with the caller's work. */
-        /* From the decoder's ring: while the caller holds all of it, this waits for a frame to close, until the
-         * call's deadline, interrupt or abort. */
+        /* Converted here, on the decoder's thread, so it overlaps with the caller's work. From the decoder's ring:
+         * while the caller holds all of it, this fails and the next call hands out again. */
         result = ffmpegkmp_frame_pool_take(decoder->pool, &decoder->memory_format,
                 decoder->width > 0 ? decoder->width : current->width,
-                decoder->height > 0 ? decoder->height : current->height,
-                ffmpegkmp_decoder_interrupted, decoder, &presented);
+                decoder->height > 0 ? decoder->height : current->height, &presented);
         if (result >= 0)
             result = ffmpegkmp_frame_convert_with(decoder->converter, presented, current, 0);
     } else {

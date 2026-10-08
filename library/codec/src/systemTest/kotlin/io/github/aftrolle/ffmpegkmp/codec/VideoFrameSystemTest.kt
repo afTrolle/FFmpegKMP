@@ -127,19 +127,27 @@ class VideoFrameSystemTest {
     }
 
     @Test
-    fun aFourthFrameWhileTheCallerHoldsTheRingTimesOutAndClosesTheDecoder() = runBlocking<Unit> {
-        decoder("cfr-24.mp4", VideoOutput.Memory(FrameFormat.Rgba8), timeout = 1.seconds).use { decoder ->
+    fun aFourthFrameWhileTheCallerHoldsTheRingFailsAtOnceAndTheDecoderGoesOnOnceOneCloses() = runBlocking<Unit> {
+        decoder("cfr-24.mp4", VideoOutput.Memory(FrameFormat.Rgba8)).use { decoder ->
             val open = (0 until 3).map { index -> decoder.frameAt(1.seconds / 24 * index) }
-            val waiting = TimeSource.Monotonic.markNow()
-            val failure = assertFailsWith<VideoDecodingException> {
+            val asked = TimeSource.Monotonic.markNow()
+            val failure = assertFailsWith<IllegalStateException> {
                 withContext(Dispatchers.Default) { decoder.frameAt(1.seconds / 24 * 3) }
             }
-            val waited = waiting.elapsedNow()
-            assertContains(failure.message.orEmpty(), "timed out")
-            assertTrue(waited >= 1.seconds && waited < 2.seconds, "timed out after $waited")
-            assertFailsWith<IllegalStateException> { decoder.frameAt(Duration.ZERO) }
-            // The frames it handed out stay valid.
-            open.forEachIndexed { index, frame -> frame.use { assertEquals(index, it.number()) } }
+            val took = asked.elapsedNow()
+            println("The fourth frame failed after $took: ${failure.message}")
+            assertContains(failure.message.orEmpty(), "holds all 3")
+            assertTrue(took < 2.seconds, "failed after $took, well before the 10 s timeout")
+            open.first().close()
+            decoder.frameAt(1.seconds / 24 * 3).use { assertEquals(3, it.number()) }
+            // The frames it handed out stay valid, and a frame closing during the call's grace lets it through.
+            open.drop(1).forEachIndexed { index, frame -> frame.use { assertEquals(index + 1, it.number()) } }
+            val held = (0 until 3).map { index -> decoder.frameAt(1.seconds / 24 * (10 + index)) }
+            val fourth = async(Dispatchers.Default) { decoder.frameAt(1.seconds / 24 * 13) }
+            delay(50.milliseconds)
+            held.first().close()
+            fourth.await().use { assertEquals(13, it.number()) }
+            held.drop(1).forEach(VideoFrame::close)
         }
     }
 

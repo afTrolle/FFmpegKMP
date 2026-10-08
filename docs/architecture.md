@@ -111,8 +111,9 @@ the decoder's thread converts each frame once into a frame from the decoder's
 pool; without one, frames go out as decoded, and hardware frames downloaded.
 A decoder's pool is a ring of three frames per layout and size
 (`ffmpegkmp_frame_pool_alloc(3)`), made once: while all three are out, the
-decoder waits in the bridge for one to close, until its call's deadline,
-interrupt or abort. The process-wide pool and the writer's have no bound.
+hand-out fails with `FFPLAYKMP_ERROR_RING_FULL` after a short grace for one to
+close, and the decoder stays usable. The process-wide pool and the writer's
+have no bound.
 On Android, `Memory` output opens MediaCodec without a Surface for 8-bit
 sources, so it decodes into memory (ByteBuffer mode) and FFmpeg copies each
 frame out as NV12 or YUV420P; deeper sources, whose P010 output FFmpeg does not

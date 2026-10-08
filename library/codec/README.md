@@ -115,12 +115,12 @@ can be drawn or encoded while the next one decodes.
 A decoder hands out its frames from a ring of three per layout and size, made once and handed out
 again as they close, so nothing allocates per frame: the frame the caller works on, the one decoded
 ahead, and one so the caller can keep the previous frame while taking the next. Holding more than
-three frames from one decoder makes the next `frameAt` wait for one of them to close, and at the
-decoder's timeout fail, which leaves the decoder timed out: a frame that is never closed stops the
-decoder rather than growing its memory. To keep more, keep conversions into another format
-(`convert(format)`), which copy into the process-wide pool, which has no bound; a `retain()` shares
-its frame's place in the ring, so it costs no other place but keeps that one taken. The ring
-covers:
+three frames from one decoder fails the next `frameAt` that needs a new frame with an
+`IllegalStateException`, after a short grace for a frame closing on another thread; the decoder
+stays usable, so closing a frame and calling again continues. To keep more, keep conversions into
+another format (`convert(format)`), which copy into the process-wide pool, which has no bound; a
+`retain()` shares its frame's place in the ring, so it costs no other place but keeps that one
+taken. The ring covers:
 
 - `Memory(format)`, on every native platform: the frames the decoder's thread converts into.
 - `Memory()` on Apple, whose software frames are copies into pooled `CVPixelBuffer`s.
@@ -193,8 +193,8 @@ blocked in; elsewhere such a read has to return on its own first.
   goes back to MediaCodec when its last reference closes. The decoder keeps the latest frame's, so
   the same position again gives the same buffer, and `frames()` holds its one frame ahead, which is
   that latest frame: the caller may hold two more, which is what ffplay's `FrameImage`, which draws
-  these frames with no copy, holds. So `frames()` into one `FrameImage` uses exactly the three. Holding more makes the next `frameAt` that needs a new frame wait, and at
-  the timeout fail; these frames cannot be converted, so hold fewer.
+  these frames with no copy, holds. So `frames()` into one `FrameImage` uses exactly the three. Holding more fails the next `frameAt` that needs a new frame with an
+  `IllegalStateException`, as above; these frames cannot be converted, so hold fewer.
   Sources deeper than 8 bits stay in GPU memory in 10 bits, an HDR10 or HLG one's buffer holding
   its PQ or HLG codes, which ffplay's `FrameImage` draws as linear light. Sources no MediaCodec
   decoder takes under `AUTO` come in memory as decoded and `decoderKind` reports `SOFTWARE`. Elsewhere, and before Android 14, `open` fails

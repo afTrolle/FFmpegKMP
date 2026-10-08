@@ -2,10 +2,10 @@
 # SPDX-License-Identifier: Apache-2.0
 """Regenerates the VideoDecoder fixtures in this directory.
 
-Usage: FFMPEG=/path/to/ffmpeg python3 generate.py [hdr | hdr-large | hdr-gradient]
+Usage: FFMPEG=/path/to/ffmpeg python3 generate.py [hdr | hdr-large | hdr-gradient | hdr-patches | hlg-large]
 
-With `hdr`, only hdr10-pq.mp4, hlg.mp4, hdr10-pq-large.mp4 and hdr10-pq-gradient.mp4 are
-regenerated; with `hdr-large` or `hdr-gradient`, only that one.
+With `hdr`, only hdr10-pq.mp4, hlg.mp4, hdr10-pq-large.mp4, hdr10-pq-gradient.mp4, hdr10-pq-patches.mp4
+and hlg-large.mp4 are regenerated; with one of the other words, only that clip.
 
 FFMPEG must be an ffmpeg CLI built from this repository's pinned FFmpeg (the build has no lavfi
 device, so every clip is encoded from PNG frames written here). hdr10-pq.mp4, hlg.mp4 and the -h264
@@ -124,17 +124,46 @@ def hdr_gradient_frame(path, width=LARGE_WIDTH, height=LARGE_HEIGHT):
     hdr_png(path, row, width, height)
 
 
-def hlg_frame(path):
-    # Full-range 16-bit HLG RGB, BT.2020. Top: 75% grey (203 nits on a 1000 nit display) on the left and
-    # peak white on the right. Bottom: 75% BT.2020 green on the left, outside sRGB, and 75% red on the right.
-    patches = [[(0.75, 0.75, 0.75), (1.0, 1.0, 1.0)], [(0.0, 0.75, 0.0), (0.75, 0.0, 0.0)]]
-    rows = []
-    for y in range(HEIGHT):
-        colours = patches[0 if y < HEIGHT // 2 else 1]
-        rows.append(b"".join(
-            struct.pack(">HHH", *(round(value * SWSCALE_10_BIT * 65535) for value in colours[0 if x < WIDTH // 2 else 1]))
-            for x in range(WIDTH)))
-    png(path, rows, bit_depth=16, extra_chunks=chunk(b"cICP", bytes([9, 18, 0, 1])))
+# hdr10-pq-patches.mp4: 4x4 patches of BT.2020 colours by PQ code, as (nits, lit channels), row by row. The six
+# saturated colours at 203 and 1000 nits show a wrong matrix or an ignored data space; the greys anchor the EOTF.
+PQ_PATCHES = [
+    [(203, (1, 0, 0)), (203, (0, 1, 0)), (203, (0, 0, 1)), (203, (1, 1, 1))],
+    [(203, (0, 1, 1)), (203, (1, 0, 1)), (203, (1, 1, 0)), (100, (1, 1, 1))],
+    [(1000, (1, 0, 0)), (1000, (0, 1, 0)), (1000, (0, 0, 1)), (1000, (1, 1, 1))],
+    [(1000, (0, 1, 1)), (1000, (1, 0, 1)), (1000, (1, 1, 0)), (0, (0, 0, 0))],
+]
+# hlg.mp4 and hlg-large.mp4: 2x2 patches of HLG signal. Top: 75% grey (203 nits on a 1000 nit display) and peak
+# white. Bottom: 75% BT.2020 green, outside sRGB, and 75% red.
+HLG_PATCHES = [[(0.75, 0.75, 0.75), (1.0, 1.0, 1.0)], [(0.0, 0.75, 0.0), (0.75, 0.0, 0.0)]]
+
+
+def patch_grid(patches, width, height):
+    """The (x, y) centre and colour of each patch, laid out as the rows of `patches` over width x height."""
+    columns, rows = len(patches[0]), len(patches)
+    return {
+        ((column * 2 + 1) * width // (2 * columns), (row * 2 + 1) * height // (2 * rows)): colour
+        for row, cells in enumerate(patches) for column, colour in enumerate(cells)
+    }
+
+
+def patched_frame(path, patches, width, height, cicp):
+    columns, rows = len(patches[0]), len(patches)
+    pixel_rows = []
+    for y in range(height):
+        cells = patches[y * rows // height]
+        pixel_rows.append(b"".join(
+            struct.pack(">HHH", *(round(value * SWSCALE_10_BIT * 65535) for value in cells[x * columns // width]))
+            for x in range(width)))
+    png(path, pixel_rows, bit_depth=16, extra_chunks=chunk(b"cICP", bytes(cicp)), width=width, height=height)
+
+
+def hdr_patches_frame(path, width=LARGE_WIDTH, height=LARGE_HEIGHT):
+    colours = [[tuple(pq_code(nits) * lit for lit in mask) for nits, mask in row] for row in PQ_PATCHES]
+    patched_frame(path, colours, width, height, [9, 16, 0, 1])
+
+
+def hlg_frame(path, width=WIDTH, height=HEIGHT):
+    patched_frame(path, HLG_PATCHES, width, height, [9, 18, 0, 1])
 
 
 def run(*arguments):
@@ -257,7 +286,9 @@ def hdr(out, work):
     check_codes(os.path.join(out, "hdr10-pq.mp4"), {(12, 32): grey(100), (84, 32): grey(1000)})
     hdr_large(out, work)
     hdr_gradient(out, work)
+    hdr_patches(out, work)
     hlg(out, work)
+    hlg_large(out, work)
 
 
 def hdr_large(out, work):
@@ -290,6 +321,20 @@ def hdr_gradient(out, work):
                 LARGE_WIDTH, LARGE_HEIGHT)
 
 
+def hdr_patches(out, work):
+    # The colour patches, as long as hdr10-pq-large.mp4 and at a bitrate that keeps their codes.
+    hdr_patches_frame(os.path.join(work, "patches.png"))
+    run(
+        "-loop", "1", "-framerate", "30", "-i", os.path.join(work, "patches.png"), "-frames:v", "60",
+        "-c:v", "hevc_videotoolbox", "-profile:v", "main10", "-pix_fmt", "p010le", "-b:v", "4M",
+        "-color_primaries", "bt2020", "-color_trc", "smpte2084", "-colorspace", "bt2020nc",
+        "-color_range", "tv", "-tag:v", "hvc1", os.path.join(out, "hdr10-pq-patches.mp4"),
+    )
+    colours = [[tuple(pq_code(nits) * lit for lit in mask) for nits, mask in row] for row in PQ_PATCHES]
+    check_codes(os.path.join(out, "hdr10-pq-patches.mp4"), patch_grid(colours, LARGE_WIDTH, LARGE_HEIGHT),
+                LARGE_WIDTH, LARGE_HEIGHT)
+
+
 def hlg(out, work):
     for index in range(10):
         hlg_frame(os.path.join(work, f"g{index:04d}.png"))
@@ -299,13 +344,25 @@ def hlg(out, work):
         "-color_primaries", "bt2020", "-color_trc", "arib-std-b67", "-colorspace", "bt2020nc",
         "-color_range", "tv", "-tag:v", "hvc1", os.path.join(out, "hlg.mp4"),
     )
-    check_codes(os.path.join(out, "hlg.mp4"), {
-        (12, 16): (0.75, 0.75, 0.75), (84, 16): (1.0, 1.0, 1.0), (12, 48): (0.0, 0.75, 0.0), (84, 48): (0.75, 0.0, 0.0),
-    })
+    check_codes(os.path.join(out, "hlg.mp4"), patch_grid(HLG_PATCHES, WIDTH, HEIGHT))
+
+
+def hlg_large(out, work):
+    # hlg.mp4's patches at a size hardware decoders take, as long as hdr10-pq-large.mp4.
+    hlg_frame(os.path.join(work, "hlg-large.png"), LARGE_WIDTH, LARGE_HEIGHT)
+    run(
+        "-loop", "1", "-framerate", "30", "-i", os.path.join(work, "hlg-large.png"), "-frames:v", "60",
+        "-c:v", "hevc_videotoolbox", "-profile:v", "main10", "-pix_fmt", "p010le", "-b:v", "4M",
+        "-color_primaries", "bt2020", "-color_trc", "arib-std-b67", "-colorspace", "bt2020nc",
+        "-color_range", "tv", "-tag:v", "hvc1", os.path.join(out, "hlg-large.mp4"),
+    )
+    check_codes(os.path.join(out, "hlg-large.mp4"), patch_grid(HLG_PATCHES, LARGE_WIDTH, LARGE_HEIGHT),
+                LARGE_WIDTH, LARGE_HEIGHT)
 
 
 if __name__ == "__main__":
-    steps = {"hdr": hdr, "hdr-large": hdr_large, "hdr-gradient": hdr_gradient}
+    steps = {"hdr": hdr, "hdr-large": hdr_large, "hdr-gradient": hdr_gradient, "hdr-patches": hdr_patches,
+             "hlg-large": hlg_large}
     if sys.argv[1:] and sys.argv[1] in steps and len(sys.argv) == 2:
         with tempfile.TemporaryDirectory() as scratch:
             step = steps[sys.argv[1]]

@@ -72,6 +72,40 @@ class VideoDecoderGoldenTest {
         }
     }
 
+    /**
+     * The 320x192 colour fixtures decode to the light of their codes on sRGB primaries, 1.0 at 203 nits, at a few
+     * patch centres; FrameImageDeviceTest checks every patch on the GPU against the same table.
+     */
+    @Test
+    fun hdrColourPatchesDecodeToTheirLinearColoursInRgbaF16() = runBlocking {
+        val patches = mapOf(
+            "hdr10-pq-patches.mp4" to listOf(
+                Triple("red 203", 40 to 24, doubleArrayOf(1.6598, -0.1245, -0.0181)),
+                Triple("cyan 1000", 40 to 168, doubleArrayOf(-3.2502, 5.5337, 5.0102)),
+                Triple("grey 1000", 280 to 120, doubleArrayOf(4.9208, 4.9208, 4.9208)),
+            ),
+            "hlg-large.mp4" to listOf(
+                Triple("75% grey", 80 to 48, doubleArrayOf(0.9993, 0.9993, 0.9993)),
+                Triple("white", 240 to 48, doubleArrayOf(4.9261, 4.9261, 4.9261)),
+                Triple("75% green", 80 to 144, doubleArrayOf(-0.5433, 1.0474, -0.0930)),
+            ),
+        )
+        for ((clip, expected) in patches) {
+            decoder(clip, VideoOutput.Memory(FrameFormat.RgbaF16)).use { decoder ->
+                decoder.frameAt(0.5.seconds).use { frame ->
+                    val pixels = frame.pixels(half = true)
+                    for ((name, centre, light) in expected) {
+                        val tolerance = 0.03 * light.maxOf { abs(it) } + 0.03
+                        for (channel in 0 until 3) {
+                            val actual = pixels.value(pixels.at(centre.first, centre.second, channel))
+                            assertTrue(abs(actual - light[channel]) <= tolerance, "$clip $name channel $channel: $actual, expected ${light[channel]}")
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     private fun assertCode(expected: Int, actual: Int, name: String) =
         assertTrue(abs(actual - expected) <= 2, "$name: $actual, BT.2390 gives $expected")
 

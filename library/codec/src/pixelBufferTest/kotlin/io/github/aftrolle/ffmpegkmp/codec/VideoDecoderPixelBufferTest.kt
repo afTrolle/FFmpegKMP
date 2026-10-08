@@ -6,7 +6,7 @@ package io.github.aftrolle.ffmpegkmp.codec
 import io.github.aftrolle.ffmpegkmp.core.CommandIo
 import kotlin.test.Test
 import kotlin.test.assertEquals
-import kotlin.test.assertFalse
+import kotlin.test.assertFailsWith
 import kotlin.test.assertNotEquals
 import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
@@ -15,9 +15,6 @@ import kotlin.time.Duration.Companion.microseconds
 import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
 import kotlinx.cinterop.reinterpret
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.async
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
 import okio.Buffer
 import platform.CoreFoundation.CFRelease
@@ -90,15 +87,14 @@ class VideoDecoderPixelBufferTest {
                 val seen = open.map { it.buffer() }.toMutableSet()
                 assertEquals(3, seen.size, "$name: 3 frames held open")
                 // Software frames are copies into the decoder's ring of three pooled buffers, so a
-                // fourth waits for one to close. VideoToolbox's are its own.
-                val ring = decoder.decoderKind == DecoderKind.SOFTWARE
-                val fourth = async(Dispatchers.Default) { decoder.frameAt(clip.frame * 3) }
-                if (ring) {
-                    delay(200.milliseconds)
-                    assertFalse(fourth.isCompleted, "$name: the fourth frame waits while three are held")
+                // fourth fails until one closes. VideoToolbox's are its own.
+                if (decoder.decoderKind == DecoderKind.SOFTWARE) {
+                    assertFailsWith<IllegalStateException>("$name: a fourth frame while three are held") {
+                        decoder.frameAt(clip.frame * 3)
+                    }
                 }
                 open.first().close()
-                fourth.await().use { frame ->
+                decoder.frameAt(clip.frame * 3).use { frame ->
                     clip.assertFrame(frame, 3)
                     seen += frame.buffer()
                 }

@@ -10,6 +10,7 @@ import kotlin.test.assertNotEquals
 import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 import kotlin.time.Duration.Companion.seconds
+import kotlin.time.TimeSource
 import kotlinx.coroutines.runBlocking
 import okio.Buffer
 
@@ -41,6 +42,23 @@ class VideoDecoderMemoryDeviceTest {
                 assertEquals(1000.0 / 203.0, highlight, 0.15)
                 assertTrue(highlight > 1.0)
             }
+        }
+    }
+
+    @Test
+    fun aFourthConvertedFrameFailsAtOnceWhileThreeAreHeldAndTheDecoderGoesOnOnceOneCloses() = runBlocking {
+        open("cfr-30.mp4", VideoOutput.Memory(FrameFormat.Rgba8)).use { decoder ->
+            val held = (0 until 3).map { decoder.frameAt(it.seconds / 30) }
+            val asked = TimeSource.Monotonic.markNow()
+            val failure = assertFailsWith<IllegalStateException> { decoder.frameAt(3.seconds / 30) }
+            val took = asked.elapsedNow()
+            println("VideoDecoderMemoryDeviceTest: the fourth frame failed after $took: ${failure.message}")
+            assertTrue(failure.message!!.contains("holds all 3"), failure.message)
+            assertTrue(took < 2.seconds, "failed after $took, well before the $TIMEOUT timeout")
+            held.first().close()
+            decoder.frameAt(3.seconds / 30).use { frame -> assertEquals(3, frame.number()) }
+            held.drop(1).forEach(VideoFrame::close)
+            decoder.frameAt(10.seconds / 30).use { frame -> assertEquals(10, frame.number()) }
         }
     }
 
