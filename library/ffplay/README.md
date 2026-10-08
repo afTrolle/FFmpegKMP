@@ -306,18 +306,23 @@ MediaWriter.open(MediaOutput.File("export.mp4")).use { writer ->
   display runs at 120 Hz, a small scene renders about 260 times a second on the GPU and 790 in
   software, and a 4K scene 70 and 22, where the copy out of the GPU's buffer takes most of a GPU
   frame's 14 ms.
-- On Android 14 and later the copy can go too, for an 8-bit SDR H.264 or HEVC track on a hardware
-  encoder (`track.zeroCopy`, see the codec README): the first `render` of a renderer made for the
-  track opens the encoder's input surface, and each frame is drawn on the GPU with
-  `HardwareBufferRenderer` into the next buffer an `ImageWriter` on that surface lends, the render
-  fence awaited as before. `render` returns a frame over that buffer, with a null `format` and no pixel
-  copy, which `track.write(frame)` queues to the encoder with the frame's pts, so the encoder reads
-  the buffer the GPU wrote while the next frame is composed. A renderer that has taken the
-  surface draws on the GPU only and fails where it cannot, and the renderer made by size, with no
-  track, keeps the copy. A phone's four-source 4K export spent 6.3 ms of each frame, 22% of it, in that copy
-  (change set 12); `CompositeExportBudgetDeviceTest`'s `GpuBuffersToSurface` case measures the
-  frame without it. Colours match the one-copy path up to the encoder's own RGB to BT.709 conversion,
-  which `SurfaceEncoderDeviceTest` checks.
+- On Android 14 and later the copy can go too, for an 8-bit SDR H.264 or HEVC track, or an HDR10 or
+  HLG HEVC track, on a hardware encoder (`track.zeroCopy`, see the codec README): the first `render`
+  of a renderer made for the track opens the encoder's input surface, and each frame is drawn on the
+  GPU with `HardwareBufferRenderer` into the next buffer an `ImageWriter` on that surface lends, the
+  render fence awaited as before. `render` returns a frame over that buffer, with a null `format` and
+  no pixel copy, which `track.write(frame)` queues to the encoder with the frame's pts, so the
+  encoder reads the buffer the GPU wrote while the next frame is composed. An HDR track's buffers
+  are `RGBA_1010102` and hold PQ or HLG codes, which HWUI cannot be told to write into a buffer, so
+  the view is drawn onto the renderer's F16 canvas as on the one-copy path and a second GPU pass
+  encodes that through an AGSL shader: sRGB to BT.2020, 203 nits at 1.0, then the PQ curve, or
+  HLG's inverse OOTF and OETF, the inverse of the shader that draws 10-bit `GpuBuffers` frames. A
+  renderer that has taken the surface draws on the GPU only and fails where it cannot, and the
+  renderer made by size, with no track, keeps the copy. A phone's four-source 4K export spent 6.3 ms
+  of each frame, 22% of it, in that copy in SDR, and 51 ms, 53%, in HDR (change set 12);
+  `CompositeExportBudgetDeviceTest`'s `GpuBuffersToSurface` case measures the frame without it.
+  Colours match the one-copy path up to the encoder's own RGB to YUV conversion, which
+  `SurfaceEncoderDeviceTest` checks in SDR and in HDR10.
 
 ## Deferred picture-in-picture
 
@@ -353,7 +358,9 @@ grey steps four codes apart (`hdr10-pq-gradient.mp4`) stays within one PQ code o
 every column, which shows the GPU's sampler keeps 10 bits; `ComposeFrameRendererDeviceTest` checks the
 Android formats, the GPU and software paths against each other, and a MediaCodec encode;
 `SurfaceEncoderDeviceTest` encodes 30 rendered frames through the encoder's input surface and decodes them
-back frame for frame, and compares their colours with the one-copy path's.
+back frame for frame, compares their colours with the one-copy path's, and sends six patches of known
+linear light through an HDR10 track's surface and through the converter, which must decode back as BT.2020
+PQ within a few HEVC codes of each other and of what was drawn.
 `src/jvmTest` checks that a 4K frame reaches its bitmap without a bridge allocation, and that 300
 frames of 1080p through `frames()`, `update`, `render` and `close` keep the native frame counts flat
 after the first 10 and the heap within 16 MB, and the

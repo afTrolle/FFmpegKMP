@@ -303,16 +303,18 @@ an encoder takes it, as for HDR.
   `config.canvasFormat`, is converted once on the track's thread, so conversion overlaps with drawing the
   next frame. Each track encodes on a thread of its own, since MediaCodec binds an encoder to one.
   On Apple, pooled frames are `CVPixelBuffer`s, which VideoToolbox takes without a copy.
-- On Android 14 (API 34) and later an 8-bit SDR H.264 or HEVC track on a hardware encoder can take its
-  frames with no copy at all. `ComposeFrameRenderer(track)` asks for it as it renders its first
-  frame: the writer opens a `MediaCodec` encoder of the platform's own with an input surface in place of
-  FFmpeg's, the renderer draws on the GPU into buffers an `ImageWriter` takes from that surface, and
-  `write(frame)` queues each stamped with its pts. The encoder's packets reach the muxer through the same
-  packet tracks the browser uses, the codec's config buffer as the track's parameter sets, so the header
-  and the container are the ones FFmpeg's encoder would have made. `track.zeroCopy` says whether a
-  track took it, false until a renderer asks. Every other track keeps the path above: HDR, 10-bit,
-  AV1, software encoders, Android before 14, a renderer on its software path, and a track that has
-  already taken a frame. A `zeroCopy` track takes only the frames its renderer drew, which lie in GPU
+- On Android 14 (API 34) and later an 8-bit SDR H.264 or HEVC track, or an HDR10 or HLG HEVC track, on a
+  hardware encoder can take its frames with no copy at all. `ComposeFrameRenderer(track)` asks for it as it
+  renders its first frame: the writer opens a `MediaCodec` encoder of the platform's own with an input
+  surface in place of FFmpeg's, the renderer draws on the GPU into buffers an `ImageWriter` takes from that
+  surface, and `write(frame)` queues each stamped with its pts. The encoder's packets reach the muxer through
+  the same packet tracks the browser uses, the codec's config buffer as the track's parameter sets, so the
+  header and the container, with the config's HDR10 metadata, are the ones FFmpeg's encoder would have made.
+  An SDR track's buffers are sRGB `RGBA_8888`; an HDR track's are `RGBA_1010102` holding the PQ or HLG codes
+  the renderer's own GPU pass makes of its F16 canvas, in a BT.2020 data space, and the HDR10 metadata also
+  reaches the encoder as `KEY_HDR_STATIC_INFO`. `track.zeroCopy` says whether a track took it, false until a
+  renderer asks. Every other track keeps the path above: 10-bit SDR, AV1, software encoders, Android before
+  14, a renderer on its software path, and a track that has already taken a frame. A `zeroCopy` track takes only the frames its renderer drew, which lie in GPU
   memory like `GpuBuffers` ones (`format` is null, `hardwareBuffer` is the encoder's), and its buffers
   go back to the encoder as the frames are written or closed, so a caller holds at most four at a time (a fifth `render` fails after the writer's timeout) and `write`s each. Frames
   from memory then fail the track; use a track no renderer has been made for.

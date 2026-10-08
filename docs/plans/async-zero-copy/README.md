@@ -1235,6 +1235,68 @@ the colour of the encoder's own RGB to BT.709 conversion against swscale's;
 wrapper per image staying valid across dequeues; and the encoder's own queue
 depth, which sets how far the draw runs ahead.
 
+#### HDR through the input surface
+
+The HDR export's copy out of the F16 canvas was 53% of a frame, 51 ms at 4K,
+so the surface path now takes HDR10 and HLG HEVC Main10 tracks too. Status:
+built and host-verified; phone numbers to be filled in after the next run.
+
+How it is built:
+
+- `SurfaceVideoEncoder` opens for an HDR track with `COLOR_STANDARD_BT2020`,
+  `COLOR_TRANSFER_ST2084` or `_HLG`, limited range, the `HEVCProfileMain10HDR10`
+  profile where an encoder takes it and `HEVCProfileMain10` otherwise, and the
+  config's mastering display and content light packed as `KEY_HDR_STATIC_INFO`
+  (CTA-861.3's type 1 descriptor). Its `ImageWriter` lends `RGBA_1010102` buffers
+  in `DATASPACE_BT2020_PQ` or `_HLG`: full-range codes, which the encoder's own
+  RGB to YUV conversion makes limited-range BT.2020 of, as it makes BT.709 of the
+  SDR path's sRGB. The native side needed nothing: a packet track already sets
+  the stream's BT.2020 PQ or HLG 10-bit colour from the config and attaches the
+  config's HDR10 metadata to the container.
+- `ComposeFrameRenderer` cannot have HWUI write PQ codes, so an HDR track's
+  frame takes two GPU passes: the view onto the renderer's F16 scratch canvas,
+  linear extended sRGB as before, then a `HardwareBufferRenderer` over the
+  encoder's buffer drawing one rect with an AGSL `RuntimeShader` that samples
+  the scratch through a `Bitmap.wrapHardwareBuffer(scratch, SRGB)` shader child
+  and is rendered as sRGB, so Skia neither converts the half floats on the way in
+  nor the codes on the way out. The shader is the decode shader's inverse: sRGB
+  to BT.2020 (`Bt2020Matrices`, shared with the decode side and host-tested as
+  its inverse), 203/10000 and the PQ curve, or 203/1000, the inverse OOTF
+  (Yd^(-1/6), as `ffplaykmp_core.c` encodes HLG) and the HLG OETF. The scratch
+  is wrapped once per frame, since the decode side found that HWUI keeps the
+  texture of a wrap and goes on drawing its first content; the wrap costs
+  microseconds and the last two stay open while a display list may still name them.
+- 10-bit SDR, H.264 HDR and AV1 stay on the one-copy path.
+
+Measure and verify on the phone:
+
+```
+./gradlew :library:ffplay:connectedAndroidDeviceTest \
+  -Pandroid.testInstrumentationRunnerArguments.class=io.github.aftrolle.ffmpegkmp.ffplay.SurfaceEncoderDeviceTest#hdr10PatchesEncodeThroughTheSurfaceAsThroughMemoryAndDecodeBackAsBt2020Pq
+./gradlew :library:ffplay:connectedAndroidDeviceTest \
+  -Pandroid.testInstrumentationRunnerArguments.class=io.github.aftrolle.ffmpegkmp.ffplay.CompositeExportBudgetDeviceTest \
+  -Pandroid.testInstrumentationRunnerArguments.compositeBudget=true \
+  -Pandroid.testInstrumentationRunnerArguments.range=HDR10 \
+  -Pandroid.testInstrumentationRunnerArguments.cases=GpuBuffers+GpuBuffersToSurface
+```
+
+The round trip draws six flat patches of known linear light (0.1 to 1000 nits
+and a red) through the surface and through the converter, and both must decode
+back as 10-bit BT.2020 PQ within 6% of the light plus 0.03 of each other and of
+what was drawn; the budget run's `copy` line should read about 0 for
+`GpuBuffersToSurface` in HDR10, with the rate against `GpuBuffers`:
+
+| Case, HDR10 4K | frames/s | copy | to be filled in after the next run |
+|---|---|---|---|
+| `GpuBuffers` | | 51 ms, 53% | |
+| `GpuBuffersToSurface` | | | |
+
+Risks for that run: the encoder's surface refusing `RGBA_1010102` or the BT.2020
+data space (the probe falls back to the memory path, and the round trip skips
+with the reason); an encoder taking the HDR10 profile only with its own
+`KEY_HDR_STATIC_INFO` field order; and an encoder that reads the data space as
+limited range, which the patches would show as a lifted black and a dimmed peak.
+
 ### 13. Decode at a size
 
 A 4K source shown as a 960×540 tile still decodes, converts and uploads 4K
