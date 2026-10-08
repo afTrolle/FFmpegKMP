@@ -26,6 +26,15 @@
 #include "libavutil/mem.h"
 #endif
 
+#if defined(__EMSCRIPTEN__)
+/* The worker's pthread pool is fixed at 32 (PTHREAD_POOL_SIZE_STRICT in native-build/wasm), and fftools' scheduler takes a
+ * thread for each demuxer, decoder, filter graph, encoder and muxer before any codec starts its own. FFmpeg sizes its
+ * codec, filter and scaler threads by the core count, which on a many-core host asks for more than the pool has
+ * (ff_frame_thread_encoder_init fails), so every browser command sees at most this many cores. -threads still asks for
+ * more explicitly. */
+#define FFMPEGKMP_BROWSER_CPU_COUNT 4
+#endif
+
 #if defined(__GNUC__) || defined(__clang__)
 #define FFMPEGKMP_WEAK __attribute__((weak))
 #else
@@ -187,6 +196,9 @@ int ffmpegkmp_execute(
      * passed `-v error` (a typical ffprobe) would silence every later run in the
      * same process — including the stats lines callers parse. Reset per run. */
     av_log_set_level(AV_LOG_INFO);
+#if defined(__EMSCRIPTEN__)
+    av_cpu_force_count(FFMPEGKMP_BROWSER_CPU_COUNT);
+#endif
 #endif
     entry = kind == FFMPEGKMP_COMMAND_FFMPEG
             ? ffmpegkmp_ffmpeg_entry

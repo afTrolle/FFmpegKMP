@@ -465,9 +465,7 @@ class CompiledRuntimeIntegrationTest {
                     "-i", RAW_INPUT_PATH,
                     "-f", "u8", "-ar", "8000", "-ac", "1", "-i", AUDIO_INPUT_PATH,
                     "-map", "0:v", "-map", "1:a",
-                    // The browser's fixed thread pool cannot hold a frame-thread encoder per core
-                    // beside two inputs' demux, decode and filter threads.
-                    "-frames:v", "1", "-c:v", "rawvideo", "-threads", "1", "-c:a", "pcm_u8",
+                    "-frames:v", "1", "-c:v", "rawvideo", "-c:a", "pcm_u8",
                     "-f", "nut", OUTPUT_PATH,
                 ),
                 io = CommandIo {
