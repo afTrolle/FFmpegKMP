@@ -57,6 +57,42 @@ class FrameImageDeviceTest {
     private companion object {
         /** The steps of hdr10-pq-gradient.mp4's ramp, one per column from the left. */
         const val RAMP_STEPS = 256
+
+        /**
+         * hdr10-pq-patches.mp4: 80x48 patches of BT.2020 colours, each lit channel at the 10-bit PQ code of 203, 1000
+         * or 100 nits, with the light they decode to on sRGB primaries in units of 203 nits (PQ's EOTF, then BT.2020
+         * to BT.709), as the CPU converter and the GPU shader compute it.
+         */
+        val PQ_PATCHES = listOf(
+            Patch("red 203", 40, 24, 594, 1.6598, -0.1245, -0.0181),
+            Patch("green 203", 120, 24, 594, -0.5874, 1.1324, -0.1005),
+            Patch("blue 203", 200, 24, 594, -0.0728, -0.0083, 1.1183),
+            Patch("grey 203", 280, 24, 594, 0.9996, 0.9996, 0.9996),
+            Patch("cyan 203", 40, 72, 594, -0.6602, 1.1241, 1.0177),
+            Patch("magenta 203", 120, 72, 594, 1.5870, -0.1328, 1.1001),
+            Patch("yellow 203", 200, 72, 594, 1.0724, 1.0079, -0.1187),
+            Patch("grey 100", 280, 72, 520, 0.4937, 0.4937, 0.4937),
+            Patch("red 1000", 40, 120, 769, 8.1710, -0.6129, -0.0893),
+            Patch("green 1000", 120, 120, 769, -2.8917, 5.5748, -0.4949),
+            Patch("blue 1000", 200, 120, 769, -0.3585, -0.0411, 5.5051),
+            Patch("grey 1000", 280, 120, 769, 4.9208, 4.9208, 4.9208),
+            Patch("cyan 1000", 40, 168, 769, -3.2502, 5.5337, 5.0102),
+            Patch("magenta 1000", 120, 168, 769, 7.8125, -0.6540, 5.4158),
+            Patch("yellow 1000", 200, 168, 769, 5.2793, 4.9619, -0.5843),
+            Patch("black", 280, 168, 0, 0.0, 0.0, 0.0),
+        )
+
+        /** hlg-large.mp4: hlg.mp4's quadrants at 320x192, by 10-bit HLG code, through BT.2100's OOTF for 1000 nits. */
+        val HLG_PATCHES = listOf(
+            Patch("75% grey", 80, 48, 767, 0.9993, 0.9993, 0.9993),
+            Patch("white", 240, 48, 1023, 4.9261, 4.9261, 4.9261),
+            Patch("75% green", 80, 144, 767, -0.5433, 1.0474, -0.0930),
+            Patch("75% red", 240, 144, 767, 1.2700, -0.0953, -0.0139),
+        )
+
+        /** Of a patch's largest component, about four PQ codes at 1000 nits, plus a floor for its dark channels. */
+        const val PATCH_TOLERANCE = 0.03
+        const val PATCH_TOLERANCE_FLOOR = 0.03
     }
 
     @Test
@@ -286,6 +322,22 @@ class FrameImageDeviceTest {
         assertTrue(worst <= 1.0, "column $worstColumn is $worst of one PQ code from the memory path")
     }
 
+    /**
+     * The colour check: BT.2020 colour patches in PQ through `GpuBuffers` and from memory, drawn on an F16 canvas and
+     * read at their centres against [PQ_PATCHES]. The grey fixtures pass a GPU that converts with BT.709's matrix or
+     * ignores the buffer's data space; saturated patches do not.
+     */
+    @Test
+    fun bt2020ColourPatchesInPqThroughGpuBuffersMatchTheirLinearColoursAsFromMemory() = runBlocking<Unit> {
+        assertPatchesMatch("hdr10-pq-patches.mp4", PQ_PATCHES)
+    }
+
+    /** hlg.mp4's patches at a size hardware decoders take: HLG through the OOTF on both paths. */
+    @Test
+    fun hlgPatchesThroughGpuBuffersMatchTheirLinearColoursAsFromMemory() = runBlocking<Unit> {
+        assertPatchesMatch("hlg-large.mp4", HLG_PATCHES)
+    }
+
     /** A 4K H.264 update: a wrap of the frame's buffer through `GpuBuffers`, a 4K conversion from memory. */
     @Test
     fun aFourKUpdateFromGpuBuffersTakesUnderAMillisecond() = runBlocking<Unit> {
@@ -315,6 +367,41 @@ class FrameImageDeviceTest {
         } finally {
             clip.delete()
         }
+    }
+
+    /**
+     * Each patch of [name] through `GpuBuffers` and from memory, both drawn on an F16 canvas, against its light in
+     * [patches] and against each other, within [PATCH_TOLERANCE] of its largest component plus [PATCH_TOLERANCE_FLOOR].
+     */
+    private suspend fun assertPatchesMatch(name: String, patches: List<Patch>) {
+        assumeGpuBuffers()
+        assumeHdrGpuCheck()
+        val (gpu, memory) = listOf(VideoOutput.GpuBuffers, VideoOutput.Memory(FrameFormat.RgbaF16)).map { output ->
+            drawnOnF16(name, output) { plane -> patches.map { patch -> DoubleArray(3) { plane.half(patch.y, patch.x, it) } } }
+        }
+        var worst = 0.0
+        var worstCase = ""
+        for ((index, patch) in patches.withIndex()) {
+            val tolerance = PATCH_TOLERANCE * patch.light.maxOf { abs(it) } + PATCH_TOLERANCE_FLOOR
+            for (channel in 0 until 3) {
+                val drawn = gpu[index][channel]
+                val reference = memory[index][channel]
+                val expected = patch.light[channel]
+                val errors = listOf(
+                    "GpuBuffers against the table" to abs(drawn - expected),
+                    "memory against the table" to abs(reference - expected),
+                    "GpuBuffers against memory" to abs(drawn - reference),
+                )
+                for ((case, error) in errors) {
+                    if (error / tolerance <= worst) continue
+                    worst = error / tolerance
+                    worstCase = "${patch.name} channel $channel, $case: $drawn through GpuBuffers, $reference from memory, " +
+                        "$expected expected"
+                }
+            }
+        }
+        println("FrameImageDeviceTest: $name, worst patch $worstCase, $worst of the tolerance")
+        assertTrue(worst <= 1.0, "$name: $worstCase, $worst of the tolerance")
     }
 
     /**
@@ -402,8 +489,9 @@ class FrameImageDeviceTest {
     /** The frame at 0.5 s of [name] through [output], drawn on a 320x192 F16 canvas and read from the canvas's plane. */
     private suspend fun <T : Any> drawnOnF16(name: String, output: VideoOutput, read: (FramePlane) -> T): T =
         open(name, output, DecoderPreference.AUTO).use { decoder ->
-            if (output == VideoOutput.GpuBuffers) {
-                assumeTrue("a hardware decoder takes the 320x192 HDR10 fixtures", decoder.decoderKind == DecoderKind.HARDWARE)
+            if (output == VideoOutput.GpuBuffers && decoder.decoderKind != DecoderKind.HARDWARE) {
+                println("FrameImageDeviceTest: no hardware decoder takes $name, skipping")
+                assumeTrue("a hardware decoder takes $name", false)
             }
             FrameImage().use { image ->
                 ComposeFrameRenderer<FrameImage>(context, 320, 192, FrameFormat.RgbaF16, Density(1f), true) {
@@ -454,6 +542,11 @@ class FrameImageDeviceTest {
             }
         },
     )
+
+    /** A patch of a fixture: its centre, the 10-bit code of its lit channels, and its light on sRGB primaries, 1.0 at 203 nits. */
+    private class Patch(val name: String, val x: Int, val y: Int, val code: Int, red: Double, green: Double, blue: Double) {
+        val light = doubleArrayOf(red, green, blue)
+    }
 
     private suspend fun open(name: String, output: VideoOutput, preference: DecoderPreference = DecoderPreference.SOFTWARE): VideoDecoder {
         val bytes = checkNotNull(javaClass.getResourceAsStream("/video-decoder/$name")) { "Missing fixture $name" }

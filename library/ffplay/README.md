@@ -350,7 +350,10 @@ the same on both Android paths, the GPU and the software canvas, and draws `GpuB
 against the same frames from memory. With `hdrGpuCheck=true` it also runs the HDR checks: an HDR10
 highlight reads 1000/203 on an F16 canvas through `GpuBuffers` as from memory, and a PQ ramp of 256
 grey steps four codes apart (`hdr10-pq-gradient.mp4`) stays within one PQ code of the memory path in
-every column, which shows the GPU's sampler keeps 10 bits; `ComposeFrameRendererDeviceTest` checks the
+every column, which shows the GPU's sampler keeps 10 bits, and saturated BT.2020 patches in PQ
+(`hdr10-pq-patches.mp4`) and HLG (`hlg-large.mp4`) land on their linear colours through `GpuBuffers` as
+from memory, which a GPU converting with BT.709's matrix or ignoring the buffer's data space would
+fail; `ComposeFrameRendererDeviceTest` checks the
 Android formats, the GPU and software paths against each other, and a MediaCodec encode;
 `SurfaceEncoderDeviceTest` encodes 30 rendered frames through the encoder's input surface and decodes them
 back frame for frame, and compares their colours with the one-copy path's.
