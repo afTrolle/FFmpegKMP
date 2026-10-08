@@ -15,7 +15,6 @@ import io.github.aftrolle.ffmpegkmp.bindings.NativeIoAccess
 import io.github.aftrolle.ffmpegkmp.bindings.NativeMediaWriter
 import io.github.aftrolle.ffmpegkmp.bindings.NativeMediaWriterException
 import io.github.aftrolle.ffmpegkmp.bindings.NativePlayerError
-import io.github.aftrolle.ffmpegkmp.bindings.NativeSinkResource
 import io.github.aftrolle.ffmpegkmp.bindings.NativeWriterOutput
 import io.github.aftrolle.ffmpegkmp.bindings.createPlatformMediaWriter
 import io.github.aftrolle.ffmpegkmp.bindings.platformVideoEncoderFor
@@ -38,7 +37,6 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.withContext
 import okio.FileHandle
-import okio.Sink
 
 /** Where a [MediaWriter] writes. */
 public sealed interface MediaOutput {
@@ -50,22 +48,6 @@ public sealed interface MediaOutput {
             require(fileHandle.readWrite) { "The output handle must be opened for reading and writing" }
         }
     }
-
-    /** A sink that only goes forward: it takes the formats that never rewrite, fragmented MP4, Matroska and MPEG-TS. */
-    public data class Stream(val sink: Sink) : MediaOutput
-}
-
-public sealed interface ContainerFormat {
-    /**
-     * MP4. [fastStart] moves the index to the front when the writer finishes, so playback can
-     * start before the whole file has arrived. [fragmented] writes it as fragments instead, which a
-     * [MediaOutput.Stream] can take.
-     */
-    public data class Mp4(val fastStart: Boolean = true, val fragmented: Boolean = false) : ContainerFormat
-
-    public data object Matroska : ContainerFormat
-
-    public data object MpegTs : ContainerFormat
 }
 
 /** What a writer has taken so far. */
@@ -77,7 +59,7 @@ public data class WriterProgress(
 )
 
 public data class WriterResult(
-    /** Null where the output cannot tell its size, as a [MediaOutput.Stream]. */
+    /** Null where the output could not tell its size. */
     val bytes: Long?,
     val duration: Duration,
     val videoFrames: Long,
@@ -102,7 +84,6 @@ public class MediaWriter private constructor(
     private val native: NativeMediaWriter,
     private val thread: DecoderThread,
     private val description: String,
-    private val fixedSize: Boolean,
 ) : AutoCloseable {
     private val tracks = AtomicReference(emptyList<WriterTrack>())
     private val mutableProgress = MutableStateFlow(WriterProgress())
@@ -134,7 +115,7 @@ public class MediaWriter private constructor(
 
     /**
      * Drains every track's encoder and writes the output's index, then closes the output. With
-     * [ContainerFormat.Mp4.fastStart] this moves the index to the front, which rewrites the file.
+     * `fastStart` this moves the index to the front, which rewrites the file.
      */
     public suspend fun finish(): WriterResult {
         checkOpen()
@@ -148,7 +129,7 @@ public class MediaWriter private constructor(
         finished.store(true)
         val progress = mutableProgress.value
         return WriterResult(
-            bytes = result.bytes.takeIf { it >= 0 && fixedSize },
+            bytes = result.bytes.takeIf { it >= 0 },
             duration = result.durationMicros.microseconds,
             videoFrames = progress.videoFrames,
             audioFrames = progress.audioFrames,
@@ -197,40 +178,24 @@ public class MediaWriter private constructor(
 
     public companion object {
         /**
-         * Opens [output] for writing in [container]. A [MediaOutput.Stream] takes a fragmented MP4,
-         * Matroska or MPEG-TS, since an unfragmented MP4 goes back to write its index.
+         * Opens [output] for writing as an MP4. With [fastStart] the index moves to the front when
+         * the writer finishes, so playback can start before the whole file has arrived.
          *
          * [timeout] bounds the encoding of each write and the draining of each track at
          * [finish]: an encoder that takes frames without ever giving packets, as some emulators'
          * MediaCodec encoders do, fails its track instead of blocking; [Duration.INFINITE] waits
-         * indefinitely. It does not bound a [MediaOutput.Stream] sink that blocks; [close] does.
+         * indefinitely. It does not bound a [MediaOutput.Handle] that blocks; [close] does.
          */
         public suspend fun open(
             output: MediaOutput,
-            container: ContainerFormat = ContainerFormat.Mp4(),
+            fastStart: Boolean = true,
             timeout: Duration = 10.seconds,
         ): MediaWriter {
             require(timeout.isPositive()) { "The timeout must be positive: $timeout" }
-            if (output is MediaOutput.Stream) {
-                require(container !is ContainerFormat.Mp4 || container.fragmented) {
-                    "A stream output needs a format that never goes back: a fragmented MP4, Matroska or MPEG-TS"
-                }
-            }
-            val name = "output." + when (container) {
-                is ContainerFormat.Mp4 -> "mp4"
-                ContainerFormat.Matroska -> "mkv"
-                ContainerFormat.MpegTs -> "ts"
-            }
             val nativeOutput = when (output) {
                 is MediaOutput.File -> NativeWriterOutput.Path(output.path)
                 is MediaOutput.Handle ->
-                    NativeWriterOutput.Mounted(name, NativeFileResource(output.fileHandle, NativeIoAccess.READ_WRITE, truncate = true))
-                is MediaOutput.Stream -> NativeWriterOutput.Mounted(name, NativeSinkResource(output.sink))
-            }
-            val nativeContainer = when (container) {
-                is ContainerFormat.Mp4 -> if (container.fragmented) NativeContainer.FRAGMENTED_MP4 else NativeContainer.MP4
-                ContainerFormat.Matroska -> NativeContainer.MATROSKA
-                ContainerFormat.MpegTs -> NativeContainer.MPEGTS
+                    NativeWriterOutput.Mounted("output.mp4", NativeFileResource(output.fileHandle, NativeIoAccess.READ_WRITE, truncate = true))
             }
             val description = (output as? MediaOutput.File)?.path?.let { "'$it'" } ?: "the output"
             val thread = DecoderThread("FFmpegKMP MediaWriter")
@@ -240,8 +205,8 @@ public class MediaWriter private constructor(
                         writing("open $description") {
                             createPlatformMediaWriter(
                                 nativeOutput,
-                                nativeContainer,
-                                fastStart = container is ContainerFormat.Mp4 && container.fastStart && !container.fragmented,
+                                NativeContainer.MP4,
+                                fastStart = fastStart,
                                 timeoutMicros = if (timeout.isInfinite()) 0L else timeout.inWholeMicroseconds,
                             )
                         }
@@ -251,7 +216,7 @@ public class MediaWriter private constructor(
                 thread.finish(Duration.ZERO) {}
                 throw failure
             }
-            return MediaWriter(native, thread, description, fixedSize = output !is MediaOutput.Stream)
+            return MediaWriter(native, thread, description)
         }
 
         /** Whether this platform and build have an encoder for [config], HDR included; it opens one to find out. */
@@ -326,9 +291,6 @@ public class VideoTrack internal constructor(
     public val encoderName: String,
     public val isHardware: Boolean,
 ) : WriterTrack(writer, thread, index) {
-    /** What to draw into and decode to for this track: see [VideoEncoderConfig.canvasFormat]. */
-    public val canvasFormat: FrameFormat = config.canvasFormat
-
     /**
      * Encodes [frame], shown from [pts], and takes ownership of it: the writer closes it once it has
      * encoded it. Suspends while the encoder is full. A frame in [inputFormat] goes to the encoder
@@ -341,7 +303,7 @@ public class VideoTrack internal constructor(
             // A reference of its own, since the browser's encoder suspends while it has the pixels.
             val pixels = frame.useNative { native ->
                 requireNotNull(native?.takeIf { it.mappable }) {
-                    "The frame has no pixels to encode: it was rendered to a Surface"
+                    "The frame has no pixels to encode: it lies in GPU memory"
                 }.retain()
             }
             try {

@@ -48,10 +48,9 @@ public class VideoFrame private constructor(
     public val sampleAspectRatio: Double,
 ) : AutoCloseable {
     /**
-     * The pixel layout and colour. Null for frames that exist only on a GPU surface, such as
-     * Android's Surface output, for frames in GPU memory, such as [VideoOutput.GpuBuffers]' ones,
-     * and for frames decoded in a layout [PixelLayout] does not name, whose planes [usePlanes]
-     * still reaches.
+     * The pixel layout and colour. Null for frames in GPU memory, such as [VideoOutput.GpuBuffers]'
+     * ones, and for frames decoded in a layout [PixelLayout] does not name, whose planes
+     * [usePlanes] still reaches.
      */
     public val format: FrameFormat? = native?.format?.toFrameFormat()
 
@@ -152,7 +151,7 @@ public class VideoFrame private constructor(
         if (gpu != null) {
             "The frame has no CPU-visible memory: it lies in GPU memory (VideoOutput.GpuBuffers), which FrameImage draws"
         } else {
-            "The frame has no CPU-visible memory: it was rendered to a Surface"
+            "The frame has no CPU-visible memory"
         }
     }
 
@@ -160,17 +159,14 @@ public class VideoFrame private constructor(
         VideoFrame(native, gpu, pts, duration, width, height, rotationDegrees, sampleAspectRatio)
 
     public companion object {
-        /**
-         * A frame holding [native]'s reference, which it takes; null for one rendered to a Surface.
-         * Decoders and players create frames through this.
-         */
+        /** A frame holding [native]'s reference, which it takes. Decoders and players create frames through this. */
         @InternalFFmpegKmpApi
         public fun of(
-            native: NativeFrame?,
+            native: NativeFrame,
             pts: Duration,
             duration: Duration,
-            width: Int = native?.width ?: 0,
-            height: Int = native?.height ?: 0,
+            width: Int = native.width,
+            height: Int = native.height,
             rotationDegrees: Double = 0.0,
             sampleAspectRatio: Double = 1.0,
         ): VideoFrame = VideoFrame(native, null, pts, duration, width, height, rotationDegrees, sampleAspectRatio)

@@ -24,8 +24,8 @@ import io.github.aftrolle.ffmpegkmp.codec.VideoFrame
  * Each call allocates a bitmap, which only the garbage collector frees. To draw a source frame
  * after frame, a [FrameImage] reuses one.
  *
- * Throws [IllegalStateException] for a frame without CPU-visible pixels, such as one rendered to
- * a Surface, or a closed one.
+ * Throws [IllegalStateException] for a frame without CPU-visible pixels, such as one in GPU
+ * memory, or a closed one.
  */
 public expect fun VideoFrame.toImageBitmap(): ImageBitmap
 

@@ -27,6 +27,7 @@ import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.yield
 import okio.Buffer
+import okio.FileHandle
 
 /**
  * The browser's decoder and writer against the real worker: WebCodecs decodes and encodes, and
@@ -165,35 +166,30 @@ class BrowserCodecTest {
             return@browserTest
         }
         assertTrue(!MediaWriter.canEncode(config.copy(codec = VideoCodec.HEVC, dynamicRange = DynamicRange.HDR10)), "The browser encodes SDR only")
-        // AAC starts 1024 samples early, which a fragmented MP4 cannot hold: the audio goes to Matroska.
-        for ((container, withAudio) in listOf(ContainerFormat.Mp4(fragmented = true) to false, ContainerFormat.Matroska to true)) {
-            val output = Buffer()
-            val result = MediaWriter.open(MediaOutput.Stream(output), container).use { writer ->
-                val video = writer.addVideoTrack(config)
-                assertEquals(FrameFormat.Rgba8, video.inputFormat)
-                assertEquals(FrameFormat.Rgba8, video.canvasFormat)
-                val audio = if (withAudio) writer.addAudioTrack(AudioEncoderConfig(sampleRate = 48_000, channels = 2)) else null
-                open("cfr-30-h264.mp4").use { decoder ->
-                    decoder.frames(until = 1.seconds).collect { frame -> video.write(frame) }
-                }
-                audio?.write(FloatArray(48_000 * 2) { sin(2 * PI * 440 * (it / 2) / 48_000).toFloat() * 0.25f })
-                writer.finish()
+        val output = MemoryFileHandle()
+        val result = MediaWriter.open(MediaOutput.Handle(output)).use { writer ->
+            val video = writer.addVideoTrack(config)
+            assertEquals(FrameFormat.Rgba8, video.inputFormat)
+            assertEquals(FrameFormat.Rgba8, video.config.canvasFormat)
+            val audio = writer.addAudioTrack(AudioEncoderConfig(sampleRate = 48_000, channels = 2))
+            open("cfr-30-h264.mp4").use { decoder ->
+                decoder.frames(until = 1.seconds).collect { frame -> video.write(frame) }
             }
-            assertEquals(30, result.videoFrames, "$container")
-            assertEquals(if (withAudio) 48_000L else 0L, result.audioFrames, "$container")
-            assertTrue(abs((result.duration - 1.seconds).inWholeMilliseconds) < 50, "$container: ${result.duration}")
-            val bytes = output.readByteArray()
-            val name = if (container is ContainerFormat.Matroska) "exported.mkv" else "exported.mp4"
-            VideoDecoder.open(MediaSource(name, CommandIo { input(name, Buffer().write(bytes)) }), VideoOutput.Memory(FrameFormat.Rgba8)).use { decoder ->
-                assertEquals(96, decoder.info.width)
-                val frames = decoder.frames().toList()
-                assertEquals((0 until 30).toList(), frames.map { it.number() }, "$container")
-                // Matroska counts milliseconds.
-                frames.forEachIndexed { index, frame ->
-                    assertTrue(abs((frame.pts - FrameRate(30).timeOf(index.toLong())).inWholeNanoseconds) <= 1_000_000, "$container: frame $index at ${frame.pts}")
-                }
-                frames.forEach(VideoFrame::close)
+            audio.write(FloatArray(48_000 * 2) { sin(2 * PI * 440 * (it / 2) / 48_000).toFloat() * 0.25f })
+            writer.finish()
+        }
+        assertEquals(30, result.videoFrames)
+        assertEquals(48_000L, result.audioFrames)
+        assertTrue(abs((result.duration - 1.seconds).inWholeMilliseconds) < 50, "${result.duration}")
+        val bytes = output.readBytes()
+        VideoDecoder.open(MediaSource("exported.mp4", CommandIo { input("exported.mp4", Buffer().write(bytes)) }), VideoOutput.Memory(FrameFormat.Rgba8)).use { decoder ->
+            assertEquals(96, decoder.info.width)
+            val frames = decoder.frames().toList()
+            assertEquals((0 until 30).toList(), frames.map { it.number() })
+            frames.forEachIndexed { index, frame ->
+                assertTrue(abs((frame.pts - FrameRate(30).timeOf(index.toLong())).inWholeNanoseconds) <= 1_000_000, "frame $index at ${frame.pts}")
             }
+            frames.forEach(VideoFrame::close)
         }
     }
 
@@ -202,25 +198,25 @@ class BrowserCodecTest {
         if (!webCodecs()) return@browserTest
         val config = VideoEncoderConfig(96, 64, FrameRate(30), VideoCodec.H264, DynamicRange.SDR)
         if (!MediaWriter.canEncode(config)) return@browserTest
-        val output = Buffer()
-        MediaWriter.open(MediaOutput.Stream(output), ContainerFormat.Matroska).use { writer ->
+        val output = MemoryFileHandle()
+        MediaWriter.open(MediaOutput.Handle(output)).use { writer ->
             val track = writer.addVideoTrack(config)
             // What ComposeFrameRenderer does in the browser: a frame of the track's canvas format, drawn in place.
-            for (index in 0 until 12) track.write(drawn(index, track.canvasFormat), FrameRate(30).timeOf(index.toLong()))
+            for (index in 0 until 12) track.write(drawn(index, track.config.canvasFormat), FrameRate(30).timeOf(index.toLong()))
             assertEquals(12, writer.finish().videoFrames)
         }
-        val bytes = output.readByteArray()
-        VideoDecoder.open(MediaSource("drawn.mkv", CommandIo { input("drawn.mkv", Buffer().write(bytes)) })).use { decoder ->
+        val bytes = output.readBytes()
+        VideoDecoder.open(MediaSource("drawn.mp4", CommandIo { input("drawn.mp4", Buffer().write(bytes)) })).use { decoder ->
             assertEquals((0 until 12).toList(), decoder.frames().toList().map { frame -> frame.number().also { frame.close() } })
         }
     }
 
     @Test
-    fun aHandleOrPathOutputAndHdrAreRefusedWithTheReason() = browserTest {
+    fun aPathOutputAndHdrAreRefusedWithTheReason() = browserTest {
         if (!webCodecs()) return@browserTest
         val failure = assertFailsWith<MediaWritingException> { MediaWriter.open(MediaOutput.File("/tmp/out.mp4")) }
         assertTrue("file system" in failure.message.orEmpty(), failure.message)
-        MediaWriter.open(MediaOutput.Stream(Buffer()), ContainerFormat.Matroska).use { writer ->
+        MediaWriter.open(MediaOutput.Handle(MemoryFileHandle())).use { writer ->
             val hdr = assertFailsWith<MediaWritingException> {
                 writer.addVideoTrack(VideoEncoderConfig(96, 64, FrameRate(30), VideoCodec.HEVC, DynamicRange.HDR10))
             }
@@ -242,6 +238,36 @@ class BrowserCodecTest {
         val bytes = fetchBytes("/base/kotlin/video-decoder/$name")
         return VideoDecoder.open(MediaSource(name, CommandIo { input(name, Buffer().write(bytes)) }), output, decoder, timeout = 20.seconds)
     }
+}
+
+/** A seekable in-memory output, which the browser writer fills when it finishes. */
+private class MemoryFileHandle : FileHandle(readWrite = true) {
+    private var bytes = ByteArray(0)
+
+    fun readBytes(): ByteArray = bytes.copyOf()
+
+    override fun protectedRead(fileOffset: Long, array: ByteArray, arrayOffset: Int, byteCount: Int): Int {
+        if (fileOffset >= bytes.size) return -1
+        val count = minOf(byteCount, bytes.size - fileOffset.toInt())
+        bytes.copyInto(array, arrayOffset, fileOffset.toInt(), fileOffset.toInt() + count)
+        return count
+    }
+
+    override fun protectedWrite(fileOffset: Long, array: ByteArray, arrayOffset: Int, byteCount: Int) {
+        val size = fileOffset.toInt() + byteCount
+        if (size > bytes.size) bytes = bytes.copyOf(size)
+        array.copyInto(bytes, fileOffset.toInt(), arrayOffset, arrayOffset + byteCount)
+    }
+
+    override fun protectedResize(size: Long) {
+        bytes = bytes.copyOf(size.toInt())
+    }
+
+    override fun protectedSize(): Long = bytes.size.toLong()
+
+    override fun protectedFlush() = Unit
+
+    override fun protectedClose() = Unit
 }
 
 /** A frame drawn as the fixture generator draws [index]: grey, with a white 16x16 cell for each set bit. */

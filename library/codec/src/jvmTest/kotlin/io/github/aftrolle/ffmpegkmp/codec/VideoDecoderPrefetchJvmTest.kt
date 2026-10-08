@@ -13,7 +13,7 @@ import kotlin.time.TimeSource
 import kotlinx.coroutines.runBlocking
 import okio.Buffer
 
-/** How long a collector that works on each frame waits for the next one, with the default prefetch. */
+/** How long a collector that works on each frame waits for the next one. */
 class VideoDecoderPrefetchJvmTest {
     @Test
     fun oneFrameAheadHidesTheDecodingBehindACollectorThatWorks() = runBlocking<Unit> {
@@ -31,28 +31,23 @@ class VideoDecoderPrefetchJvmTest {
                 )
             }
             assertTrue(result.isSuccess, result.errorOutput)
-            val none = waits(clip, prefetch = 0)
-            val ahead = waits(clip, prefetch = null)
-            println("A collector working 7 ms a frame waited ${none.total()} in all at prefetch 0, ${ahead.total()} at the default")
+            val ahead = waits(clip)
+            println("A collector working 7 ms a frame waited ${ahead.total()} in all")
             // The median, so that a loaded machine's stalls on a few frames do not count: with one
             // frame ahead the next one is ready when the collector asks.
             val median = ahead.sorted()[ahead.size / 2]
-            assertTrue(median <= 2.milliseconds, "waited $median for a frame, the median at the default")
+            assertTrue(median <= 2.milliseconds, "waited $median for a frame, the median")
         } finally {
             clip.delete()
         }
     }
 
-    /**
-     * How long the collector waited for each frame after the first, which nothing decodes ahead of,
-     * at [prefetch], or the default for null.
-     */
-    private suspend fun waits(clip: File, prefetch: Int?): List<Duration> =
+    /** How long the collector waited for each frame after the first, which nothing decodes ahead of. */
+    private suspend fun waits(clip: File): List<Duration> =
         VideoDecoder.open(MediaSource(clip.path), VideoOutput.Memory(FrameFormat.Rgba8), DecoderPreference.SOFTWARE).use { decoder ->
             val waits = mutableListOf<Duration>()
             var asked = TimeSource.Monotonic.markNow()
-            val frames = if (prefetch == null) decoder.frames() else decoder.frames(prefetch = prefetch)
-            frames.collect { frame ->
+            decoder.frames().collect { frame ->
                 waits += asked.elapsedNow()
                 frame.use { Thread.sleep(7) }
                 asked = TimeSource.Monotonic.markNow()

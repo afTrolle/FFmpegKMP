@@ -791,62 +791,6 @@ const ERROR_IO = -1005;
 const ERROR_EXIT = -0x54495845;
 const ERROR_INVALID_DATA = -0x41444e49;
 
-// A pull demuxer, for a caller that decodes on its own schedule. One per worker.
-const demux = { reader: null, packets: null };
-let demuxMessageTail = Promise.resolve();
-
-function openDemux(module, data) {
-  if (demux.reader) throw new Error('The demuxer is already open');
-  demux.reader = openPacketReader(module, data.bytes, data.extension, packet => {
-    demux.packets.push({
-      type: packet.key ? 'key' : 'delta',
-      timestamp: packet.timestampUs,
-      duration: packet.durationUs,
-      data: packet.data,
-    });
-  });
-  const { config, snapshot } = demux.reader;
-  const transfers = config.description ? [config.description.buffer] : [];
-  self.postMessage({ type: 'demux-opened', id: data.id, config, snapshot }, transfers);
-}
-
-function readDemux(module, data) {
-  demux.packets = [];
-  let end = false;
-  while (demux.packets.length < data.count) {
-    if (!readPacket(module, demux.reader)) {
-      end = true;
-      break;
-    }
-  }
-  const packets = demux.packets;
-  demux.packets = null;
-  self.postMessage({ type: 'demux-packets', id: data.id, packets, end }, packets.map(packet => packet.data.buffer));
-}
-
-async function handleDemuxMessage(data) {
-  try {
-    const module = await loadModule(data.moduleUrl || './ffmpegkmp.mjs');
-    if (data.type === 'demux-open') {
-      openDemux(module, data);
-      return;
-    }
-    if (!demux.reader) throw new Error('The demuxer is not open');
-    if (data.type === 'demux-read') {
-      readDemux(module, data);
-    } else if (data.type === 'demux-seek') {
-      // AVSEEK_FLAG_BACKWARD: the next packet is the keyframe at or before the position.
-      const result = module._ffplaykmp_web_player_webcodecs_seek(demux.reader.handle, BigInt(data.positionUs));
-      if (result < 0) throw new Error(`FFmpeg could not seek to ${data.positionUs} us (${result})`);
-      self.postMessage({ type: 'demux-seeked', id: data.id });
-    }
-  } catch (error) {
-    if (error !== 'unwind') {
-      self.postMessage({ type: 'demux-failure', id: data.id, message: String(error?.stack ?? error) });
-    }
-  }
-}
-
 // A frame-accurate decoder for VideoDecoder: FFmpeg reads the packets and WebCodecs decodes them.
 // Frames are counted as ffmpegkmp_decoder.c counts them, in the stream's time base: the frame
 // shown at a position is the decoded one with the largest pts at or before it, held until the
@@ -1600,10 +1544,6 @@ function serveResource(module, resources, resourceId, operation, offset, bytes, 
 self.onmessage = async ({ data }) => {
   if (data.type.startsWith('player-')) {
     playerMessageTail = playerMessageTail.then(() => handlePlayerMessage(data));
-    return;
-  }
-  if (data.type.startsWith('demux-')) {
-    demuxMessageTail = demuxMessageTail.then(() => handleDemuxMessage(data));
     return;
   }
   // Interrupts and aborts reach a call that is still running, instead of queueing behind it.

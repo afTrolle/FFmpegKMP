@@ -93,8 +93,8 @@ public class FrameImage : AutoCloseable {
      * memory is shown as it is, and retained until two more updates have come. The frame stays
      * open: close it when done with it.
      *
-     * Throws [IllegalStateException] for a frame without pixels this image can reach, such as one
-     * rendered to a Surface, and once this image is closed.
+     * Throws [IllegalStateException] for a frame without pixels this image can reach, and once this
+     * image is closed.
      */
     public fun update(frame: VideoFrame): Unit = lock.withLock {
         check(!closed) { "The frame image is closed" }

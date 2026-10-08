@@ -53,6 +53,5 @@ class DecoderModelsTest {
     fun aSourceNeedsAnInput() {
         assertFailsWith<IllegalArgumentException> { MediaSource(" ") }
         assertFailsWith<IllegalArgumentException> { MediaSource("a\u0000b") }
-        assertEquals(ContentProtection.CLEAR_OR_AUTO_DETECT, MediaSource("movie.mp4").protection)
     }
 }

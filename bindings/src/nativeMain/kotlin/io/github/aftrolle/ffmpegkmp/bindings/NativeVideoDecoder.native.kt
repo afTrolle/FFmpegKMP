@@ -45,7 +45,6 @@ public actual fun createPlatformVideoDecoder(
     decoderPreference: NativePlayerDecoderPreference,
     decoderThreads: Int,
     timeoutMicros: Long,
-    surface: Any?,
 ): NativeVideoDecoder {
     requireMemoryOutput(output)
     val mounts = StableRef.create(

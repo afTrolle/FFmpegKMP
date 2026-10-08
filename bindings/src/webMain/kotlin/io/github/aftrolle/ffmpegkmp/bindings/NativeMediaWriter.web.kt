@@ -26,7 +26,7 @@ public actual suspend fun createPlatformMediaWriter(
     timeoutMicros: Long,
 ): NativeMediaWriter {
     val mounted = output as? NativeWriterOutput.Mounted ?: throw NativeBridgeUnavailableException(
-        "The browser has no file system to write '${(output as NativeWriterOutput.Path).path}' to: write to a stream or a handle",
+        "The browser has no file system to write '${(output as NativeWriterOutput.Path).path}' to: write to a handle",
     )
     val worker = BrowserWorkerCalls.start()
     val writer = BrowserMediaWriter(worker, mounted, container, timeoutMicros)

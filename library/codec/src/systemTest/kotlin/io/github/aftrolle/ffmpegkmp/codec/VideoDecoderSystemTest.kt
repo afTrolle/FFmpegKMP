@@ -276,13 +276,7 @@ class VideoDecoderSystemTest {
     @Test
     fun invalidRequestsFail() = runBlocking<Unit> {
         assertFailsWith<IllegalArgumentException> {
-            VideoDecoder.open(MediaSource("cfr-30.mp4"), VideoOutput.Surface(Any()))
-        }
-        assertFailsWith<IllegalArgumentException> {
             VideoDecoder.open(MediaSource("cfr-30.mp4"), VideoOutput.GpuBuffers)
-        }
-        assertFailsWith<IllegalArgumentException> {
-            VideoDecoder.open(MediaSource("x.mp4", protection = ContentProtection.REQUIRE_SECURE_PATH))
         }
         assertFailsWith<VideoDecodingException> {
             VideoDecoder.open(MediaSource((directory / "missing.mp4").toString()))
@@ -404,28 +398,24 @@ class VideoDecoderSystemTest {
             assertEquals(frames.map { it.second }.sorted(), frames.map { it.second })
         }
         decoder("cfr-30.mp4").use { decoder ->
-            assertEquals((0 until 150).toList(), decoder.frames(prefetch = 0).map { frame -> frame.use { it.number() } }.toList())
+            assertEquals((0 until 150).toList(), decoder.frames().map { frame -> frame.use { it.number() } }.toList())
             val middle = decoder.frames(from = 1.seconds, until = 2.seconds).map { frame -> frame.use { it.number() } }.toList()
             assertEquals((30 until 60).toList(), middle)
         }
     }
 
     @Test
-    fun framesAtARateOrIntervalSampleLikeAConstantRateClock() = runBlocking {
+    fun framesAtARateSampleLikeAConstantRateClock() = runBlocking {
         decoder("cfr-24.mp4").use { decoder ->
             val numbers = decoder.frames(step = FrameStep.Rate(FrameRate(30))).map { frame -> frame.use { it.number() } }.toList()
             assertEquals((0 until 150).map { tick -> tick * 24 / 30 }, numbers)
-        }
-        decoder("cfr-30.mp4").use { decoder ->
-            val numbers = decoder.frames(step = FrameStep.Every(100.milliseconds)).map { frame -> frame.use { it.number() } }.toList()
-            assertEquals((0 until 50).map { tick -> tick * 3 }, numbers)
         }
     }
 
     @Test
     fun framesDecodedAheadThatTheCollectorNeverTakesAreClosed() = runBlocking {
         decoder("cfr-30.mp4", VideoOutput.Memory(FrameFormat.Rgba8)).use { decoder ->
-            suspend fun firstTwo(from: Int) = decoder.frames(from = from.seconds / 30, prefetch = 2)
+            suspend fun firstTwo(from: Int) = decoder.frames(from = from.seconds / 30)
                 .take(2)
                 .map { frame -> frame.use { it.number() } }
                 .toList()
@@ -437,14 +427,6 @@ class VideoDecoderSystemTest {
             // getting a frame further ahead than in the warm-up can add one or two.
             val grown = nativeFrameStatistics().buffers - buffers
             assertTrue(grown <= 2, "pooled frames were not returned: the pool grew by $grown")
-        }
-    }
-
-    @Test
-    fun aPrefetchOutsideZeroToTwoIsRejected() = runBlocking<Unit> {
-        decoder("cfr-30.mp4").use { decoder ->
-            assertFailsWith<IllegalArgumentException> { decoder.frames(prefetch = -1) }
-            assertFailsWith<IllegalArgumentException> { decoder.frames(prefetch = 3) }
         }
     }
 

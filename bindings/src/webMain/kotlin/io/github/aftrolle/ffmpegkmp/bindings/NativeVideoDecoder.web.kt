@@ -28,7 +28,6 @@ public actual fun createPlatformVideoDecoder(
     decoderPreference: NativePlayerDecoderPreference,
     decoderThreads: Int,
     timeoutMicros: Long,
-    surface: Any?,
 ): NativeVideoDecoder {
     if (output != NativeVideoDecoderOutput.MEMORY) {
         throw NativeVideoDecoderException("The browser decodes into memory only", NativePlayerError.UNSUPPORTED)

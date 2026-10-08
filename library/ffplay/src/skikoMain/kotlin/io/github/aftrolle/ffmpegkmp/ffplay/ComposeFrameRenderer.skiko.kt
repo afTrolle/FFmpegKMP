@@ -48,7 +48,7 @@ import org.jetbrains.skia.ImageInfo
  * [format] is an RGB layout, because Skia draws RGB: [PixelLayout.RGBA8] or [PixelLayout.BGRA8] in
  * sRGB or Display P3, [PixelLayout.RGBA_1010102] for 10-bit SDR, and [PixelLayout.RGBA_F16] in
  * linear extended sRGB for HDR, where the shapes and text Compose draws sit at reference white,
- * 203 nits, and drawn HDR images keep their highlights. A [VideoTrack]'s `canvasFormat` is the
+ * 203 nits, and drawn HDR images keep their highlights. A [VideoTrack]'s `config.canvasFormat` is the
  * one its dynamic range calls for; [VideoTrack.write] converts it into the encoder's format once.
  * Pixels are premultiplied: transparency comes out as if drawn over black.
  *
@@ -79,7 +79,7 @@ public class ComposeFrameRenderer<T> internal constructor(
         track: VideoTrack,
         density: Density = Density(1f),
         content: @Composable (T) -> Unit,
-    ) : this(track.config.width, track.config.height, track.canvasFormat, density, content)
+    ) : this(track.config.width, track.config.height, track.config.canvasFormat, density, content)
 
     internal enum class Route { AUTO, SCENE, IMAGE_SCENE }
 

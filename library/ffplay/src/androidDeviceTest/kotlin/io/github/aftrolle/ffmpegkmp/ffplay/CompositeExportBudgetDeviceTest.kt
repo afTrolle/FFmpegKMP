@@ -68,7 +68,7 @@ class CompositeExportBudgetDeviceTest {
     )
 
     private val cases = listOf(
-        Case("Memory(canvasFormat)") { track -> VideoOutput.Memory(track.canvasFormat) },
+        Case("Memory(canvasFormat)") { track -> VideoOutput.Memory(track.config.canvasFormat) },
         Case("Memory()") { VideoOutput.Memory() },
         // MediaCodec's frames, drawn from their HardwareBuffers.
         Case("GpuBuffers", DecoderPreference.AUTO) { VideoOutput.GpuBuffers },
@@ -150,10 +150,9 @@ class CompositeExportBudgetDeviceTest {
                     }
                 }.use { renderer ->
                     coroutineScope {
-                        // Each channel is the one frame ahead that frames() decodes by default: it decodes the
-                        // next frame while this loop works on the current one.
+                        // Each channel joins one decoder's frames, which frames() already decodes one ahead.
                         val sources: List<ReceiveChannel<VideoFrame>> =
-                            decoders.map { it.frames(prefetch = 0).buffer(Channel.RENDEZVOUS).produceIn(this) }
+                            decoders.map { it.frames().buffer(Channel.RENDEZVOUS).produceIn(this) }
                         while (true) {
                             val received = sources.map { it.receiveCatching() }
                             received.firstNotNullOfOrNull { it.exceptionOrNull() }?.let { throw it }

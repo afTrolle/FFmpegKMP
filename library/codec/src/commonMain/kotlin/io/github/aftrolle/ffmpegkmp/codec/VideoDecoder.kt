@@ -57,7 +57,7 @@ public sealed interface VideoOutput {
      * On Android MediaCodec decodes 8-bit sources straight into memory, as NV12 or YUV420P, with
      * the software decoder as the [DecoderPreference.AUTO] fallback. Deeper sources decode in
      * software, because MediaCodec's memory output would drop their precision, so
-     * [DecoderPreference.REQUIRE_HARDWARE] fails on them; [Surface] keeps them in hardware.
+     * [DecoderPreference.REQUIRE_HARDWARE] fails on them.
      *
      * With a [size], the decoder's thread also scales each frame to it, bilinearly and in the same
      * pass as the conversion, so a 4K source shown as a 960x540 tile converts, and tone maps, at
@@ -92,21 +92,12 @@ public sealed interface VideoOutput {
     }
 
     /**
-     * Android only: MediaCodec renders each frame into this `android.view.Surface` (for example
-     * an `ImageReader`'s) with its pts as the buffer timestamp, and the frame's
-     * [VideoFrame.format] is null. Where no hardware decoder takes the source, frames come in
-     * memory as decoded instead, as with [Memory], and [VideoDecoder.decoderKind] reports
-     * [DecoderKind.SOFTWARE].
-     */
-    public data class Surface(val surface: Any) : VideoOutput
-
-    /**
      * Android 14 (API 34) and later: MediaCodec decodes each frame into GPU memory, an
      * `android.hardware.HardwareBuffer` (`VideoFrame.hardwareBuffer` in the Android source set),
      * with no CPU-visible pixels: the frame's [VideoFrame.format] is null, [VideoFrame.usePlanes]
      * returns null and [VideoFrame.convert] fails. A `FrameImage` draws it between Compose's layers
      * with no copy, on a GPU canvas. The buffer can be larger than the picture, which lies in
-     * `VideoFrame.hardwareBufferCrop`. Unlike [Surface], [VideoDecoder.frames] decodes ahead.
+     * `VideoFrame.hardwareBufferCrop`.
      *
      * The buffers are the decoder's ring of three, an `ImageReader`'s images: a frame's buffer goes
      * back to MediaCodec when its last reference closes. The decoder keeps the latest frame's, so
@@ -114,16 +105,16 @@ public sealed interface VideoOutput {
      * frame ahead, which is that latest frame. That leaves the caller two, which is what a
      * `FrameImage` holds: the frames of its last two updates, the one on screen and the one a
      * drawing may still use. So `decoder.frames().collect { frame -> frame.use(image::update); … }`
-     * with the default prefetch uses exactly the three. Each frame the caller holds beyond that,
-     * and each prefetch beyond 1, makes the next [VideoDecoder.frameAt] that needs a new frame wait
-     * for one to close, and at the decoder's timeout fail, which leaves the decoder timed out.
-     * These frames cannot be converted, so to keep more, hold fewer.
+     * uses exactly the three. Each frame the caller holds beyond that makes the next
+     * [VideoDecoder.frameAt] that needs a new frame wait for one to close, and at the decoder's
+     * timeout fail, which leaves the decoder timed out. These frames cannot be converted, so to
+     * keep more, hold fewer.
      *
      * Where no hardware decoder takes the source under [DecoderPreference.AUTO], and for sources
      * deeper than 8 bits, frames come in memory as decoded instead, as with [Memory], and
      * [VideoDecoder.decoderKind] reports [DecoderKind.SOFTWARE]. Elsewhere and on earlier Android
-     * versions, [VideoDecoder.open] fails with [IllegalArgumentException], as for [Surface] off
-     * Android; the browser fails it with a [VideoDecodingException].
+     * versions, [VideoDecoder.open] fails with [IllegalArgumentException]; the browser fails it with
+     * a [VideoDecodingException].
      */
     public data object GpuBuffers : VideoOutput
 }
@@ -132,17 +123,6 @@ public sealed interface VideoOutput {
 public sealed interface FrameStep {
     /** Every decoded frame once, in presentation order. */
     public data object Decoded : FrameStep
-
-    /**
-     * The frame shown at each multiple of [interval] after the start: a frame that covers several
-     * positions comes once for each. [interval] is exact to the nanosecond; for a frame rate whose
-     * frames are not a whole number of nanoseconds apart, such as 30 fps, use [Rate].
-     */
-    public data class Every(val interval: Duration) : FrameStep {
-        init {
-            require(interval.isPositive() && interval.isFinite()) { "The interval must be positive: $interval" }
-        }
-    }
 
     /**
      * The frame shown at each frame time of [rate] after the start, as a constant-rate export at
@@ -186,11 +166,10 @@ public class VideoDecoder private constructor(
     stream: NativeVideoStream,
     private val thread: DecoderThread,
     private val timeout: Duration,
-    private val surfaceOutput: Boolean,
 ) : AutoCloseable {
     /**
-     * The source's coded size, rotation, sample aspect ratio, bit depth, HDR type and colour
-     * metadata. Frames come at [VideoOutput.Memory.size] instead when the output has one.
+     * The source's coded size, rotation, sample aspect ratio, bit depth, colour and HDR metadata.
+     * Frames come at [VideoOutput.Memory.size] instead when the output has one.
      */
     public val info: VideoInfo = stream.info.toPublicVideoInfo()
 
@@ -236,32 +215,23 @@ public class VideoDecoder private constructor(
     /**
      * The frames from [from] until [until] (exclusive), [step] apart, each the collector's to close.
      * [FrameStep.Decoded] delivers each decoded frame once, from the one shown at [from];
-     * [FrameStep.Every] and [FrameStep.Rate] the frame shown at [from] and at each tick after it.
+     * [FrameStep.Rate] the frame shown at [from] and at each frame time of its rate after it.
      * The flow ends at [until] or at the end of the video.
      *
-     * Up to [prefetch] frames, 0 to 2, are decoded ahead on the decoder's thread while the collector
-     * works, and frames it never receives are closed. The default, 1, holds the next frame ready
-     * while the collector works on the current one, which is all a collector slower than the
-     * decoder can use. At most 2 leaves one of the decoder's ring of three (see
-     * [VideoOutput.Memory]) for the collector's own frame. A Surface output renders each frame as
-     * it is decoded, so it cannot decode ahead: its [prefetch] is 0, which decodes each frame only
-     * when the collector asks for it.
+     * One frame is decoded ahead on the decoder's thread while the collector works, and a frame it
+     * never receives is closed. That holds the next frame ready while the collector works on the
+     * current one, which is all a collector slower than the decoder can use, and leaves two of the
+     * decoder's ring of three (see [VideoOutput.Memory]) for the collector's own frames.
      */
     public fun frames(
         from: Duration = Duration.ZERO,
         until: Duration = Duration.INFINITE,
         step: FrameStep = FrameStep.Decoded,
-        prefetch: Int = if (surfaceOutput) 0 else 1,
     ): Flow<VideoFrame> {
         from.requireNonNegativeNanos()
-        require(prefetch in 0..MAX_PREFETCH) { "prefetch must be 0 to $MAX_PREFETCH: $prefetch" }
-        require(prefetch == 0 || !surfaceOutput) {
-            "A Surface output renders each frame as it is decoded, so it cannot decode ahead: prefetch must be 0"
-        }
-        if (prefetch == 0) return flow { decodeFrames(from, until, step) }
         return flow {
-            // One frame is in the producer's hand while it waits to send, so the channel holds one less.
-            val ahead = Channel<VideoFrame>(prefetch - 1, onUndeliveredElement = VideoFrame::close)
+            // The producer holds one frame while it waits to send, so the channel itself holds none.
+            val ahead = Channel<VideoFrame>(Channel.RENDEZVOUS, onUndeliveredElement = VideoFrame::close)
             coroutineScope {
                 val producer = launch {
                     val failure = runCatching { FlowCollector<VideoFrame> { ahead.send(it) }.decodeFrames(from, until, step) }
@@ -292,7 +262,6 @@ public class VideoDecoder private constructor(
             index++
             position = when (step) {
                 FrameStep.Decoded -> end
-                is FrameStep.Every -> from + step.interval * index.toInt()
                 is FrameStep.Rate -> from + step.rate.timeOf(index)
             }
         }
@@ -342,9 +311,6 @@ public class VideoDecoder private constructor(
             timeout: Duration = 10.seconds,
             threads: DecoderThreads = DecoderThreads.Auto,
         ): VideoDecoder {
-            require(source.protection != ContentProtection.REQUIRE_SECURE_PATH) {
-                "Protected sources need a secure output path; a VideoDecoder hands frames to the caller"
-            }
             require(timeout.isPositive()) { "The timeout must be positive: $timeout" }
             val action = "open '${source.input}'"
             val thread = DecoderThread("FFmpegKMP VideoDecoder")
@@ -358,7 +324,6 @@ public class VideoDecoder private constructor(
                                 source = NativePlayerSource(source.input, source.io.toNativeMounts()),
                                 output = when (output) {
                                     is VideoOutput.Memory -> NativeVideoDecoderOutput.MEMORY
-                                    is VideoOutput.Surface -> NativeVideoDecoderOutput.SURFACE
                                     VideoOutput.GpuBuffers -> NativeVideoDecoderOutput.GPU_BUFFERS
                                 },
                                 memoryFormat = (output as? VideoOutput.Memory)?.format?.toNative(),
@@ -367,14 +332,13 @@ public class VideoDecoder private constructor(
                                 decoderPreference = decoder.toNative(),
                                 decoderThreads = threads.toNative(),
                                 timeoutMicros = if (timeout.isInfinite()) 0L else timeout.inWholeMicroseconds,
-                                surface = (output as? VideoOutput.Surface)?.surface,
                             )
                         }
                     }.await()
                 }
                 native = created
                 val stream = thread.within(created, timeout, action) { created.start() }
-                return VideoDecoder(created, stream, thread, timeout, surfaceOutput = output is VideoOutput.Surface)
+                return VideoDecoder(created, stream, thread, timeout)
             } catch (failure: Throwable) {
                 if (native != null) thread.release(native) else thread.finish(Duration.ZERO) {}
                 throw failure
@@ -391,7 +355,7 @@ private fun NativeDecodedFrame.toVideoFrame(): VideoFrame {
     }
     val pts = ptsNanos.nanoseconds
     val duration = durationNanos.nanoseconds
-    val gpu = gpu ?: return VideoFrame.of(frame, pts, duration, width, height, rotationDegrees, sampleAspectRatio)
+    val gpu = gpu ?: return VideoFrame.of(checkNotNull(frame), pts, duration, width, height, rotationDegrees, sampleAspectRatio)
     return VideoFrame.of(gpu, pts, duration, width, height, rotationDegrees, sampleAspectRatio)
 }
 
@@ -400,9 +364,6 @@ private fun NativeDecodedFrame.discard() {
     frame?.close()
     gpu?.release()
 }
-
-/** The most frames [VideoDecoder.frames] decodes ahead. */
-private const val MAX_PREFETCH = 2
 
 /** How long past its native deadline a call may run before the watchdog gives up on it. */
 private val DEADLINE_GRACE = 500.milliseconds

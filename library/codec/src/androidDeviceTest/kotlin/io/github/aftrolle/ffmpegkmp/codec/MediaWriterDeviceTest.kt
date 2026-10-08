@@ -93,7 +93,7 @@ class MediaWriterDeviceTest {
             val track = writer.addVideoTrack(config)
             VideoDecoder.open(
                 MediaSource(name, CommandIo { input(name, Buffer().write(bytes)) }),
-                VideoOutput.Memory(track.canvasFormat),
+                VideoOutput.Memory(track.config.canvasFormat),
                 DecoderPreference.SOFTWARE,
             ).use { decoder -> decoder.frames(until = until).collect { track.write(it) } }
             writer.finish()

@@ -48,12 +48,7 @@ public actual fun createPlatformVideoDecoder(
     decoderPreference: NativePlayerDecoderPreference,
     decoderThreads: Int,
     timeoutMicros: Long,
-    surface: Any?,
 ): NativeVideoDecoder {
-    require((output == NativeVideoDecoderOutput.SURFACE) == (surface != null)) {
-        "A Surface is required for, and only for, Surface output"
-    }
-    require(surface == null || surface is Surface) { "Surface output needs an android.view.Surface, not $surface" }
     if (output == NativeVideoDecoderOutput.GPU_BUFFERS) {
         require(Build.VERSION.SDK_INT >= 34) {
             "GPU buffer output needs Android 14 (API 34) or later; this is API ${Build.VERSION.SDK_INT}"
@@ -62,7 +57,7 @@ public actual fun createPlatformVideoDecoder(
     }
     return createJavaCppVideoDecoder(
         source, output, memoryFormat, memoryWidth, memoryHeight, decoderPreference, decoderThreads, timeoutMicros,
-    ) { decoder -> if (surface == null) 0 else attachDecoderSurface(surface, decoder) }
+    ) { 0 }
 }
 
 /**

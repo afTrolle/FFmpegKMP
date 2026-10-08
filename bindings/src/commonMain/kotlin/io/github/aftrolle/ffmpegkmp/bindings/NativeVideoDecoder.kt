@@ -10,7 +10,6 @@ package io.github.aftrolle.ffmpegkmp.bindings
 @InternalFFmpegKmpApi
 public enum class NativeVideoDecoderOutput(public val value: Int) {
     MEMORY(0),
-    SURFACE(1),
 
     /** Android 14 and later: frames in an `ImageReader`'s `HardwareBuffer`s, as [NativeDecodedFrame.gpu]. */
     GPU_BUFFERS(1),
@@ -29,7 +28,7 @@ public class NativeDecodedFrame(
     public val sampleAspectRatioDenominator: Int,
     public val rotationDegrees: Double,
     public val hardware: Boolean,
-    /** A new reference to the frame's pixels, which the receiver closes; null when it was rendered to a Surface. */
+    /** A new reference to the frame's pixels, which the receiver closes; null when the frame lies in [gpu]. */
     public val frame: NativeFrame?,
     /** A new reference to the GPU buffer the frame was rendered into, which the receiver releases; null for others. */
     public val gpu: NativeGpuBuffer? = null,
@@ -86,9 +85,8 @@ public class NativeVideoDecoderException(
  * scaled to it as they are converted, with the sample aspect ratio that keeps their display
  * aspect. [decoderThreads] is the software decoder's thread count, 0 for FFmpeg's automatic count capped
  * at 8; hardware decoders ignore it. [timeoutMicros] bounds each start, seek and frameAt natively (0 for none): calls past it fail
- * with [NativePlayerError.TIMED_OUT]. [surface] is the `android.view.Surface` a
- * [NativeVideoDecoderOutput.SURFACE] decoder renders into; other platforms reject that output, and
- * [NativeVideoDecoderOutput.GPU_BUFFERS] too, which needs Android 14 (API 34).
+ * with [NativePlayerError.TIMED_OUT]. Other platforms reject [NativeVideoDecoderOutput.GPU_BUFFERS], which needs
+ * Android 14 (API 34).
  */
 @InternalFFmpegKmpApi
 public expect fun createPlatformVideoDecoder(
@@ -100,7 +98,6 @@ public expect fun createPlatformVideoDecoder(
     decoderPreference: NativePlayerDecoderPreference,
     decoderThreads: Int,
     timeoutMicros: Long,
-    surface: Any? = null,
 ): NativeVideoDecoder
 
 /** Raw `ffmpegkmp_video_decoder_*` calls for one open decoder, implemented per platform binding. */
@@ -157,14 +154,10 @@ internal class GuardedVideoDecoder(
     private fun closedError(): Nothing = throw IllegalStateException("The video decoder is closed")
 }
 
-/** Fails, as platforms other than Android do, for the outputs only Android has. */
+/** Fails, as platforms other than Android do, for the output only Android has. */
 internal fun requireMemoryOutput(output: NativeVideoDecoderOutput) {
     require(output == NativeVideoDecoderOutput.MEMORY) {
-        if (output == NativeVideoDecoderOutput.SURFACE) {
-            "Surface output is only available on Android"
-        } else {
-            "GPU buffer output is only available on Android 14 (API 34) and later"
-        }
+        "GPU buffer output is only available on Android 14 (API 34) and later"
     }
 }
 

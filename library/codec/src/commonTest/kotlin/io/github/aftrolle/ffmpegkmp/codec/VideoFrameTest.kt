@@ -111,16 +111,6 @@ class VideoFrameTest {
     }
 
     @Test
-    fun aFrameRenderedToASurfaceHasNoPixels() {
-        VideoFrame.of(null, Duration.ZERO, 40.milliseconds, width = 96, height = 64).use { frame ->
-            assertNull(frame.format)
-            assertNull(frame.usePlanes { it })
-            assertFailsWith<IllegalStateException> { frame.convert(FrameFormat.Rgba8) }
-            frame.retain().close()
-        }
-    }
-
-    @Test
     fun aFrameInGpuMemoryHasNoPixelsAndReleasesItsBufferOnceAfterTheLastReference() {
         var releases = 0
         val buffer = NativeGpuBuffer(Any(), 7L, 0, 0, 128, 128, 0) { releases++ }

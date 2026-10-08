@@ -117,7 +117,7 @@ public class ComposeFrameRenderer<T> internal constructor(
         context,
         track.config.width,
         track.config.height,
-        track.canvasFormat.takeIf { it != RGBA_1010102 || Build.VERSION.SDK_INT >= 33 } ?: FrameFormat.Rgba8,
+        track.config.canvasFormat.takeIf { it != RGBA_1010102 || Build.VERSION.SDK_INT >= 33 } ?: FrameFormat.Rgba8,
         density,
         content,
     )

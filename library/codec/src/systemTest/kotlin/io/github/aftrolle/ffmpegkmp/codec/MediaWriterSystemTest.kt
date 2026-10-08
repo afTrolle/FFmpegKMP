@@ -89,10 +89,10 @@ class MediaWriterSystemTest {
         val output = directory / "sdr-10.mp4"
         val result = MediaWriter.open(MediaOutput.File(output.toString())).use { writer ->
             val track = writer.addVideoTrack(config)
-            assertEquals(FrameFormat(PixelLayout.RGBA_1010102, FrameColor.Srgb), track.canvasFormat)
+            assertEquals(FrameFormat(PixelLayout.RGBA_1010102, FrameColor.Srgb), track.config.canvasFormat)
             assertTrue(track.inputFormat.layout in setOf(PixelLayout.P010, PixelLayout.YUV420P10), "${track.inputFormat}")
             assertEquals(FrameColor.Bt709, track.inputFormat.color)
-            decoder("cfr-30-h264-128.mp4", VideoOutput.Memory(track.canvasFormat)).use { decoder ->
+            decoder("cfr-30-h264-128.mp4", VideoOutput.Memory(track.config.canvasFormat)).use { decoder ->
                 decoder.frames(until = 1.seconds).collect { track.write(it) }
             }
             writer.finish()
@@ -245,33 +245,6 @@ class MediaWriterSystemTest {
     }
 
     @Test
-    fun fragmentedMp4GoesToAStreamAndMatroskaAndMpegTsRoundTrip() = runBlocking {
-        val config = VideoEncoderConfig(128, 128, FrameRate(30))
-        if (!encodes(config)) return@runBlocking
-        val sink = Buffer()
-        MediaWriter.open(MediaOutput.Stream(sink), ContainerFormat.Mp4(fragmented = true)).use { writer ->
-            val track = writer.addVideoTrack(config)
-            decoder("cfr-30-h264-128.mp4", VideoOutput.Memory(track.inputFormat)).use { decoder ->
-                decoder.frames(until = 1.seconds).collect { track.write(it) }
-            }
-            assertEquals(null, writer.finish().bytes)
-        }
-        val bytes = sink.readByteArray()
-        VideoDecoder.open(MediaSource("stream.mp4", CommandIo { input("stream.mp4", Buffer().write(bytes)) })).use { decoder ->
-            assertEquals((0 until 30).toList(), decoder.frames().map { frame -> frame.use { it.number() } }.toList())
-        }
-        assertFailsWith<IllegalArgumentException> { MediaWriter.open(MediaOutput.Stream(Buffer()), ContainerFormat.Mp4()) }
-
-        for ((container, name) in listOf(ContainerFormat.Matroska to "out.mkv", ContainerFormat.MpegTs to "out.ts")) {
-            val output = directory / name
-            assertEquals(30, transcode("cfr-30-h264-128.mp4", output, config, until = 1.seconds, container = container).videoFrames)
-            VideoDecoder.open(MediaSource(output.toString())).use { decoder ->
-                assertEquals(30, decoder.frames().map { frame -> frame.use { it.number() } }.toList().size, name)
-            }
-        }
-    }
-
-    @Test
     fun aHandleOutputGetsItsIndexFirst() = runBlocking {
         val config = VideoEncoderConfig(128, 128, FrameRate(30))
         if (!encodes(config)) return@runBlocking
@@ -279,7 +252,7 @@ class MediaWriterSystemTest {
         fileSystem.openReadWrite(output).use { handle ->
             MediaWriter.open(MediaOutput.Handle(handle)).use { writer ->
                 val track = writer.addVideoTrack(config)
-                decoder("cfr-30-h264-128.mp4", VideoOutput.Memory(track.canvasFormat)).use { decoder ->
+                decoder("cfr-30-h264-128.mp4", VideoOutput.Memory(track.config.canvasFormat)).use { decoder ->
                     decoder.frames(until = 1.seconds).collect { track.write(it) }
                 }
                 writer.finish()
@@ -355,7 +328,7 @@ class MediaWriterSystemTest {
         val output = directory / "cancelled.mp4"
         val writer = MediaWriter.open(MediaOutput.File(output.toString()))
         val track = writer.addVideoTrack(config)
-        val decoder = decoder("cfr-30-h264-128.mp4", VideoOutput.Memory(track.canvasFormat))
+        val decoder = decoder("cfr-30-h264-128.mp4", VideoOutput.Memory(track.config.canvasFormat))
         val writing = launch(Dispatchers.Default) {
             decoder.frames().collect { frame ->
                 track.write(frame)
@@ -379,10 +352,9 @@ class MediaWriterSystemTest {
         output: Path,
         config: VideoEncoderConfig,
         until: Duration = Duration.INFINITE,
-        container: ContainerFormat = ContainerFormat.Mp4(),
-    ): WriterResult = MediaWriter.open(MediaOutput.File(output.toString()), container).use { writer ->
+    ): WriterResult = MediaWriter.open(MediaOutput.File(output.toString())).use { writer ->
         val track = writer.addVideoTrack(config)
-        decoder(name, VideoOutput.Memory(track.canvasFormat)).use { decoder ->
+        decoder(name, VideoOutput.Memory(track.config.canvasFormat)).use { decoder ->
             decoder.frames(until = until).collect { track.write(it) }
         }
         writer.finish()
