@@ -6,6 +6,7 @@ import android.os.PowerManager
 import android.util.Log
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
@@ -42,8 +43,10 @@ import org.junit.Assume.assumeTrue
  * [ComposeFrameRenderer] and [MediaWriter], once for each [Case]: frames a second, peak resident
  * memory and threads, native heap once warm and at the end, and each frame's `update`, GPU `draw`,
  * `copy` out of the `HardwareBuffer` and `write`, with the copy's share of the frame's time, logged
- * under [TAG]. It measures rather than checks, so it runs only when asked, after
- * `scripts/generate-budget-clip.sh` has made its clips:
+ * under [TAG]. For `GpuBuffersToSurface`, which draws into the encoder's input surface, `copy` only wraps
+ * the buffer, so it reads about 0, `write` is the queueing, and `draw` also takes the next buffer from the
+ * encoder, so it grows when the encoder is the slower stage. It measures rather than checks, so it runs
+ * only when asked, after `scripts/generate-budget-clip.sh` has made its clips:
  *
  * ```
  * ./gradlew :library:ffplay:connectedAndroidDeviceTest \
@@ -54,8 +57,8 @@ import org.junit.Assume.assumeTrue
  * `clip` picks the sources: `pq` (the default), 10-bit HEVC PQ, or `h264`, 8-bit H.264, which
  * `GpuBuffers` keeps on the GPU, as it does no deeper source yet. The export is HDR10 for the PQ
  * clip where the phone encodes it and SDR otherwise; `range` (`SDR` or `HDR10`) picks one.
- * `cases` (such as `GpuBuffers`) narrows the cases by name, and `rounds` (1 by default) repeats
- * them.
+ * `cases` (such as `GpuBuffers,GpuBuffersToSurface`) narrows the cases by name, and `rounds` (1 by default)
+ * repeats them. `GpuBuffersToSurface` needs an SDR export on Android 14 or later and is skipped for an HDR one.
  */
 class CompositeExportBudgetDeviceTest {
     private val context = InstrumentationRegistry.getInstrumentation().targetContext
@@ -64,6 +67,8 @@ class CompositeExportBudgetDeviceTest {
     private class Case(
         val name: String,
         val decoder: DecoderPreference = DecoderPreference.SOFTWARE,
+        /** Draw into the encoder's input surface, with no copy, where the track allows it: SDR only. */
+        val surface: Boolean = false,
         val output: (VideoTrack) -> VideoOutput,
     )
 
@@ -72,6 +77,8 @@ class CompositeExportBudgetDeviceTest {
         Case("Memory()") { VideoOutput.Memory() },
         // MediaCodec's frames, drawn from their HardwareBuffers.
         Case("GpuBuffers", DecoderPreference.AUTO) { VideoOutput.GpuBuffers },
+        // The same, drawn straight into the encoder's input surface: no copy, and `write` only queues the frame.
+        Case("GpuBuffersToSurface", DecoderPreference.AUTO, surface = true) { VideoOutput.GpuBuffers },
     )
 
     /** Each frame's phases, in milliseconds. */
@@ -109,6 +116,10 @@ class CompositeExportBudgetDeviceTest {
         val names = arguments.getString("cases")?.split(',')
         for (round in 1..rounds) {
             for (case in cases.filter { names == null || it.name in names }) {
+                if (case.surface && range != DynamicRange.SDR) {
+                    Log.i(TAG, "${case.name} skipped: the input surface takes SDR exports only")
+                    continue
+                }
                 coolDown()
                 export(clip, hdr.copy(dynamicRange = range), case, round)
             }
@@ -141,14 +152,21 @@ class CompositeExportBudgetDeviceTest {
             Log.i(TAG, "${case.name}: ${decoders.map { it.decoderKind }}")
             val images = decoders.map { FrameImage() }
             try {
-                ComposeFrameRenderer<List<FrameImage>>(context, track) { tiles ->
+                val content: @Composable (List<FrameImage>) -> Unit = { shown ->
                     Canvas(Modifier.fillMaxSize()) {
                         val tile = Size(size.width / 2, size.height / 2)
-                        tiles.forEachIndexed { index, image ->
+                        shown.forEachIndexed { index, image ->
                             drawFrameImage(image, Offset(tile.width * (index % 2), tile.height * (index / 2)), tile)
                         }
                     }
-                }.use { renderer ->
+                }
+                // A renderer made for the track draws into its input surface; one made by size copies out of its own buffer.
+                val created = if (case.surface) {
+                    ComposeFrameRenderer(context, track, content = content)
+                } else {
+                    ComposeFrameRenderer(context, config.width, config.height, config.canvasFormat, content = content)
+                }
+                created.use { renderer ->
                     coroutineScope {
                         // Each channel joins one decoder's frames, which frames() already decodes one ahead.
                         val sources: List<ReceiveChannel<VideoFrame>> =
@@ -179,6 +197,7 @@ class CompositeExportBudgetDeviceTest {
                 images.forEach(FrameImage::close)
                 decoders.forEach(VideoDecoder::close)
             }
+            Log.i(TAG, "${case.name}: zeroCopy ${track.zeroCopy}")
             writer.finish()
         }
         val took = started.elapsedNow().inWholeMilliseconds / 1000.0

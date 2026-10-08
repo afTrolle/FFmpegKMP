@@ -179,6 +179,16 @@ native deadline, so an encoder that takes input and never outputs fails its
 track instead of spinning. Hardware encoders come first where the preference
 allows, then software ones the build has.
 
+On Android 14 and later an 8-bit SDR H.264 or HEVC track on a hardware encoder
+can drop FFmpeg's encoder for a platform `MediaCodec` with an input surface
+(`SurfaceVideoEncoder` in `bindings`), when a `ComposeFrameRenderer` asks for it
+before the first frame (`ffmpegkmp_writer_use_packets` turns the track into a
+packet track). The renderer draws on the GPU into `HardwareBuffer`s from an
+`ImageWriter` on that surface and `write` queues them with their pts, so no pixel
+is copied; a thread of the encoder's own takes its packets and gives them to
+`ffmpegkmp_writer_write_packet`, the codec-config buffer as extradata. Everything
+else, and `VideoFrame`s from memory, keep the path above.
+
 Every `FFmpegClient` and `FFprobeClient` submits to one process-wide FIFO that
 starts commands in order on a fixed number of lanes. On JVM, Android and Apple
 there is one lane, because FFmpeg's command tools and logging retain

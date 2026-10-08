@@ -302,6 +302,19 @@ an encoder takes it, as for HDR.
   `config.canvasFormat`, is converted once on the track's thread, so conversion overlaps with drawing the
   next frame. Each track encodes on a thread of its own, since MediaCodec binds an encoder to one.
   On Apple, pooled frames are `CVPixelBuffer`s, which VideoToolbox takes without a copy.
+- On Android 14 (API 34) and later an 8-bit SDR H.264 or HEVC track on a hardware encoder can take its
+  frames with no copy at all. `ComposeFrameRenderer(track)` asks for it as it renders its first
+  frame: the writer opens a `MediaCodec` encoder of the platform's own with an input surface in place of
+  FFmpeg's, the renderer draws on the GPU into buffers an `ImageWriter` takes from that surface, and
+  `write(frame)` queues each stamped with its pts. The encoder's packets reach the muxer through the same
+  packet tracks the browser uses, the codec's config buffer as the track's parameter sets, so the header
+  and the container are the ones FFmpeg's encoder would have made. `track.zeroCopy` says whether a
+  track took it, false until a renderer asks. Every other track keeps the path above: HDR, 10-bit,
+  AV1, software encoders, Android before 14, a renderer on its software path, and a track that has
+  already taken a frame. A `zeroCopy` track takes only the frames its renderer drew, which lie in GPU
+  memory like `GpuBuffers` ones (`format` is null, `hardwareBuffer` is the encoder's), and its buffers
+  go back to the encoder as the frames close, so a caller holds a few at a time and `write`s each. Frames
+  from memory then fail the track; use a track no renderer has been made for.
 - A source keeps its colour through `DynamicRange.of(decoder.info)`, which follows the transfer
   function: PQ is `HDR10`, HLG is `HLG` and the rest `SDR`. Dolby Vision and HDR10+ are flags over
   one of those, so an iPhone's Dolby Vision 8.4 clip, which is HLG, stays HLG. An SDR source in an
@@ -328,7 +341,8 @@ an encoder takes it, as for HDR.
   the front.
 - `open(..., timeout = 10.seconds)` bounds each write and each track's draining at `finish()`: an
   encoder that takes frames without giving packets, as the Android emulator's MediaCodec encoders
-  do through FFmpeg, fails its track with a `MediaWritingException` instead of blocking. `close()`
+  do through FFmpeg, fails its track with a `MediaWritingException` instead of blocking; a surface
+  encoder that holds frames for that long without a packet fails the same way. `close()`
   without `finish()` abandons the output and returns promptly.
 - `progress` reports frames taken so far; `finish()` returns the size, duration and frame counts.
 - An `AudioTrack` encodes interleaved float PCM as AAC.
@@ -353,7 +367,7 @@ Kotlin/Native (`src/systemTest`, e.g. `./gradlew :library:codec:jvmTest
 :library:codec:macosArm64Test`), over the clips in `src/commonTest/resources/video-decoder`;
 `generate.py` there rebuilds them, and `golden/` holds the conversion references that
 `scripts/test-converter.sh` records and checks. The `CVPixelBuffer` tests (`src/pixelBufferTest`)
-run on `iosSimulatorArm64Test` and `macosArm64Test`. The Android Memory, GpuBuffers and timeout tests
+run on `iosSimulatorArm64Test` and `macosArm64Test`. The Android Memory, GpuBuffers, writer and timeout tests
 are device tests (`./gradlew :library:codec:connectedAndroidDeviceTest`). The MediaCodec checks need
 a real device: the emulator's decoders reject FFmpeg's input, and there the GpuBuffers tests are
 skipped.

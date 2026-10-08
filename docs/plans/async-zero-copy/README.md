@@ -4,7 +4,7 @@ Status: change sets 1–7 and 9–11 are built; 8, the probe without fftools, is
 not. 13–18, from compositing several sources, are built, 17 and 18 short of
 their phone measurements, and so is 12's decoder half, short of its device
 runs. What is left is in [Remaining work](#remaining-work): those runs and
-measurements, then the decision on 12's encoder half. The work is rebased onto
+measurements, and 12's encoder half, built and not yet run on a device. The work is rebased onto
 main at 78e9934 (v0.3.1, with its structured cancellation and session events).
 A [public surface pass](#public-surface-pass) after the over-engineering audit
 then gave a stream one typed colour and HDR description and narrowed the public
@@ -760,9 +760,11 @@ Inputs without copies:
   `AV_PIX_FMT_VIDEOTOOLBOX`.
 - Android: a Surface output (no longer public) would make MediaCodec decode
   straight into MediaCodec encode on the GPU. The decoder already stamps each
-  rendered buffer with its pts. Not built yet: FFmpeg's MediaCodec encoder
-  takes Surface input only through a hardware frames context, which is a change
-  set of its own, so `VideoTrack` has no `inputSurface` for now.
+  rendered buffer with its pts. FFmpeg's MediaCodec encoder
+  takes Surface input only through a hardware frames context, so change set 12's
+  encoder half uses a platform `MediaCodec` of its own instead, for rendered
+  frames (`VideoTrack.zeroCopy`); a decoder's Surface output into an encoder is
+  still not built.
 - The converter corrects swscale's 16-bit range scale, which put 10-bit white on
   943 rather than BT.2100's 940 (see [The converter](#the-converter)); the HDR
   fixtures are regenerated with BT.2100's codes.
@@ -1139,6 +1141,85 @@ three findings, all fixed:
 - The hardware HEVC decoder refused the 96x64 HDR10 fixture, so the HDR check
   skipped. `hdr10-pq-large.mp4`, 320x192 with the same recipe, replaces it in
   that test; whether the phone's decoder takes it is the next run's answer.
+
+#### The encoder half
+
+Built despite the gate. The four-source export's copy was 22% of a frame, under
+the 30% rule above, but the owner chose to build it anyway: the copy is the last
+one in the SDR pipeline, and with it gone the draw and the encode overlap, since
+the encoder reads the buffer the GPU wrote while the next frame is composed.
+Status: built and host-verified; not yet run on a device.
+
+What a user sees: nothing new to call. `MediaWriter.open`, `addVideoTrack`,
+`ComposeFrameRenderer(context, track)`, `renderer.render(time, value)` and
+`track.write(frame)` are as before, and `VideoTrack.zeroCopy` reads whether the
+track took the surface path (false until a renderer asks).
+
+How it is built:
+
+- `ffmpegkmp_writer_use_packets` turns a video track that has taken no frame into
+  a packet track, freeing its FFmpeg encoder on the track's thread. Its packets
+  then go through `ffmpegkmp_writer_write_packet`, which the browser's worker
+  already used. `NativeVideoTrackInfo.bitRate` carries the bit rate the FFmpeg
+  encoder opened with, so the platform encoder gets the same one.
+- `SurfaceVideoEncoder` (`bindings`, Android) opens a hardware `MediaCodec` encoder
+  with `createInputSurface()` and an `ImageWriter` over it (4 images, RGBA_8888,
+  `USAGE_GPU_COLOR_OUTPUT`, sRGB data space). It is opened beside the track's own
+  encoder, so a device that cannot run two leaves the track as it was, and
+  proves a first buffer can be drawn into before the track gives its encoder up.
+  Only 8-bit SDR H.264 and HEVC on a hardware encoder qualify, API 34 and later.
+- `VideoTrack.openInputSurface()` (internal API) is the switch the renderer calls
+  at its first `render`; it runs on the track's thread, after the writes queued
+  before it, and fails without effect once the track has taken a frame.
+  `dequeueFrameBuffer()` lends the next buffer, waiting for the encoder.
+- `ComposeFrameRenderer.render` then draws with `HardwareBufferRenderer`, the same
+  `RenderNode` recording and fence wait as before, into the lent buffer (one
+  renderer and display list per buffer, kept by the buffer) and returns a
+  `VideoFrame` over it, as `GpuBuffers` frames are: `format` null, `hardwareBuffer` set.
+  `track.write(frame)` queues the image to the encoder stamped with the frame's pts.
+  Closing a frame that was never written gives the buffer back.
+- A thread of the encoder's own takes the packets: the config buffer (or the
+  output format's `csd-0` and `csd-1`) is the track's extradata, sent with the
+  first packet; the keyframe flag, `presentationTimeUs` as pts (and dts, the
+  encoder being told not to reorder frames with `KEY_MAX_B_FRAMES = 0`) and the
+  frame period as duration go to `ffmpegkmp_writer_write_packet`. At the end,
+  `signalEndOfInputStream()`, then the drain waits for the end-of-stream flag, bounded
+  by the writer's `timeout`; an encoder that holds frames that long without a
+  packet fails the track and is released, which also wakes a `dequeue` waiting on it.
+
+What stays on the one-copy path, and how the caller knows: HDR and 10-bit
+exports, AV1, software encoders, Android before 14, a renderer made by size
+instead of for a track, the renderer's software path (it needs the GPU path, and
+fails where that fails once it has taken the surface), and any track that
+has taken a frame before its renderer's first `render`. For all of them
+`track.zeroCopy` stays false and `render` returns a pooled frame as before. A
+`zeroCopy` track takes only the frames its renderer drew: a frame from memory
+fails the track with the reason.
+
+Measure and verify on the phone:
+
+```
+./gradlew :library:ffplay:connectedAndroidDeviceTest \
+  -Pandroid.testInstrumentationRunnerArguments.class=io.github.aftrolle.ffmpegkmp.ffplay.CompositeExportBudgetDeviceTest \
+  -Pandroid.testInstrumentationRunnerArguments.compositeBudget=true \
+  -Pandroid.testInstrumentationRunnerArguments.clip=h264 \
+  -Pandroid.testInstrumentationRunnerArguments.cases=GpuBuffers,GpuBuffersToSurface
+./gradlew :library:ffplay:connectedAndroidDeviceTest \
+  -Pandroid.testInstrumentationRunnerArguments.class=io.github.aftrolle.ffmpegkmp.ffplay.SurfaceEncoderDeviceTest
+```
+
+`GpuBuffersToSurface` reports `copy` as the wrap of the buffer (about 0), `write`
+as the queue time, and `draw` with the wait for the encoder's next buffer and
+the render fence. `SurfaceEncoderDeviceTest` encodes 30 rendered frames, H.264
+and HEVC, through the surface and decodes them back frame for frame with their
+pts, and compares a colour patch with the one-copy path's.
+
+Risks, settled on the first device run: the `ImageWriter` taking the encoder's
+surface with GPU-writable buffers (the probe makes this fall back, not fail);
+the colour of the encoder's own RGB to BT.709 conversion against swscale's;
+`signalEndOfInputStream` after images queued through an `ImageWriter`; a buffer
+wrapper per image staying valid across dequeues; and the encoder's own queue
+depth, which sets how far the draw runs ahead.
 
 ### 13. Decode at a size
 
@@ -1621,8 +1702,10 @@ In order:
    there; the HDR check fails, so 10-bit sources stay in memory until a draw
    path keeps a PQ hardware bitmap's values on an F16 canvas; the 4K `update`
    is 0.30 ms.
-4. Done: the copy is 22% of a frame, under the 30% gate, so the encoder half
-   waits; the decoder half alone exports 6.7× faster than from memory.
+4. The copy is 22% of a frame, under the 30% gate, and the decoder half alone
+   exports 6.7× faster than from memory; the owner built the encoder half
+   anyway. Built; its device tests and the `GpuBuffersToSurface` measurement
+   are to run on the phone.
 5. Follow-ups:
    - fewer copies in the browser renderer, and one copy of the aspect formula in
      `PlatformFFplaySurface.web.kt`'s JavaScript;
@@ -1695,6 +1778,8 @@ Decided:
 - **Android zero-copy comes in two halves** (change set 12): the decoder half
   first, the encoder half only if, in a measured composite export, the copy out
   of the `HardwareBuffer` is at least 30% of a frame's time.
+  The owner built the encoder half although the copy measured 22%: it is the
+  last copy in the SDR pipeline, and without it the draw and the encode overlap.
 
 Still open:
 
