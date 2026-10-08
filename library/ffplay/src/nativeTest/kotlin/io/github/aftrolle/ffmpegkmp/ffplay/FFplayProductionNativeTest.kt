@@ -6,7 +6,11 @@
 
 package io.github.aftrolle.ffmpegkmp.ffplay
 
+import io.github.aftrolle.ffmpegkmp.codec.DecoderKind
+import io.github.aftrolle.ffmpegkmp.codec.DecoderPreference
+import io.github.aftrolle.ffmpegkmp.codec.MediaSource
 import io.github.aftrolle.ffmpegkmp.codec.VideoFrame
+import io.github.aftrolle.ffmpegkmp.codec.VideoInfo
 import io.github.aftrolle.ffmpegkmp.core.CommandIo
 import kotlinx.cinterop.addressOf
 import kotlinx.cinterop.usePinned
@@ -26,12 +30,12 @@ class FFplayProductionNativeTest {
     fun publicPlayerDecodesARealMountedVideoThroughTheAppleBridge() = runBlocking {
         val bytes = bundledTestResource("playback-color-patches-1s.mp4")
         val output = NativeProductionOutput()
-        val player = FFplayPlayer(FFplayConfiguration(decoderPreference = FFplayDecoderPreference.SOFTWARE))
+        val player = FFplayPlayer(FFplayConfiguration(decoderPreference = DecoderPreference.SOFTWARE))
         player.attachOutput(output)
 
         try {
             player.prepare(
-                FFplaySource(
+                MediaSource(
                     input = "playback-color-patches-1s.mp4",
                     io = CommandIo {
                         input("playback-color-patches-1s.mp4", Buffer().write(bytes))
@@ -40,7 +44,7 @@ class FFplayProductionNativeTest {
             )
 
             assertEquals(FFplayState.READY, player.snapshot.value.state)
-            assertEquals(FFplayDecoderKind.SOFTWARE, player.snapshot.value.output?.decoder)
+            assertEquals(DecoderKind.SOFTWARE, player.snapshot.value.output?.decoder)
             assertNotNull(player.snapshot.value.video)
             assertTrue(output.framesReceived > 0)
         } finally {
@@ -57,7 +61,7 @@ private class NativeProductionOutput : FFplayVideoOutput {
 
     override fun submit(frame: FFplayFrame): Boolean = true
 
-    override fun submitNative(frame: VideoFrame, video: FFplayVideoInfo?): Boolean {
+    override fun submitNative(frame: VideoFrame, video: VideoInfo?): Boolean {
         frame.close()
         framesReceived++
         return true

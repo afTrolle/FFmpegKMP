@@ -71,7 +71,7 @@ class MediaWriterSystemTest {
             assertEquals(128, decoder.info.width)
             assertEquals(128, decoder.info.height)
             assertEquals(8, decoder.info.bitDepth)
-            assertEquals(HdrType.SDR, decoder.info.hdrType)
+            assertEquals(DynamicRange.SDR, DynamicRange.of(decoder.info))
             val frames = decoder.frames().map { frame -> frame.use { it.number() to it.pts } }.toList()
             assertEquals((0 until 150).toList(), frames.map { it.first })
             frames.forEach { (number, pts) -> assertClose(number.seconds / 30, pts, 1.milliseconds, "pts of frame $number") }
@@ -100,7 +100,7 @@ class MediaWriterSystemTest {
         assertEquals(30, result.videoFrames)
         VideoDecoder.open(MediaSource(output.toString())).use { decoder ->
             assertEquals(10, decoder.info.bitDepth)
-            assertEquals(HdrType.SDR, decoder.info.hdrType)
+            assertEquals(DynamicRange.SDR, DynamicRange.of(decoder.info))
             assertEquals((0 until 30).toList(), decoder.frames().map { frame -> frame.use { it.number() } }.toList())
         }
         val stream = probeVideo(output)
@@ -121,10 +121,10 @@ class MediaWriterSystemTest {
         assertEquals(10, transcode("hdr10-pq.mp4", output, config).videoFrames)
 
         VideoDecoder.open(MediaSource(output.toString()), VideoOutput.Memory(FrameFormat.RgbaF16)).use { decoder ->
-            assertEquals(HdrType.HDR10, decoder.info.hdrType)
+            assertEquals(DynamicRange.HDR10, DynamicRange.of(decoder.info))
             assertEquals(10, decoder.info.bitDepth)
-            assertEquals("1000.0", decoder.info.masteringDisplay?.raw?.get("maxLuminance"))
-            assertEquals(1000, decoder.info.contentLight?.maxContentLightLevel)
+            assertEquals(1000.0, decoder.info.hdrMetadata?.masteringDisplay?.maxLuminance)
+            assertEquals(1000, decoder.info.hdrMetadata?.contentLight?.maxContentLightLevel)
             decoder.frameAt(0.5.seconds).use { frame ->
                 // As decoded from the source: 100 nits on the left, 1000 on the right, 1.0 at 203 nits.
                 assertEquals(100.0 / 203.0, frame.linear(x = 12, y = 32), 0.03)
@@ -189,7 +189,7 @@ class MediaWriterSystemTest {
         val fromSdr = directory / "from-sdr.mp4"
         transcode("cfr-30.mp4", fromSdr, config.copy(frameRate = FrameRate(30)), until = 1.seconds)
         VideoDecoder.open(MediaSource(fromSdr.toString()), VideoOutput.Memory(FrameFormat.RgbaF16)).use { decoder ->
-            assertEquals(HdrType.HDR10, decoder.info.hdrType)
+            assertEquals(DynamicRange.HDR10, DynamicRange.of(decoder.info))
             decoder.frameAt(Duration.ZERO).use { frame ->
                 // Frame 0 has no bits set: its code cells are black, and the digits below are white.
                 val white = (0 until frame.width).maxOf { x -> frame.linear(x, y = 48, channel = 1) }
@@ -208,8 +208,9 @@ class MediaWriterSystemTest {
         assertEquals("arib-std-b67", stream.colorTransfer)
         assertEquals("bt2020", stream.colorPrimaries)
         VideoDecoder.open(MediaSource(output.toString())).use { decoder ->
-            // VideoToolbox adds Dolby Vision 8.4 metadata to HLG, which players without Dolby Vision ignore.
-            assertContains(setOf(HdrType.HLG, HdrType.DOLBY_VISION), decoder.info.hdrType)
+            // VideoToolbox adds Dolby Vision 8.4 metadata to HLG, which players without Dolby Vision ignore:
+            // a flag over the HLG transfer, not another range.
+            assertEquals(DynamicRange.HLG, DynamicRange.of(decoder.info))
             assertEquals(10, decoder.info.bitDepth)
         }
     }
@@ -224,7 +225,7 @@ class MediaWriterSystemTest {
             decoder.frameAt(Duration.ZERO).use { it.luma(x = 84, y = 32) }
         }
         VideoDecoder.open(MediaSource(output.toString()), VideoOutput.Memory(FrameFormat.Rgba8)).use { decoder ->
-            assertEquals(HdrType.SDR, decoder.info.hdrType)
+            assertEquals(DynamicRange.SDR, DynamicRange.of(decoder.info))
             decoder.frameAt(Duration.ZERO).use { frame -> assertTrue(abs(frame.luma(x = 84, y = 32) - expected) <= 8) }
         }
     }

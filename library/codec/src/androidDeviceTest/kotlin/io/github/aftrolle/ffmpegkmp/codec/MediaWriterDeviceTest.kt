@@ -44,7 +44,7 @@ class MediaWriterDeviceTest {
         timesOutOnTheEmulator {
             assertEquals(30, transcode(output, config).videoFrames)
             VideoDecoder.open(MediaSource(output.toString()), decoder = DecoderPreference.SOFTWARE).use { decoder ->
-                assertEquals(HdrType.SDR, decoder.info.hdrType)
+                assertEquals(DynamicRange.SDR, DynamicRange.of(decoder.info))
                 assertEquals(128, decoder.info.width)
                 assertEquals((0 until 30).toList(), decoder.frames().map { frame -> frame.use { it.number() } }.toList())
             }
@@ -65,9 +65,9 @@ class MediaWriterDeviceTest {
         timesOutOnTheEmulator {
             assertEquals(30, transcode(output, config).videoFrames)
             VideoDecoder.open(MediaSource(output.toString()), VideoOutput.Memory(FrameFormat.RgbaF16), DecoderPreference.SOFTWARE).use { decoder ->
-                assertEquals(HdrType.HDR10, decoder.info.hdrType)
+                assertEquals(DynamicRange.HDR10, DynamicRange.of(decoder.info))
                 assertEquals(10, decoder.info.bitDepth)
-                assertNotNull(decoder.info.masteringDisplay)
+                assertNotNull(decoder.info.hdrMetadata?.masteringDisplay)
                 decoder.frameAt(Duration.ZERO).use { frame ->
                     val white = (0 until frame.width).maxOf { x -> frame.half(x, y = 48) }
                     assertEquals(1.0, white, 0.1)

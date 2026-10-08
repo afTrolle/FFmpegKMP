@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 package io.github.aftrolle.ffmpegkmp.ffplay
 
+import io.github.aftrolle.ffmpegkmp.codec.MediaSource
 import kotlin.concurrent.atomics.AtomicBoolean
 import kotlin.concurrent.atomics.ExperimentalAtomicApi
 import kotlin.time.Duration
@@ -85,19 +86,21 @@ public class FFplayPlayer internal constructor(
     public val audio: StateFlow<FFplayAudioState> = audioPlayback.state
     internal val secureOutputRequired = mutableSecureOutputRequired.asStateFlow()
 
-    public suspend fun prepare(source: FFplaySource) {
+    public suspend fun prepare(
+        source: MediaSource,
+        protection: FFplayContentProtection = FFplayContentProtection.CLEAR_OR_AUTO_DETECT,
+    ) {
         prepareMutex.withLock {
             val generation = operationLock.withLock {
                 checkOpen()
-                mutableSecureOutputRequired.value =
-                    source.protection == FFplayContentProtection.REQUIRE_SECURE_PATH
+                mutableSecureOutputRequired.value = protection == FFplayContentProtection.REQUIRE_SECURE_PATH
                 mutableSnapshot.value = FFplaySnapshot(state = FFplayState.PREPARING)
                 audioPlayback.close()
                 ++audioGeneration
             }
             try {
-                prepareOnWorker(source)
-                if (configuration.audio) attachAudio(source, generation)
+                prepareOnWorker(source, protection)
+                if (configuration.audio && protection != FFplayContentProtection.REQUIRE_SECURE_PATH) attachAudio(source, generation)
             } catch (cancellation: CancellationException) {
                 operationLock.withLock {
                     audioPlayback.close()
@@ -230,7 +233,7 @@ public class FFplayPlayer internal constructor(
         mutableSnapshot.value = mutableSnapshot.value.copy(state = FFplayState.CLOSED)
     }
 
-    private suspend fun prepareOnWorker(source: FFplaySource): Unit = coroutineScope {
+    private suspend fun prepareOnWorker(source: MediaSource, protection: FFplayContentProtection): Unit = coroutineScope {
         val preparation = async(Dispatchers.Default) {
             prepareLock.withLock {
                 operationLock.withLock {
@@ -243,7 +246,7 @@ public class FFplayPlayer internal constructor(
                 }
                 var prepared = false
                 try {
-                    engine.prepare(source)
+                    engine.prepare(source, protection)
                     prepared = true
                 } finally {
                     operationLock.withLock { finishPreparing(prepared) }
@@ -294,7 +297,7 @@ public class FFplayPlayer internal constructor(
      * Opens the source's audio (blocking, so outside the lock), then attaches it only if no stop,
      * close or newer prepare happened meanwhile; otherwise it is closed rather than leaked.
      */
-    private suspend fun attachAudio(source: FFplaySource, generation: Int) {
+    private suspend fun attachAudio(source: MediaSource, generation: Int) {
         val audio = audioPlayback.load(source) ?: return
         val attached = operationLock.withLock {
             if (closed.load() || generation != audioGeneration) return@withLock false

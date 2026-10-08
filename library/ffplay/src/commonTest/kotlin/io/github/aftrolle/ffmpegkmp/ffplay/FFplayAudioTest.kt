@@ -3,6 +3,7 @@
 
 package io.github.aftrolle.ffmpegkmp.ffplay
 
+import io.github.aftrolle.ffmpegkmp.codec.MediaSource
 import io.github.aftrolle.ffmpegkmp.core.AudioLevel
 import io.github.aftrolle.ffmpegkmp.player.AudioTrackInfo
 import io.github.aftrolle.ffmpegkmp.player.PlaybackState
@@ -29,7 +30,7 @@ class FFplayAudioTest {
         val player = audioPlayer { opening.complete(Unit); opened.await() }
         player.attachOutput(CanvasOutput())
 
-        val preparing = async { player.prepare(FFplaySource("movie.mp4")) }
+        val preparing = async { player.prepare(MediaSource("movie.mp4")) }
         opening.await()
         player.play()
         assertEquals(FFplayState.PLAYING, player.snapshot.value.state)
@@ -50,7 +51,7 @@ class FFplayAudioTest {
         val opening = CompletableDeferred<Unit>()
         val player = audioPlayer { opening.complete(Unit); opened.await() }
 
-        val preparing = async { runCatching { player.prepare(FFplaySource("movie.mp4")) } }
+        val preparing = async { runCatching { player.prepare(MediaSource("movie.mp4")) } }
         opening.await()
         player.close()
         opened.complete(audio)
@@ -66,7 +67,7 @@ class FFplayAudioTest {
         val player = audioPlayer { audio }
         val output = CanvasOutput()
         player.attachOutput(output)
-        player.prepare(FFplaySource("movie.mp4"))
+        player.prepare(MediaSource("movie.mp4"))
         assertTrue(player.audio.value.available)
 
         audio.log.clear()
@@ -100,8 +101,8 @@ class FFplayAudioTest {
         val player = audioPlayer { sources.removeFirst() }
         player.setMuted(true)
 
-        player.prepare(FFplaySource("a.mp4"))
-        player.prepare(FFplaySource("b.mp4"))
+        player.prepare(MediaSource("a.mp4"))
+        player.prepare(MediaSource("b.mp4"))
 
         assertTrue(first.closed)
         assertEquals(AudioLevel.Muted, second.appliedLevel)

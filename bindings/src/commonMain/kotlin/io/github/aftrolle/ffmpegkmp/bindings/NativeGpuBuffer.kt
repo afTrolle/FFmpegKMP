@@ -24,8 +24,8 @@ public class NativeGpuBuffer(
     public val cropTop: Int,
     public val cropRight: Int,
     public val cropBottom: Int,
-    /** The source's HDR type, which says how to read the pixels: [NativePlayerHdrType.SDR] for sRGB. */
-    public val hdrType: NativePlayerHdrType,
+    /** The source's `AVColorTransferCharacteristic`, which says how to read the pixels: PQ, HLG, or sRGB for the rest. */
+    public val colorTransfer: Int,
     private val onRelease: () -> Unit,
 ) {
     private val references = AtomicInt(1)

@@ -4,10 +4,13 @@
 package io.github.aftrolle.ffmpegkmp.ffplay
 
 import io.github.aftrolle.ffmpegkmp.bindings.NativePlayerBridge
-import io.github.aftrolle.ffmpegkmp.bindings.NativePlayerHdrType
 import io.github.aftrolle.ffmpegkmp.bindings.NativePlayerOutputCapabilities
 import io.github.aftrolle.ffmpegkmp.bindings.NativePlayerVideoInfo
 import io.github.aftrolle.ffmpegkmp.bindings.createInMemoryPlayerBridge
+import io.github.aftrolle.ffmpegkmp.codec.ColorPrimaries
+import io.github.aftrolle.ffmpegkmp.codec.ColorTransfer
+import io.github.aftrolle.ffmpegkmp.codec.DecoderPreference
+import io.github.aftrolle.ffmpegkmp.codec.MediaSource
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -34,7 +37,7 @@ class FFplayHdrPolicyTest {
         assertFalse(negotiated.last().zeroCopy)
         assertTrue(negotiated.last().toneMapHdrToSdr)
         assertEquals(FFplayHdrResult.TONE_MAPPED, player.snapshot.value.output?.hdrResult)
-        assertEquals("sRGB", player.snapshot.value.output?.outputColorSpace)
+        assertEquals(ColorPrimaries.BT709, player.snapshot.value.output?.outputColorSpace)
         player.close()
     }
 
@@ -43,7 +46,7 @@ class FFplayHdrPolicyTest {
         val (player, _) = hdrPlayer(
             FFplayConfiguration(
                 hdrPolicy = FFplayHdrPolicy.FORCE_SDR,
-                decoderPreference = FFplayDecoderPreference.REQUIRE_HARDWARE,
+                decoderPreference = DecoderPreference.REQUIRE_HARDWARE,
             ),
         )
         player.attachOutput(HdrSurface())
@@ -78,7 +81,7 @@ private suspend fun hdrPlayer(
         },
         audioOpener = { null },
     )
-    player.prepare(FFplaySource("hdr10.mp4"))
+    player.prepare(MediaSource("hdr10.mp4"))
     return player to negotiated
 }
 
@@ -88,7 +91,6 @@ private val HDR10 = NativePlayerVideoInfo(
     colorPrimaries = 9,
     colorTransfer = 16,
     colorSpace = 9,
-    hdrType = NativePlayerHdrType.HDR10,
 )
 
 /** An Android/iOS-style direct surface on an HDR display. */
@@ -99,8 +101,8 @@ private class HdrSurface : FFplayVideoOutput {
         hardwareFrameImport = true,
         softwareFrameUpload = true,
         zeroCopy = true,
-        hdrTransfers = setOf("PQ", "HLG"),
-        colorSpaces = setOf("sRGB", "BT.2020"),
+        hdrTransfers = setOf(ColorTransfer.PQ, ColorTransfer.HLG),
+        colorSpaces = setOf(ColorPrimaries.BT709, ColorPrimaries.BT2020),
         toneMapHdrToSdr = true,
     )
     override fun submit(frame: FFplayFrame): Boolean = true

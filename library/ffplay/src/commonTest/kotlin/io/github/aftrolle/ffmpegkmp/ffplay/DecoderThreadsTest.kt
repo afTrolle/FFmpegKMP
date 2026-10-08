@@ -6,6 +6,7 @@ package io.github.aftrolle.ffmpegkmp.ffplay
 import io.github.aftrolle.ffmpegkmp.bindings.NativePlayerConfiguration
 import io.github.aftrolle.ffmpegkmp.bindings.createInMemoryPlayerBridge
 import io.github.aftrolle.ffmpegkmp.codec.DecoderThreads
+import io.github.aftrolle.ffmpegkmp.codec.MediaSource
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlinx.coroutines.test.runTest
@@ -32,7 +33,7 @@ private suspend fun nativeConfiguration(configuration: FFplayConfiguration): Nat
         },
         audioOpener = { null },
     )
-    player.prepare(FFplaySource("movie.mp4"))
+    player.prepare(MediaSource("movie.mp4"))
     player.close()
     return created.single()
 }

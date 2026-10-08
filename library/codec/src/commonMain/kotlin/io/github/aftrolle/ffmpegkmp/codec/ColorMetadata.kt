@@ -3,42 +3,68 @@
 
 package io.github.aftrolle.ffmpegkmp.codec
 
-import io.github.aftrolle.ffmpegkmp.bindings.NativePlayerHdrType
+import io.github.aftrolle.ffmpegkmp.bindings.AVCOL_TRC_ARIB_STD_B67
+import io.github.aftrolle.ffmpegkmp.bindings.AVCOL_TRC_SMPTE2084
 import io.github.aftrolle.ffmpegkmp.bindings.NativePlayerMasteringDisplayMetadata
 import io.github.aftrolle.ffmpegkmp.bindings.NativePlayerVideoInfo
 import io.github.aftrolle.ffmpegkmp.core.InternalFFmpegKmpApi
 
-/** The stream description the bindings report, with its colour values named. */
+/** The stream description the bindings report, with its colour typed. */
 @InternalFFmpegKmpApi
 public fun NativePlayerVideoInfo.toPublicVideoInfo(): VideoInfo = VideoInfo(
     width = width,
     height = height,
-    sampleAspectRatio = sampleAspectRatioNumerator
-        .takeIf { it > 0 && sampleAspectRatioDenominator > 0 }
-        ?.let { "$it:$sampleAspectRatioDenominator" },
+    sampleAspectRatio = if (sampleAspectRatioNumerator > 0 && sampleAspectRatioDenominator > 0) {
+        sampleAspectRatioNumerator.toDouble() / sampleAspectRatioDenominator
+    } else {
+        1.0
+    },
     rotationDegrees = rotationDegrees,
     pixelFormat = pixelFormatName ?: pixelFormat.takeIf { it >= 0 }?.let { "ffmpeg:$it" },
     bitDepth = bitDepth.takeIf { it > 0 },
-    colorPrimaries = colorPrimariesName(colorPrimaries),
-    colorTransfer = colorTransferName(colorTransfer),
-    colorMatrix = colorSpaceName(colorSpace),
-    colorRange = colorRangeName(colorRange),
-    chromaLocation = chromaLocationName(chromaLocation),
-    hdrType = when (hdrType) {
-        NativePlayerHdrType.SDR -> HdrType.SDR
-        NativePlayerHdrType.HDR10 -> HdrType.HDR10
-        NativePlayerHdrType.HLG -> HdrType.HLG
-        NativePlayerHdrType.HDR10_PLUS -> HdrType.HDR10_PLUS
-        NativePlayerHdrType.DOLBY_VISION -> HdrType.DOLBY_VISION
-        NativePlayerHdrType.UNKNOWN_HDR -> HdrType.UNKNOWN_HDR
-    },
-    masteringDisplay = masteringDisplay?.toPublic(),
-    contentLight = contentLightOrNull(maxContentLightLevel, maxFrameAverageLightLevel),
+    color = color(),
     hdrMetadata = hdrMetadataOrNull(
         masteringDisplay?.toMasteringDisplay(),
         contentLightOrNull(maxContentLightLevel, maxFrameAverageLightLevel),
+        dolbyVision,
+        hdr10Plus,
     ),
 )
+
+/**
+ * The stream's colour as the converter reads it, so a frame decoded as it is and its [VideoInfo]
+ * agree: values outside [FrameColor]'s model take the closest one, and unspecified ones the
+ * defaults swscale and players use.
+ */
+private fun NativePlayerVideoInfo.color(): FrameColor {
+    val rgb = colorSpace == AVCOL_SPC_RGB
+    return FrameColor(
+        primaries = when (colorPrimaries) {
+            AVCOL_PRI_BT2020 -> ColorPrimaries.BT2020
+            AVCOL_PRI_SMPTE432 -> ColorPrimaries.DISPLAY_P3
+            else -> ColorPrimaries.BT709
+        },
+        transfer = when (colorTransfer) {
+            AVCOL_TRC_IEC61966_2_1 -> ColorTransfer.SRGB
+            AVCOL_TRC_LINEAR -> ColorTransfer.LINEAR
+            AVCOL_TRC_SMPTE2084 -> ColorTransfer.PQ
+            AVCOL_TRC_ARIB_STD_B67 -> ColorTransfer.HLG
+            else -> ColorTransfer.BT709
+        },
+        matrix = when (colorSpace) {
+            AVCOL_SPC_RGB -> ColorMatrix.RGB
+            AVCOL_SPC_BT2020_NCL, AVCOL_SPC_BT2020_CL -> ColorMatrix.BT2020_NCL
+            AVCOL_SPC_BT470BG, AVCOL_SPC_SMPTE170M -> ColorMatrix.BT601
+            else -> ColorMatrix.BT709
+        },
+        range = when {
+            colorRange == AVCOL_RANGE_JPEG || pixelFormatName?.startsWith("yuvj") == true -> ColorRange.FULL
+            colorRange == AVCOL_RANGE_MPEG -> ColorRange.LIMITED
+            rgb -> ColorRange.FULL
+            else -> ColorRange.LIMITED
+        },
+    )
+}
 
 /** Null unless the stream gives both the primaries and a luminance range [MasteringDisplay] takes. */
 private fun NativePlayerMasteringDisplayMetadata.toMasteringDisplay(): MasteringDisplay? {
@@ -53,111 +79,14 @@ private fun NativePlayerMasteringDisplayMetadata.toMasteringDisplay(): Mastering
     )
 }
 
-private fun NativePlayerMasteringDisplayMetadata.toPublic(): MasteringDisplayMetadata {
-    val values = buildMap {
-        if (hasPrimaries) {
-            put("redX", redX.metadataString())
-            put("redY", redY.metadataString())
-            put("greenX", greenX.metadataString())
-            put("greenY", greenY.metadataString())
-            put("blueX", blueX.metadataString())
-            put("blueY", blueY.metadataString())
-            put("whiteX", whiteX.metadataString())
-            put("whiteY", whiteY.metadataString())
-        }
-        if (hasLuminance) {
-            put("minLuminance", minLuminance.metadataString())
-            put("maxLuminance", maxLuminance.metadataString())
-        }
-    }
-    return MasteringDisplayMetadata(values)
-}
-
-private fun Double.metadataString(): String =
-    if (isFinite() && this % 1.0 == 0.0) "${toLong()}.0" else toString()
-
-/** The display name of an FFmpeg `AVColorPrimaries` value; null where it is unspecified. */
-@InternalFFmpegKmpApi
-public fun colorPrimariesName(value: Int): String? = when (value) {
-    1 -> "BT.709"
-    2 -> null
-    4 -> "BT.470M"
-    5 -> "BT.470BG"
-    6 -> "SMPTE 170M"
-    7 -> "SMPTE 240M"
-    8 -> "Film"
-    9 -> "BT.2020"
-    10 -> "SMPTE ST 428"
-    11 -> "DCI-P3"
-    12 -> "Display P3"
-    22 -> "EBU 3213"
-    else -> "FFmpeg:$value"
-}
-
-/** The display name of an FFmpeg `AVColorTransferCharacteristic` value; null where it is unspecified. */
-@InternalFFmpegKmpApi
-public fun colorTransferName(value: Int): String? = when (value) {
-    1 -> "BT.709"
-    2 -> null
-    4 -> "Gamma 2.2"
-    5 -> "Gamma 2.8"
-    6 -> "SMPTE 170M"
-    7 -> "SMPTE 240M"
-    8 -> "Linear"
-    9 -> "Log"
-    10 -> "Log sqrt"
-    11 -> "IEC 61966-2-4"
-    12 -> "BT.1361 ECG"
-    13 -> "sRGB"
-    14 -> "BT.2020 10-bit"
-    15 -> "BT.2020 12-bit"
-    16 -> "PQ"
-    17 -> "SMPTE ST 428"
-    18 -> "HLG"
-    else -> "FFmpeg:$value"
-}
-
-/** The display name of an FFmpeg `AVColorSpace` (the YUV matrix) value; null where it is unspecified. */
-@InternalFFmpegKmpApi
-public fun colorSpaceName(value: Int): String? = when (value) {
-    0 -> "RGB"
-    1 -> "BT.709"
-    2 -> null
-    4 -> "FCC"
-    5 -> "BT.470BG"
-    6 -> "SMPTE 170M"
-    7 -> "SMPTE 240M"
-    8 -> "YCgCo"
-    9 -> "BT.2020 NCL"
-    10 -> "BT.2020 CL"
-    11 -> "SMPTE ST 2085"
-    12 -> "Chroma-derived NCL"
-    13 -> "Chroma-derived CL"
-    14 -> "ICtCp"
-    15 -> "IPT-C2"
-    16 -> "YCgCo-Re"
-    17 -> "YCgCo-Ro"
-    else -> "FFmpeg:$value"
-}
-
-/** The display name of an FFmpeg `AVColorRange` value; null where it is unspecified. */
-@InternalFFmpegKmpApi
-public fun colorRangeName(value: Int): String? = when (value) {
-    0 -> null
-    1 -> "Limited"
-    2 -> "Full"
-    else -> "FFmpeg:$value"
-}
-
-/** The display name of an FFmpeg `AVChromaLocation` value; null where it is unspecified. */
-@InternalFFmpegKmpApi
-public fun chromaLocationName(value: Int): String? = when (value) {
-    0 -> null
-    1 -> "Left"
-    2 -> "Center"
-    3 -> "Top-left"
-    4 -> "Top"
-    5 -> "Bottom-left"
-    6 -> "Bottom"
-    else -> "FFmpeg:$value"
-}
+private const val AVCOL_PRI_BT2020 = 9
+private const val AVCOL_PRI_SMPTE432 = 12
+private const val AVCOL_TRC_LINEAR = 8
+private const val AVCOL_TRC_IEC61966_2_1 = 13
+private const val AVCOL_SPC_RGB = 0
+private const val AVCOL_SPC_BT470BG = 5
+private const val AVCOL_SPC_SMPTE170M = 6
+private const val AVCOL_SPC_BT2020_NCL = 9
+private const val AVCOL_SPC_BT2020_CL = 10
+private const val AVCOL_RANGE_MPEG = 1
+private const val AVCOL_RANGE_JPEG = 2

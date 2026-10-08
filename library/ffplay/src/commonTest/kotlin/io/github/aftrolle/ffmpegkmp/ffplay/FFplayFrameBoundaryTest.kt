@@ -19,7 +19,9 @@ import io.github.aftrolle.ffmpegkmp.bindings.NativePlatformVideoFrameKind
 import io.github.aftrolle.ffmpegkmp.bindings.NativeVideoFrame
 import io.github.aftrolle.ffmpegkmp.bindings.NativePlayerError
 import io.github.aftrolle.ffmpegkmp.bindings.createInMemoryPlayerBridge
+import io.github.aftrolle.ffmpegkmp.codec.MediaSource
 import io.github.aftrolle.ffmpegkmp.codec.VideoFrame
+import io.github.aftrolle.ffmpegkmp.codec.VideoInfo
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNull
@@ -38,7 +40,7 @@ class FFplayFrameBoundaryTest {
         val player = harness.player()
         val output = CountingOutput(acceptFrames = false)
         player.attachOutput(output)
-        player.prepare(FFplaySource("movie.mp4"))
+        player.prepare(MediaSource("movie.mp4"))
         val oldSerial = harness.snapshot().queueSerial
 
         player.seekTo(1.seconds)
@@ -68,12 +70,7 @@ class FFplayFrameBoundaryTest {
             kind = FFplayRendererKind.NATIVE_SURFACE,
         )
         player.attachOutput(output)
-        player.prepare(
-            FFplaySource(
-                "protected.mpd",
-                protection = FFplayContentProtection.REQUIRE_SECURE_PATH,
-            ),
-        )
+        player.prepare(MediaSource("protected.mpd"), FFplayContentProtection.REQUIRE_SECURE_PATH)
         val fatal = async { player.events.first() }
         runCurrent()
 
@@ -98,7 +95,7 @@ class FFplayFrameBoundaryTest {
             kind = FFplayRendererKind.NATIVE_SURFACE,
         )
         player.attachOutput(output)
-        player.prepare(FFplaySource("movie.mp4"))
+        player.prepare(MediaSource("movie.mp4"))
         val staleSerial = harness.snapshot().queueSerial
 
         player.seekTo(1.seconds)
@@ -125,12 +122,7 @@ class FFplayFrameBoundaryTest {
             kind = FFplayRendererKind.NATIVE_SURFACE,
         )
         player.attachOutput(output)
-        player.prepare(
-            FFplaySource(
-                "protected.mpd",
-                protection = FFplayContentProtection.REQUIRE_SECURE_PATH,
-            ),
-        )
+        player.prepare(MediaSource("protected.mpd"), FFplayContentProtection.REQUIRE_SECURE_PATH)
 
         assertTrue(harness.emitPlatformFrame(harness.snapshot().queueSerial))
         assertEquals(1, output.platformSubmitCount)
@@ -148,7 +140,7 @@ class FFplayFrameBoundaryTest {
             kind = FFplayRendererKind.NATIVE_SURFACE,
         )
         player.attachOutput(output)
-        player.prepare(FFplaySource("movie.mp4"))
+        player.prepare(MediaSource("movie.mp4"))
 
         assertEquals(false, harness.emitPlatformFrame(harness.snapshot().queueSerial))
         assertEquals(1, player.snapshot.value.droppedFrames)
@@ -161,11 +153,11 @@ class FFplayFrameBoundaryTest {
         val player = harness.player()
         val output = CountingOutput(acceptFrames = false)
         player.attachOutput(output)
-        player.prepare(FFplaySource("first.mp4"))
+        player.prepare(MediaSource("first.mp4"))
         harness.emitFrame(harness.snapshot().queueSerial)
         assertEquals(1, player.snapshot.value.droppedFrames)
 
-        player.prepare(FFplaySource("second.mp4"))
+        player.prepare(MediaSource("second.mp4"))
 
         assertEquals(0, player.snapshot.value.droppedFrames)
         player.close()
@@ -177,7 +169,7 @@ class FFplayFrameBoundaryTest {
         val player = harness.player()
         val firstTarget = Any()
         player.attachOutput(PlatformOutput(firstTarget))
-        player.prepare(FFplaySource("movie.mp4"))
+        player.prepare(MediaSource("movie.mp4"))
         assertEquals(firstTarget, harness.platformTarget())
 
         player.attachOutput(
@@ -203,7 +195,7 @@ class FFplayFrameBoundaryTest {
         val firstTarget = Any()
         val failingTarget = Any()
         player.attachOutput(PlatformOutput(firstTarget))
-        player.prepare(FFplaySource("movie.mp4"))
+        player.prepare(MediaSource("movie.mp4"))
         harness.rejectPlatformTarget(failingTarget)
 
         player.attachOutput(PlatformOutput(failingTarget))
@@ -218,7 +210,7 @@ class FFplayFrameBoundaryTest {
     fun nativeOutputFailureRemainsFailedAfterCapabilitiesAreCleared() = runTest {
         val harness = FrameBridgeHarness()
         val player = harness.player()
-        player.prepare(FFplaySource("movie.mp4"))
+        player.prepare(MediaSource("movie.mp4"))
         harness.failNextOutputAttachment(-5)
 
         player.attachOutput(PlatformOutput(Any()))
@@ -348,13 +340,13 @@ private class CountingOutput(
         return acceptFrames
     }
 
-    override fun submitNative(frame: VideoFrame, video: FFplayVideoInfo?): Boolean {
+    override fun submitNative(frame: VideoFrame, video: VideoInfo?): Boolean {
         frame.close()
         submitCount++
         return acceptFrames
     }
 
-    override fun submitPlatform(frame: NativePlatformVideoFrame, video: FFplayVideoInfo?): Boolean {
+    override fun submitPlatform(frame: NativePlatformVideoFrame, video: VideoInfo?): Boolean {
         platformSubmitCount++
         return acceptFrames
     }

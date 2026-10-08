@@ -14,7 +14,6 @@ import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asSkiaBitmap
 import io.github.aftrolle.ffmpegkmp.bindings.NativeGpuBuffer
-import io.github.aftrolle.ffmpegkmp.bindings.NativePlayerHdrType
 import io.github.aftrolle.ffmpegkmp.codec.DecoderPreference
 import io.github.aftrolle.ffmpegkmp.codec.FrameFormat
 import io.github.aftrolle.ffmpegkmp.codec.FrameSize
@@ -228,7 +227,7 @@ class FrameImageTest {
     @Test
     fun aFrameInGpuMemoryFailsOffAndroidAndLeavesTheImageAsItWas() = runBlocking<Unit> {
         var releases = 0
-        val buffer = NativeGpuBuffer(Any(), 1L, 0, 0, 96, 64, NativePlayerHdrType.SDR) { releases++ }
+        val buffer = NativeGpuBuffer(Any(), 1L, 0, 0, 96, 64, 0) { releases++ }
         decoder("cfr-30.mp4", VideoOutput.Memory()).use { decoder ->
             FrameImage().use { image ->
                 decoder.frameAt(Duration.ZERO).use(image::update)

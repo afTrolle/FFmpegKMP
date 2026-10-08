@@ -7,6 +7,7 @@ import io.github.aftrolle.ffmpegkmp.bindings.NativePlayerBridge
 import io.github.aftrolle.ffmpegkmp.bindings.NativePlayerError
 import io.github.aftrolle.ffmpegkmp.bindings.NativePlayerSource
 import io.github.aftrolle.ffmpegkmp.bindings.createInMemoryPlayerBridge
+import io.github.aftrolle.ffmpegkmp.codec.MediaSource
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
@@ -27,7 +28,7 @@ class FFplayQueuedCommandTest {
             assertEquals(listOf("prepare"), calls)
         }
 
-        player.prepare(FFplaySource("movie.mp4"))
+        player.prepare(MediaSource("movie.mp4"))
 
         assertEquals(listOf("prepare", "setOutput", "seek", "play"), calls)
         assertEquals(FFplayState.PLAYING, player.snapshot.value.state)
@@ -44,7 +45,7 @@ class FFplayQueuedCommandTest {
             player.attachOutput(QueuedOutput())
         }
 
-        assertFailsWith<IllegalStateException> { player.prepare(FFplaySource("missing.mp4")) }
+        assertFailsWith<IllegalStateException> { player.prepare(MediaSource("missing.mp4")) }
 
         assertEquals(listOf("prepare", "setOutput"), calls)
         player.close()
@@ -60,7 +61,7 @@ class FFplayQueuedCommandTest {
             player.requestClose()
         }
 
-        runCatching { player.prepare(FFplaySource("movie.mp4")) }
+        runCatching { player.prepare(MediaSource("movie.mp4")) }
         player.close()
 
         assertEquals(listOf("prepare"), calls)

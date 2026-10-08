@@ -8,6 +8,7 @@ import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertNotEquals
 import kotlin.test.assertTrue
 import okio.Buffer
@@ -217,7 +218,8 @@ class NativePlayerBridgeJvmTest {
             assertEquals(bridge.snapshot().videoHeight, video.height)
             assertEquals("yuv420p", video.pixelFormatName)
             assertEquals(8, video.bitDepth)
-            assertEquals(NativePlayerHdrType.SDR, video.hdrType)
+            assertFalse(video.dolbyVision)
+            assertFalse(video.hdr10Plus)
         }
     }
 
@@ -228,14 +230,13 @@ class NativePlayerBridgeJvmTest {
             val primaries: Int,
             val transfer: Int,
             val matrix: Int,
-            val hdrType: NativePlayerHdrType,
         )
 
         listOf(
-            ExpectedColor("sdr-bt709.mp4", 1, 1, 1, NativePlayerHdrType.SDR),
-            ExpectedColor("sdr-display-p3.mp4", 12, 1, 1, NativePlayerHdrType.SDR),
-            ExpectedColor("hdr10-pq.mp4", 9, 16, 9, NativePlayerHdrType.HDR10),
-            ExpectedColor("hdr-hlg.mp4", 9, 18, 9, NativePlayerHdrType.HLG),
+            ExpectedColor("sdr-bt709.mp4", 1, 1, 1),
+            ExpectedColor("sdr-display-p3.mp4", 12, 1, 1),
+            ExpectedColor("hdr10-pq.mp4", 9, 16, 9),
+            ExpectedColor("hdr-hlg.mp4", 9, 18, 9),
         ).forEach { expected ->
             createPlatformPlayerBridge(NativePlayerConfiguration(), update = {}).use { bridge ->
                 assertEquals(0, bridge.prepare(videoSource(expected.resource)))
@@ -243,7 +244,7 @@ class NativePlayerBridgeJvmTest {
                 assertEquals(expected.primaries, video.colorPrimaries, expected.resource)
                 assertEquals(expected.transfer, video.colorTransfer, expected.resource)
                 assertEquals(expected.matrix, video.colorSpace, expected.resource)
-                assertEquals(expected.hdrType, video.hdrType, expected.resource)
+                assertFalse(video.dolbyVision, expected.resource)
             }
         }
     }

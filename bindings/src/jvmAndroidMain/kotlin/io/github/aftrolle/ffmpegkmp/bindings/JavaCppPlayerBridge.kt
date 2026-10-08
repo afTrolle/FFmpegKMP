@@ -243,7 +243,7 @@ internal fun ffplaykmp_snapshot.toNativeSnapshot(): NativePlayerSnapshot = nativ
     colorSpace = color_space(),
     colorRange = color_range(),
     chromaLocation = chroma_location(),
-    hdrType = hdr_type(),
+    hdrFlags = hdr_flags(),
     masteringHasPrimaries = mastering_has_primaries() != 0,
     masteringHasLuminance = mastering_has_luminance() != 0,
     mastering = {

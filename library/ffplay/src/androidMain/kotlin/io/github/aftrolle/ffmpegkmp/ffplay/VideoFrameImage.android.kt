@@ -13,7 +13,8 @@ import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.nativeCanvas
-import io.github.aftrolle.ffmpegkmp.bindings.NativePlayerHdrType
+import io.github.aftrolle.ffmpegkmp.bindings.AVCOL_TRC_ARIB_STD_B67
+import io.github.aftrolle.ffmpegkmp.bindings.AVCOL_TRC_SMPTE2084
 import io.github.aftrolle.ffmpegkmp.bindings.convertIntoBitmap
 import io.github.aftrolle.ffmpegkmp.codec.FrameFormat
 import io.github.aftrolle.ffmpegkmp.codec.VideoFrame
@@ -47,10 +48,10 @@ private class HardwareFrameBitmaps : GpuFrameWraps {
 
     override fun wrap(frame: VideoFrame): ImageBitmap {
         val gpu = checkNotNull(frame.gpuBuffer) { "The frame lies in no GPU buffer: $frame" }
-        val colorSpace = when (gpu.hdrType) {
-            NativePlayerHdrType.SDR -> ColorSpace.Named.SRGB
-            NativePlayerHdrType.HLG -> ColorSpace.Named.BT2020_HLG
-            else -> ColorSpace.Named.BT2020_PQ
+        val colorSpace = when (gpu.colorTransfer) {
+            AVCOL_TRC_SMPTE2084 -> ColorSpace.Named.BT2020_PQ
+            AVCOL_TRC_ARIB_STD_B67 -> ColorSpace.Named.BT2020_HLG
+            else -> ColorSpace.Named.SRGB
         }
         val buffer = checkNotNull(frame.hardwareBuffer) { "The frame's GPU buffer is no HardwareBuffer: $frame" }
         val wrapped = checkNotNull(Bitmap.wrapHardwareBuffer(buffer, ColorSpace.get(colorSpace))) { "Could not wrap $buffer in a bitmap" }

@@ -24,9 +24,6 @@ public enum class NativePlayerDecoderPreference { AUTO, REQUIRE_HARDWARE, SOFTWA
 public enum class NativePlayerDecoderKind { UNKNOWN, HARDWARE, SOFTWARE }
 
 @InternalFFmpegKmpApi
-public enum class NativePlayerHdrType { SDR, HDR10, HLG, HDR10_PLUS, DOLBY_VISION, UNKNOWN_HDR }
-
-@InternalFFmpegKmpApi
 public data class NativePlayerMasteringDisplayMetadata(
     val hasPrimaries: Boolean = false,
     val hasLuminance: Boolean = false,
@@ -57,7 +54,9 @@ public data class NativePlayerVideoInfo(
     val colorSpace: Int = 2,
     val colorRange: Int = 0,
     val chromaLocation: Int = 0,
-    val hdrType: NativePlayerHdrType = NativePlayerHdrType.SDR,
+    /** Whether the stream signals Dolby Vision; the picture's own colour is [colorPrimaries], [colorTransfer] and [colorSpace]. */
+    val dolbyVision: Boolean = false,
+    val hdr10Plus: Boolean = false,
     val masteringDisplay: NativePlayerMasteringDisplayMetadata? = null,
     val maxContentLightLevel: Int? = null,
     val maxFrameAverageLightLevel: Int? = null,
@@ -390,6 +389,17 @@ private const val OUTPUT_ZERO_COPY = 4
 private const val OUTPUT_PROTECTED_CONTENT = 8
 private const val OUTPUT_TONE_MAP_HDR_TO_SDR = 16
 
+/** `ffplaykmp_snapshot.hdr_flags` bits. */
+private const val HDR_DOLBY_VISION = 1
+private const val HDR_HDR10_PLUS = 2
+
+/** FFmpeg's `AVCOL_TRC_SMPTE2084` (PQ) and `AVCOL_TRC_ARIB_STD_B67` (HLG). */
+@InternalFFmpegKmpApi
+public const val AVCOL_TRC_SMPTE2084: Int = 16
+
+@InternalFFmpegKmpApi
+public const val AVCOL_TRC_ARIB_STD_B67: Int = 18
+
 internal fun NativePlayerOutputCapabilities.toNativeFlags(): Int =
     (if (hardwareFrameImport) OUTPUT_HARDWARE_FRAME_IMPORT else 0) or
         (if (softwareFrameUpload) OUTPUT_SOFTWARE_FRAME_UPLOAD else 0) or
@@ -435,7 +445,7 @@ internal fun nativePlayerSnapshot(
     colorSpace: Int,
     colorRange: Int,
     chromaLocation: Int,
-    hdrType: Int,
+    hdrFlags: Int,
     masteringHasPrimaries: Boolean,
     masteringHasLuminance: Boolean,
     mastering: () -> DoubleArray,
@@ -468,7 +478,8 @@ internal fun nativePlayerSnapshot(
             colorSpace = colorSpace,
             colorRange = colorRange,
             chromaLocation = chromaLocation,
-            hdrType = NativePlayerHdrType.entries.getOrElse(hdrType) { NativePlayerHdrType.UNKNOWN_HDR },
+            dolbyVision = hdrFlags and HDR_DOLBY_VISION != 0,
+            hdr10Plus = hdrFlags and HDR_HDR10_PLUS != 0,
             masteringDisplay = if (masteringHasPrimaries || masteringHasLuminance) {
                 // Red, green, blue and white x/y, then min and max luminance.
                 val values = mastering()

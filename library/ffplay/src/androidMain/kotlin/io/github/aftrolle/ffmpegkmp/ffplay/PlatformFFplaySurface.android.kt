@@ -21,6 +21,9 @@ import androidx.compose.ui.graphics.toAndroidRectF
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalView
+import io.github.aftrolle.ffmpegkmp.codec.ColorPrimaries
+import io.github.aftrolle.ffmpegkmp.codec.ColorTransfer
+import io.github.aftrolle.ffmpegkmp.codec.VideoInfo
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
 
@@ -97,9 +100,9 @@ private class AndroidSurfaceOutput(
     private var height = 0
     private var contentScale = contentScale
     private var backgroundArgb = backgroundArgb
-    private var videoInfo: FFplayVideoInfo? = null
-    private var displayHdrTransfers: Set<String> = emptySet()
-    private var displayColorSpaces: Set<String> = setOf("sRGB")
+    private var videoInfo: VideoInfo? = null
+    private var displayHdrTransfers: Set<ColorTransfer> = emptySet()
+    private var displayColorSpaces: Set<ColorPrimaries> = setOf(ColorPrimaries.BT709)
     private val paint = Paint(Paint.FILTER_BITMAP_FLAG)
 
     override val kind: FFplayRendererKind = FFplayRendererKind.NATIVE_SURFACE
@@ -112,7 +115,7 @@ private class AndroidSurfaceOutput(
                 softwareFrameUpload = true,
                 zeroCopy = directSurfacePresentation,
                 hdrTransfers = if (directSurfacePresentation) displayHdrTransfers else emptySet(),
-                colorSpaces = if (directSurfacePresentation) displayColorSpaces else setOf("sRGB"),
+                colorSpaces = if (directSurfacePresentation) displayColorSpaces else setOf(ColorPrimaries.BT709),
                 protectedContent = false,
                 toneMapHdrToSdr = true,
             )
@@ -125,7 +128,7 @@ private class AndroidSurfaceOutput(
         this.backgroundArgb = backgroundArgb
     }
 
-    fun updateVideoInfo(videoInfo: FFplayVideoInfo?) = synchronized(lock) {
+    fun updateVideoInfo(videoInfo: VideoInfo?) = synchronized(lock) {
         this.videoInfo = videoInfo
     }
 
@@ -138,17 +141,14 @@ private class AndroidSurfaceOutput(
                     Display.HdrCapabilities.HDR_TYPE_HDR10_PLUS in hdrTypes) ||
                 Display.HdrCapabilities.HDR_TYPE_DOLBY_VISION in hdrTypes
             ) {
-                add("PQ")
+                add(ColorTransfer.PQ)
             }
-            if (Display.HdrCapabilities.HDR_TYPE_HLG in hdrTypes) add("HLG")
+            if (Display.HdrCapabilities.HDR_TYPE_HLG in hdrTypes) add(ColorTransfer.HLG)
         }
         displayColorSpaces = buildSet {
-            add("sRGB")
-            if (hdrTypes.isNotEmpty()) add("BT.2020")
-            if (Build.VERSION.SDK_INT >= 26 && display?.isWideColorGamut == true) {
-                add("Display P3")
-                add("DCI-P3")
-            }
+            add(ColorPrimaries.BT709)
+            if (hdrTypes.isNotEmpty()) add(ColorPrimaries.BT2020)
+            if (Build.VERSION.SDK_INT >= 26 && display?.isWideColorGamut == true) add(ColorPrimaries.DISPLAY_P3)
         }
     }
 
@@ -194,6 +194,6 @@ private class AndroidSurfaceOutput(
     override fun discard() = Unit
 }
 
-private fun FFplayVideoInfo?.hasIdentityDisplayTransform(): Boolean =
+private fun VideoInfo?.hasIdentityDisplayTransform(): Boolean =
     this != null && rotationDegrees.normalizedRotation() == 0f &&
         kotlin.math.abs(sampleAspectRatioValue() - 1.0) < 0.000_001

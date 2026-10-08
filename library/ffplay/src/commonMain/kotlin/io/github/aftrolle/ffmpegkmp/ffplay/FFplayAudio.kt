@@ -8,6 +8,7 @@
 package io.github.aftrolle.ffmpegkmp.ffplay
 
 import io.github.aftrolle.ffmpegkmp.bindings.NativeFileResource
+import io.github.aftrolle.ffmpegkmp.codec.MediaSource
 import io.github.aftrolle.ffmpegkmp.core.AudioLevel
 import io.github.aftrolle.ffmpegkmp.core.toNativeMounts
 import io.github.aftrolle.ffmpegkmp.player.AudioPlayer
@@ -56,7 +57,7 @@ internal interface FFplayAudioOutput : AutoCloseable {
 }
 
 /** Opens the source's audio, or returns null when it has none worth playing. */
-internal typealias FFplayAudioOpener = suspend (FFplaySource) -> FFplayAudioOutput?
+internal typealias FFplayAudioOpener = suspend (MediaSource) -> FFplayAudioOutput?
 
 /**
  * Plays the prepared source's audio alongside FFplay's video. Audio follows the video engine's
@@ -77,8 +78,7 @@ internal class FFplayAudio(
     private var clockJob: Job? = null
 
     /** Opens audio for [source] without attaching it; failures become warnings. */
-    suspend fun load(source: FFplaySource): FFplayAudioOutput? {
-        if (source.protection == FFplayContentProtection.REQUIRE_SECURE_PATH) return null
+    suspend fun load(source: MediaSource): FFplayAudioOutput? {
         val opened = try {
             open(source)
         } catch (cancellation: CancellationException) {
@@ -199,7 +199,7 @@ internal class FFplayAudio(
 }
 
 /** Plays a path/URL input, or a mounted file handle; other mounts can't be re-read for audio. */
-internal suspend fun openAudioPlayer(source: FFplaySource): FFplayAudioOutput? {
+internal suspend fun openAudioPlayer(source: MediaSource): FFplayAudioOutput? {
     val mount = source.io.toNativeMounts().firstOrNull { it.path == source.input }
     val player = when (val resource = mount?.resource) {
         null -> AudioPlayer.open(source.input)

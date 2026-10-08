@@ -62,6 +62,9 @@ public data class FrameColor(
     val matrix: ColorMatrix,
     val range: ColorRange,
 ) {
+    /** Whether the transfer is PQ or HLG, the two HDR ones: it alone decides, whatever metadata a stream adds. */
+    public val isHdr: Boolean get() = transfer == ColorTransfer.PQ || transfer == ColorTransfer.HLG
+
     public companion object {
         /** sRGB, full-range RGB: what an 8-bit canvas holds. */
         public val Srgb: FrameColor = FrameColor(ColorPrimaries.BT709, ColorTransfer.SRGB, ColorMatrix.RGB, ColorRange.FULL)

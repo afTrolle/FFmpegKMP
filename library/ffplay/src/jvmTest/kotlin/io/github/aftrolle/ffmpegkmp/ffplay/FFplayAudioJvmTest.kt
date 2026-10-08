@@ -13,7 +13,10 @@ import io.github.aftrolle.ffmpegkmp.bindings.NativePlayerSource
 import io.github.aftrolle.ffmpegkmp.bindings.NativePlayerState
 import io.github.aftrolle.ffmpegkmp.bindings.NativeVideoFrame
 import io.github.aftrolle.ffmpegkmp.bindings.createPlatformPlayerBridge
+import io.github.aftrolle.ffmpegkmp.codec.DecoderPreference
+import io.github.aftrolle.ffmpegkmp.codec.MediaSource
 import io.github.aftrolle.ffmpegkmp.codec.VideoFrame
+import io.github.aftrolle.ffmpegkmp.codec.VideoInfo
 import io.github.aftrolle.ffmpegkmp.core.AudioLevel
 import io.github.aftrolle.ffmpegkmp.core.CommandIo
 import io.github.aftrolle.ffmpegkmp.core.toNativeMounts
@@ -80,11 +83,11 @@ class FFplayAudioJvmTest {
     fun playsAudioWithVideoAndAppliesLiveControls() = runBlocking {
         val media = encodeAudioVideoFixture()
         val fileHandle = FileSystem.SYSTEM.openReadOnly(media)
-        val player = FFplayPlayer(FFplayConfiguration(decoderPreference = FFplayDecoderPreference.SOFTWARE))
+        val player = FFplayPlayer(FFplayConfiguration(decoderPreference = DecoderPreference.SOFTWARE))
         val output = CountingOutput()
         player.attachOutput(output)
         try {
-            player.prepare(FFplaySource(AV_FIXTURE, CommandIo { input(AV_FIXTURE, fileHandle) }))
+            player.prepare(MediaSource(AV_FIXTURE, CommandIo { input(AV_FIXTURE, fileHandle) }))
 
             val audio = player.audio.value
             if (!audio.available && !hasAudioDevice()) {
@@ -203,7 +206,7 @@ class FFplayAudioJvmTest {
 
         override fun submit(frame: FFplayFrame): Boolean = true
 
-        override fun submitNative(frame: VideoFrame, video: FFplayVideoInfo?): Boolean {
+        override fun submitNative(frame: VideoFrame, video: VideoInfo?): Boolean {
         frame.close()
             presentedFrames++
             return true

@@ -1,44 +1,24 @@
 // SPDX-License-Identifier: Apache-2.0
 package io.github.aftrolle.ffmpegkmp.ffplay
 
-import io.github.aftrolle.ffmpegkmp.codec.ContentLightMetadata
-import io.github.aftrolle.ffmpegkmp.codec.ContentProtection
+import io.github.aftrolle.ffmpegkmp.codec.ColorPrimaries
 import io.github.aftrolle.ffmpegkmp.codec.DecoderKind
 import io.github.aftrolle.ffmpegkmp.codec.DecoderPreference
 import io.github.aftrolle.ffmpegkmp.codec.DecoderThreads
-import io.github.aftrolle.ffmpegkmp.codec.HdrType
-import io.github.aftrolle.ffmpegkmp.codec.MasteringDisplayMetadata
-import io.github.aftrolle.ffmpegkmp.codec.MediaSource
 import io.github.aftrolle.ffmpegkmp.codec.VideoInfo
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.ZERO
 
-// The source and stream types live in :library:codec, shared with its decoders. FFplay keeps its
-// own names for them, so source code written against 0.2 still compiles.
+/** Whether a source's decoded pixels may leave a platform-protected path. */
+public enum class FFplayContentProtection {
+    CLEAR_OR_AUTO_DETECT,
 
-/** FFplay's name for [MediaSource]. */
-public typealias FFplaySource = MediaSource
-
-/** FFplay's name for [ContentProtection]. */
-public typealias FFplayContentProtection = ContentProtection
-
-/** FFplay's name for [DecoderPreference]. */
-public typealias FFplayDecoderPreference = DecoderPreference
-
-/** FFplay's name for [DecoderKind]. */
-public typealias FFplayDecoderKind = DecoderKind
-
-/** FFplay's name for [VideoInfo]. */
-public typealias FFplayVideoInfo = VideoInfo
-
-/** FFplay's name for [HdrType]. */
-public typealias FFplayHdrType = HdrType
-
-/** FFplay's name for [MasteringDisplayMetadata]. */
-public typealias FFplayMasteringDisplayMetadata = MasteringDisplayMetadata
-
-/** FFplay's name for [ContentLightMetadata]. */
-public typealias FFplayContentLightMetadata = ContentLightMetadata
+    /**
+     * For DRM content whose decoded pixels must remain in a platform-protected decoder and surface
+     * path. Such sources never fall back to Canvas.
+     */
+    REQUIRE_SECURE_PATH,
+}
 
 public enum class FFplayOutputPreference { AUTO, NATIVE_SURFACE, COMPOSE_CANVAS }
 public enum class FFplayHdrPolicy {
@@ -48,13 +28,13 @@ public enum class FFplayHdrPolicy {
     /**
      * Always shows SDR. An HDR source that a direct surface would present as HDR is decoded to
      * software frames and tone mapped instead, so it fails under
-     * [FFplayDecoderPreference.REQUIRE_HARDWARE].
+     * [DecoderPreference.REQUIRE_HARDWARE].
      */
     FORCE_SDR,
 }
 
 public data class FFplayConfiguration(
-    val decoderPreference: FFplayDecoderPreference = FFplayDecoderPreference.AUTO,
+    val decoderPreference: DecoderPreference = DecoderPreference.AUTO,
     val outputPreference: FFplayOutputPreference = FFplayOutputPreference.AUTO,
     val hdrPolicy: FFplayHdrPolicy = FFplayHdrPolicy.PRESERVE_OR_TONE_MAP,
     /**
@@ -84,11 +64,12 @@ public enum class FFplayRendererKind { NATIVE_SURFACE, GPU_TEXTURE, COMPOSE_CANV
 public enum class FFplayHdrResult { NOT_HDR, PRESERVED, TONE_MAPPED, UNSUPPORTED }
 
 public data class FFplayOutputInfo(
-    val decoder: FFplayDecoderKind,
+    val decoder: DecoderKind,
     val renderer: FFplayRendererKind,
     val zeroCopy: Boolean,
-    val sourceColorSpace: String? = null,
-    val outputColorSpace: String? = null,
+    /** The primaries the source is in, and those the output presents it in; null before a video is known. */
+    val sourceColorSpace: ColorPrimaries? = null,
+    val outputColorSpace: ColorPrimaries? = null,
     val hdrResult: FFplayHdrResult = FFplayHdrResult.NOT_HDR,
     val securePath: Boolean = false,
 )
@@ -103,7 +84,7 @@ public data class FFplaySnapshot(
     val position: Duration = ZERO,
     val duration: Duration? = null,
     val seekable: Boolean = false,
-    val video: FFplayVideoInfo? = null,
+    val video: VideoInfo? = null,
     val output: FFplayOutputInfo? = null,
     val droppedFrames: Long = 0,
     val failure: FFplayFailure? = null,

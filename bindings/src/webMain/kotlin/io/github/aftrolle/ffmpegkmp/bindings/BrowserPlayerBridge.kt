@@ -358,7 +358,7 @@ internal fun String.toBrowserNativePlayerSnapshot(): NativePlayerSnapshot {
         colorSpace = value.int("colorSpace"),
         colorRange = value.int("colorRange"),
         chromaLocation = value.int("chromaLocation"),
-        hdrType = value.int("hdrType"),
+        hdrFlags = value.int("hdrFlags"),
         masteringHasPrimaries = value.int("masteringHasPrimaries") != 0,
         masteringHasLuminance = value.int("masteringHasLuminance") != 0,
         mastering = {

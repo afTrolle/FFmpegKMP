@@ -27,19 +27,16 @@ public enum class DynamicRange {
     HLG,
     ;
 
-    /**
-     * What to draw into and decode to for this range at its usual depth: [FrameFormat.Rgba8] for
-     * SDR, and [FrameFormat.RgbaF16] for HDR, where SDR white sits at 1.0, 203 nits. A config's
-     * [VideoEncoderConfig.canvasFormat] also follows its bit depth.
-     */
-    public val canvasFormat: FrameFormat get() = if (this == SDR) FrameFormat.Rgba8 else FrameFormat.RgbaF16
-
     public companion object {
-        /** The range that keeps a source's: HLG as HLG, SDR as SDR, and other HDR types as HDR10. */
-        public fun of(info: VideoInfo): DynamicRange = when (info.hdrType) {
-            HdrType.SDR -> SDR
-            HdrType.HLG -> HLG
-            else -> HDR10
+        /**
+         * The range that keeps a source's, by its transfer function: PQ as HDR10, HLG as HLG and
+         * the rest as SDR. Dolby Vision and HDR10+ are signalling over one of those, so a Dolby
+         * Vision 8.4 clip, which is HLG, stays HLG.
+         */
+        public fun of(info: VideoInfo): DynamicRange = when (info.color.transfer) {
+            ColorTransfer.PQ -> HDR10
+            ColorTransfer.HLG -> HLG
+            else -> SDR
         }
     }
 }
@@ -86,19 +83,26 @@ public data class MasteringDisplay(
 }
 
 /**
- * HDR10 static metadata for the stream and the container. A decoded source reports its own as
- * [VideoInfo.hdrMetadata]; [combine] makes one for a composite of several.
+ * HDR metadata: HDR10's static [masteringDisplay] and [contentLight] levels, which a writer puts
+ * in the stream and the container, and the dynamic-metadata signalling a source carries. A decoded
+ * source reports its own as [VideoInfo.hdrMetadata]; [combine] makes the static part for a
+ * composite of several. Which HDR a picture is follows from its [FrameColor.transfer], not from
+ * these flags: a Dolby Vision 8.4 clip is HLG.
  */
 public data class HdrMetadata(
     val masteringDisplay: MasteringDisplay? = null,
     val contentLight: ContentLightMetadata? = null,
+    /** The source signals Dolby Vision. A writer does not carry it over. */
+    val dolbyVision: Boolean = false,
+    /** The source carries HDR10+ dynamic metadata. A writer does not carry it over. */
+    val hdr10Plus: Boolean = false,
 ) {
     public companion object {
         /**
          * The metadata for a composite of [main] and [others]: [main]'s mastering display, and the
          * highest MaxCLL and MaxFALL of all of them. MaxFALL is then an upper bound, not the
          * composite's own frame average. Null sources, such as SDR ones, add nothing, and the result
-         * is null when nothing is known.
+         * is null when nothing is known. The signalling flags are not combined.
          */
         public fun combine(main: HdrMetadata?, vararg others: HdrMetadata?): HdrMetadata? {
             val lights = (listOf(main) + others).mapNotNull { it?.contentLight }
@@ -113,8 +117,13 @@ public data class HdrMetadata(
     }
 }
 
-internal fun hdrMetadataOrNull(masteringDisplay: MasteringDisplay?, contentLight: ContentLightMetadata?): HdrMetadata? =
-    if (masteringDisplay != null || contentLight != null) HdrMetadata(masteringDisplay, contentLight) else null
+internal fun hdrMetadataOrNull(
+    masteringDisplay: MasteringDisplay?,
+    contentLight: ContentLightMetadata?,
+    dolbyVision: Boolean = false,
+    hdr10Plus: Boolean = false,
+): HdrMetadata? =
+    HdrMetadata(masteringDisplay, contentLight, dolbyVision, hdr10Plus).takeIf { it != HdrMetadata() }
 
 internal fun contentLightOrNull(maxContentLightLevel: Int?, maxFrameAverageLightLevel: Int?): ContentLightMetadata? =
     if (maxContentLightLevel != null || maxFrameAverageLightLevel != null) {
@@ -136,7 +145,11 @@ public data class VideoEncoderConfig(
      * takes 10 only. 10-bit SDR keeps the gradients smooth that 8 bits band, and needs HEVC or AV1.
      */
     val bitDepth: Int? = null,
-    /** HDR10 only. Without it the writer takes the first frame's, as a decoded HDR10 source carries it. */
+    /**
+     * HDR10's static part of it; other ranges ignore it, so a source's [VideoInfo.hdrMetadata] can
+     * be passed as it is. Without it the writer takes the first frame's, as a decoded HDR10 source
+     * carries it.
+     */
     val hdrMetadata: HdrMetadata? = null,
     /** Bits per second; null for one that suits the size and rate. */
     val bitRate: Long? = null,
@@ -151,7 +164,6 @@ public data class VideoEncoderConfig(
         require(!keyframeInterval.isNegative() && keyframeInterval.isFinite()) {
             "The keyframe interval must not be negative: $keyframeInterval"
         }
-        require(hdrMetadata == null || dynamicRange == DynamicRange.HDR10) { "HDR metadata is for HDR10 only" }
         require(bitDepth == null || bitDepth == 8 || bitDepth == 10) { "The bit depth must be 8 or 10: $bitDepth" }
         require(dynamicRange == DynamicRange.SDR || bitDepth != 8) { "$dynamicRange takes 10 bits, not 8" }
         require((dynamicRange == DynamicRange.SDR && bitDepth != 10) || codec != VideoCodec.H264) {
@@ -184,6 +196,8 @@ public data class AudioEncoderConfig(
     }
 }
 
+private val HdrMetadata.hasStaticMetadata: Boolean get() = masteringDisplay != null || contentLight != null
+
 internal fun VideoEncoderConfig.toNative(): NativeVideoEncoderConfig = NativeVideoEncoderConfig(
     width = width,
     height = height,
@@ -207,7 +221,7 @@ internal fun VideoEncoderConfig.toNative(): NativeVideoEncoderConfig = NativeVid
     bitRate = bitRate ?: 0L,
     keyframeIntervalMicros = keyframeInterval.inWholeMicroseconds,
     bitDepth = bitDepth ?: 0,
-    hdrMetadata = hdrMetadata?.let { metadata ->
+    hdrMetadata = hdrMetadata?.takeIf { dynamicRange == DynamicRange.HDR10 && it.hasStaticMetadata }?.let { metadata ->
         NativeHdrMetadata(
             masteringDisplay = metadata.masteringDisplay?.let { display ->
                 NativeMasteringDisplay(

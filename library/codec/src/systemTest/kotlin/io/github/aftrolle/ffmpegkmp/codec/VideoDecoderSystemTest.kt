@@ -211,13 +211,12 @@ class VideoDecoderSystemTest {
     fun anHdr10SourceReportsItsMetadataAndKeepsHighlightsInRgbaF16() = runBlocking {
         decoder("hdr10-pq.mp4", VideoOutput.Memory(FrameFormat.RgbaF16)).use { decoder ->
             val info = decoder.info
-            assertEquals(HdrType.HDR10, info.hdrType)
-            assertEquals("PQ", info.colorTransfer)
-            assertEquals("BT.2020", info.colorPrimaries)
+            assertEquals(DynamicRange.HDR10, DynamicRange.of(info))
+            assertEquals(FrameColor.Bt2020Pq, info.color)
             assertEquals(10, info.bitDepth)
-            assertEquals("1000.0", info.masteringDisplay?.raw?.get("maxLuminance"))
-            assertEquals(1000, info.contentLight?.maxContentLightLevel)
-            assertEquals(400, info.contentLight?.maxFrameAverageLightLevel)
+            assertEquals(1000.0, info.hdrMetadata?.masteringDisplay?.maxLuminance)
+            assertEquals(1000, info.hdrMetadata?.contentLight?.maxContentLightLevel)
+            assertEquals(400, info.hdrMetadata?.contentLight?.maxFrameAverageLightLevel)
             // What generate.py's mDCV and cLLI chunks give, as ffprobe reads them.
             assertEquals(hdr10PqFixtureMetadata, info.hdrMetadata)
 

@@ -10,7 +10,6 @@ import io.github.aftrolle.ffmpegkmp.bindings.NativeFrame
 import io.github.aftrolle.ffmpegkmp.bindings.NativeFrameFormat
 import io.github.aftrolle.ffmpegkmp.bindings.NativeFramePlane
 import io.github.aftrolle.ffmpegkmp.bindings.NativeGpuBuffer
-import io.github.aftrolle.ffmpegkmp.bindings.NativePlayerHdrType
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
@@ -124,7 +123,7 @@ class VideoFrameTest {
     @Test
     fun aFrameInGpuMemoryHasNoPixelsAndReleasesItsBufferOnceAfterTheLastReference() {
         var releases = 0
-        val buffer = NativeGpuBuffer(Any(), 7L, 0, 0, 128, 128, NativePlayerHdrType.SDR) { releases++ }
+        val buffer = NativeGpuBuffer(Any(), 7L, 0, 0, 128, 128, 0) { releases++ }
         val frame = VideoFrame.of(buffer, Duration.ZERO, 40.milliseconds, width = 128, height = 128)
         assertSame(buffer, frame.gpuBuffer)
         assertNull(frame.format)

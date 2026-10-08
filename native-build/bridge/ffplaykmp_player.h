@@ -45,14 +45,14 @@ typedef enum ffplaykmp_decoder_kind {
     FFPLAYKMP_DECODER_SOFTWARE_ACTIVE = 2,
 } ffplaykmp_decoder_kind;
 
-typedef enum ffplaykmp_hdr_type {
-    FFPLAYKMP_HDR_SDR = 0,
-    FFPLAYKMP_HDR_HDR10 = 1,
-    FFPLAYKMP_HDR_HLG = 2,
-    FFPLAYKMP_HDR_HDR10_PLUS = 3,
-    FFPLAYKMP_HDR_DOLBY_VISION = 4,
-    FFPLAYKMP_HDR_UNKNOWN = 5,
-} ffplaykmp_hdr_type;
+/*
+ * Dynamic-metadata signalling a stream carries, as bits of ffplaykmp_snapshot.hdr_flags. Whether the
+ * picture is HDR follows from color_transfer, never from these.
+ */
+enum {
+    FFPLAYKMP_HDR_DOLBY_VISION = 1 << 0,
+    FFPLAYKMP_HDR_HDR10_PLUS = 1 << 1,
+};
 
 /*
  * Errors the player reports itself. errno numbering differs between hosts
@@ -118,7 +118,7 @@ typedef struct ffplaykmp_snapshot {
     int32_t color_space;
     int32_t color_range;
     int32_t chroma_location;
-    ffplaykmp_hdr_type hdr_type;
+    int32_t hdr_flags;
     int32_t mastering_has_primaries;
     int32_t mastering_has_luminance;
     double mastering_red_x;

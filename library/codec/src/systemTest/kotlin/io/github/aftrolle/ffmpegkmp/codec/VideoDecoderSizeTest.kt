@@ -82,7 +82,7 @@ class VideoDecoderSizeTest {
         // 96x64 pixels twice as wide as they are high: 192x64 on screen.
         val clip = ffmpeg("cfr-30.mp4", "anamorphic.mp4", "-vf", "setsar=2/1", "-c:v", "mpeg4", "-q:v", "2")
         open(clip, VideoOutput.Memory(FrameFormat.Rgba8)).use { decoder ->
-            assertEquals("2:1", decoder.info.sampleAspectRatio)
+            assertEquals(2.0, decoder.info.sampleAspectRatio)
             decoder.frameAt(Duration.ZERO).use { assertEquals(2.0, it.sampleAspectRatio) }
         }
         for ((size, aspect) in listOf(FrameSize(192, 64) to 1.0, FrameSize(48, 64) to 4.0, FrameSize(96, 32) to 1.0)) {

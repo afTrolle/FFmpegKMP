@@ -1212,7 +1212,7 @@ static void ffplaykmp_web_publish(
             "\"pixelFormat\":%d,\"pixelFormatName\":\"%s\",\"bitDepth\":%d,"
             "\"sarNum\":%d,\"sarDen\":%d,\"rotation\":%.17g,"
             "\"colorPrimaries\":%d,\"colorTransfer\":%d,\"colorSpace\":%d,"
-            "\"colorRange\":%d,\"chromaLocation\":%d,\"hdrType\":%d,"
+            "\"colorRange\":%d,\"chromaLocation\":%d,\"hdrFlags\":%d,"
             "\"masteringHasPrimaries\":%d,\"masteringHasLuminance\":%d,"
             "\"masteringRedX\":%.17g,\"masteringRedY\":%.17g,"
             "\"masteringGreenX\":%.17g,\"masteringGreenY\":%.17g,"
@@ -1241,7 +1241,7 @@ static void ffplaykmp_web_publish(
             snapshot->color_space,
             snapshot->color_range,
             snapshot->chroma_location,
-            snapshot->hdr_type,
+            snapshot->hdr_flags,
             snapshot->mastering_has_primaries,
             snapshot->mastering_has_luminance,
             snapshot->mastering_red_x,

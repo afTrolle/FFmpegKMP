@@ -13,6 +13,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.unit.IntRect
+import io.github.aftrolle.ffmpegkmp.codec.ColorPrimaries
 import kotlinx.coroutines.DelicateCoroutinesApi
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.GlobalScope
@@ -94,7 +95,7 @@ private class ComposeCanvasOutput : FFplayVideoOutput {
         // Wide-gamut/F16 support is promoted only by platform outputs after a
         // real display/backend capability check.
         hdrTransfers = emptySet(),
-        colorSpaces = setOf("sRGB"),
+        colorSpaces = setOf(ColorPrimaries.BT709),
         toneMapHdrToSdr = true,
     )
 

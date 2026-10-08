@@ -16,9 +16,11 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.viewinterop.HtmlElementView
+import io.github.aftrolle.ffmpegkmp.codec.ColorPrimaries
 import io.github.aftrolle.ffmpegkmp.codec.VideoFrame
 import io.github.aftrolle.ffmpegkmp.bindings.NativePlatformVideoFrame
 import io.github.aftrolle.ffmpegkmp.bindings.NativePlatformVideoFrameKind
+import io.github.aftrolle.ffmpegkmp.codec.VideoInfo
 import kotlin.js.ExperimentalWasmJsInterop
 import kotlin.js.JsAny
 import kotlinx.browser.document
@@ -67,7 +69,7 @@ private class WebCanvasOutput : FFplayVideoOutput {
         softwareFrameUpload = true,
         zeroCopy = false,
         hdrTransfers = emptySet(),
-        colorSpaces = setOf("sRGB"),
+        colorSpaces = setOf(ColorPrimaries.BT709),
         toneMapHdrToSdr = true,
     )
     var scaleMode: String = "fit"
@@ -75,7 +77,7 @@ private class WebCanvasOutput : FFplayVideoOutput {
 
     override fun submit(frame: FFplayFrame): Boolean = false
 
-    override fun submitNative(frame: VideoFrame, video: FFplayVideoInfo?): Boolean = frame.use {
+    override fun submitNative(frame: VideoFrame, video: VideoInfo?): Boolean = frame.use {
         // The worker's RGBA8 bytes, packed, straight into ImageData.
         it.usePlanes { planes ->
             planes.single().bytes.useArray { bytes, offset ->
@@ -93,7 +95,7 @@ private class WebCanvasOutput : FFplayVideoOutput {
         } != null
     }
 
-    override fun submitPlatform(frame: NativePlatformVideoFrame, video: FFplayVideoInfo?): Boolean {
+    override fun submitPlatform(frame: NativePlatformVideoFrame, video: VideoInfo?): Boolean {
         if (frame.kind != NativePlatformVideoFrameKind.WEB_VIDEO_FRAME) return false
         return drawRegisteredVideoFrame(
             canvas,

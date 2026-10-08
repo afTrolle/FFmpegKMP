@@ -54,7 +54,7 @@ internal class GpuBufferVideoDecoder(
     private var acquired = 0
     private var latest: NativeGpuBuffer? = null
     private var latestSerial = 0L
-    private var hdrType = NativePlayerHdrType.SDR
+    private var colorTransfer = 0
     private var closed = false
     private var readerClosed = false
 
@@ -74,7 +74,7 @@ internal class GpuBufferVideoDecoder(
 
     override suspend fun start(): NativeVideoStream {
         val stream = decoder.start()
-        hdrType = stream.info.hdrType
+        colorTransfer = stream.info.colorTransfer
         if (stream.info.bitDepth <= 8 || stream.activeDecoder != NativePlayerDecoderKind.HARDWARE || gpuBuffersKeepDeepSources) {
             return stream
         }
@@ -141,7 +141,7 @@ internal class GpuBufferVideoDecoder(
         }
         val crop = image.cropRect.takeUnless(Rect::isEmpty) ?: Rect(0, 0, frame.width, frame.height)
         val buffer = NativeGpuBuffer(
-            hardwareBuffer, hardwareBuffer.id, crop.left, crop.top, crop.right, crop.bottom, hdrType,
+            hardwareBuffer, hardwareBuffer.id, crop.left, crop.top, crop.right, crop.bottom, colorTransfer,
         ) {
             lock.withLock {
                 hardwareBuffer.close()

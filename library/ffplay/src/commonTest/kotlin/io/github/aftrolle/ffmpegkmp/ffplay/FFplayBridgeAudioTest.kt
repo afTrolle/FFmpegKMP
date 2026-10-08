@@ -8,6 +8,7 @@ import io.github.aftrolle.ffmpegkmp.bindings.NativeAudioTrackInfo
 import io.github.aftrolle.ffmpegkmp.bindings.NativePlayerAudio
 import io.github.aftrolle.ffmpegkmp.bindings.NativePlayerBridge
 import io.github.aftrolle.ffmpegkmp.bindings.createInMemoryPlayerBridge
+import io.github.aftrolle.ffmpegkmp.codec.MediaSource
 import io.github.aftrolle.ffmpegkmp.core.AudioLevel
 import io.github.aftrolle.ffmpegkmp.player.PlaybackState
 import kotlin.test.Test
@@ -90,7 +91,7 @@ class FFplayBridgeAudioTest {
             },
         )
         player.attachOutput(AudioTestCanvas())
-        player.prepare(FFplaySource("movie.mp4"))
+        player.prepare(MediaSource("movie.mp4"))
         assertEquals(3, player.audio.value.tracks.size)
 
         player.play()

@@ -6,7 +6,6 @@
 
 package io.github.aftrolle.ffmpegkmp.codec
 
-import io.github.aftrolle.ffmpegkmp.bindings.NativePlayerHdrType
 import io.github.aftrolle.ffmpegkmp.bindings.NativePlayerMasteringDisplayMetadata
 import io.github.aftrolle.ffmpegkmp.bindings.NativePlayerVideoInfo
 import kotlin.test.Test
@@ -30,7 +29,6 @@ class ColorMetadataTest {
             colorSpace = 9,
             colorRange = 1,
             chromaLocation = 1,
-            hdrType = NativePlayerHdrType.HDR10,
             masteringDisplay = NativePlayerMasteringDisplayMetadata(
                 hasPrimaries = true,
                 hasLuminance = true,
@@ -51,18 +49,10 @@ class ColorMetadataTest {
 
         assertEquals("yuv420p10le", video.pixelFormat)
         assertEquals(10, video.bitDepth)
-        assertEquals("1:1", video.sampleAspectRatio)
+        assertEquals(1.0, video.sampleAspectRatio)
         assertEquals(90.0, video.rotationDegrees)
-        assertEquals("BT.2020", video.colorPrimaries)
-        assertEquals("PQ", video.colorTransfer)
-        assertEquals("BT.2020 NCL", video.colorMatrix)
-        assertEquals("Limited", video.colorRange)
-        assertEquals("Left", video.chromaLocation)
-        assertEquals(HdrType.HDR10, video.hdrType)
-        assertEquals("1000.0", assertNotNull(video.masteringDisplay).raw["maxLuminance"])
-        val contentLight = assertNotNull(video.contentLight)
-        assertEquals(1000, contentLight.maxContentLightLevel)
-        assertEquals(400, contentLight.maxFrameAverageLightLevel)
+        assertEquals(FrameColor.Bt2020Pq, video.color)
+        assertEquals(DynamicRange.HDR10, DynamicRange.of(video))
         assertEquals(
             HdrMetadata(
                 MasteringDisplay(
@@ -93,7 +83,6 @@ class ColorMetadataTest {
             whiteY = 0.329,
         )
         val primariesOnly = NativePlayerVideoInfo(width = 64, height = 64, masteringDisplay = primaries).toPublicVideoInfo()
-        assertEquals("0.708", assertNotNull(primariesOnly.masteringDisplay).raw["redX"])
         assertNull(primariesOnly.hdrMetadata)
 
         val luminanceOnly = NativePlayerVideoInfo(
@@ -114,7 +103,79 @@ class ColorMetadataTest {
     }
 
     @Test
-    fun unspecifiedColorFieldsStayUnspecified() {
+    fun aDolbyVisionStreamIsAsHdrAsItsTransferSaysAndNoMore() {
+        // An iPhone's Dolby Vision 8.4: HLG, with Dolby Vision signalling over it.
+        val dolbyVision84 = NativePlayerVideoInfo(
+            width = 1920,
+            height = 1080,
+            bitDepth = 10,
+            colorPrimaries = 9,
+            colorTransfer = 18,
+            colorSpace = 9,
+            dolbyVision = true,
+        ).toPublicVideoInfo()
+        assertEquals(FrameColor.Bt2020Hlg, dolbyVision84.color)
+        assertEquals(HdrMetadata(dolbyVision = true), dolbyVision84.hdrMetadata)
+        assertEquals(DynamicRange.HLG, DynamicRange.of(dolbyVision84))
+
+        val dolbyVision81 = NativePlayerVideoInfo(
+            width = 1920,
+            height = 1080,
+            colorPrimaries = 9,
+            colorTransfer = 16,
+            colorSpace = 9,
+            dolbyVision = true,
+            hdr10Plus = true,
+        ).toPublicVideoInfo()
+        assertEquals(DynamicRange.HDR10, DynamicRange.of(dolbyVision81))
+        assertEquals(HdrMetadata(dolbyVision = true, hdr10Plus = true), dolbyVision81.hdrMetadata)
+
+        // Signalling with no HDR transfer, as a Dolby Vision profile 5 stream without a base layer reports, is SDR.
+        val unspecified = NativePlayerVideoInfo(width = 64, height = 64, dolbyVision = true).toPublicVideoInfo()
+        assertEquals(DynamicRange.SDR, DynamicRange.of(unspecified))
+    }
+
+    @Test
+    fun colorOutsideTheModelReadsAsTheConverterReadsIt() {
+        fun color(primaries: Int = 2, transfer: Int = 2, space: Int = 2, range: Int = 0, pixelFormatName: String? = null) =
+            NativePlayerVideoInfo(
+                width = 64,
+                height = 64,
+                pixelFormatName = pixelFormatName,
+                colorPrimaries = primaries,
+                colorTransfer = transfer,
+                colorSpace = space,
+                colorRange = range,
+            ).toPublicVideoInfo().color
+
+        assertEquals(FrameColor(ColorPrimaries.DISPLAY_P3, ColorTransfer.BT709, ColorMatrix.BT709, ColorRange.LIMITED), color(primaries = 12, transfer = 1, space = 1))
+        assertEquals(ColorMatrix.BT601, color(space = 6).matrix)
+        assertEquals(ColorMatrix.BT601, color(space = 5).matrix)
+        assertEquals(ColorMatrix.BT2020_NCL, color(space = 10).matrix)
+        assertEquals(ColorTransfer.SRGB, color(transfer = 13).transfer)
+        assertEquals(ColorTransfer.LINEAR, color(transfer = 8).transfer)
+        assertEquals(ColorTransfer.BT709, color(transfer = 4).transfer)
+        assertEquals(ColorRange.FULL, color(range = 2).range)
+        assertEquals(ColorRange.FULL, color(pixelFormatName = "yuvj420p").range)
+        assertEquals(FrameColor(ColorPrimaries.BT709, ColorTransfer.SRGB, ColorMatrix.RGB, ColorRange.FULL), color(space = 0, transfer = 13))
+    }
+
+    @Test
+    fun anUnreportedAspectRatioIsSquare() {
+        assertEquals(1.0, NativePlayerVideoInfo(width = 64, height = 64).toPublicVideoInfo().sampleAspectRatio)
+        assertEquals(
+            16.0 / 15.0,
+            NativePlayerVideoInfo(
+                width = 720,
+                height = 576,
+                sampleAspectRatioNumerator = 16,
+                sampleAspectRatioDenominator = 15,
+            ).toPublicVideoInfo().sampleAspectRatio,
+        )
+    }
+
+    @Test
+    fun unspecifiedColorFieldsReadAsBt709() {
         val video = NativePlayerVideoInfo(
             width = 640,
             height = 360,
@@ -125,13 +186,8 @@ class ColorMetadataTest {
             chromaLocation = 0,
         ).toPublicVideoInfo()
 
-        assertNull(video.colorPrimaries)
-        assertNull(video.colorTransfer)
-        assertNull(video.colorMatrix)
-        assertNull(video.colorRange)
-        assertNull(video.chromaLocation)
-        assertNull(video.masteringDisplay)
-        assertNull(video.contentLight)
+        assertEquals(FrameColor.Bt709, video.color)
+        assertEquals(DynamicRange.SDR, DynamicRange.of(video))
         assertNull(video.hdrMetadata)
     }
 }

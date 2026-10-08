@@ -23,6 +23,31 @@ class EncoderConfigTest {
     }
 
     @Test
+    fun theRangeThatKeepsASourceFollowsItsTransferNotItsSignalling() {
+        fun range(color: FrameColor, metadata: HdrMetadata? = null) = DynamicRange.of(VideoInfo(64, 64, color = color, hdrMetadata = metadata))
+
+        assertEquals(DynamicRange.SDR, range(FrameColor.Bt709))
+        assertEquals(DynamicRange.HDR10, range(FrameColor.Bt2020Pq))
+        assertEquals(DynamicRange.HLG, range(FrameColor.Bt2020Hlg))
+        assertEquals(DynamicRange.HLG, range(FrameColor.Bt2020Hlg, HdrMetadata(dolbyVision = true)))
+        assertEquals(DynamicRange.HDR10, range(FrameColor.Bt2020Pq, HdrMetadata(dolbyVision = true, hdr10Plus = true)))
+        assertEquals(DynamicRange.SDR, range(FrameColor.Bt709, HdrMetadata(dolbyVision = true)))
+    }
+
+    @Test
+    fun aSourcesMetadataPassesIntoAnyConfigAndOnlyHdr10TakesIt() {
+        val source = HdrMetadata(MasteringDisplay.DisplayP3At1000Nits, ContentLightMetadata(1000, 400), dolbyVision = true)
+        val hlg = VideoEncoderConfig(64, 64, FrameRate(30), VideoCodec.HEVC, DynamicRange.HLG, hdrMetadata = source)
+        assertNull(hlg.toNative().hdrMetadata)
+        val sdr = VideoEncoderConfig(64, 64, FrameRate(30), hdrMetadata = source)
+        assertNull(sdr.toNative().hdrMetadata)
+        val hdr10 = hlg.copy(dynamicRange = DynamicRange.HDR10).toNative().hdrMetadata
+        assertEquals(1000.0, hdr10?.masteringDisplay?.maxLuminance)
+        assertEquals(1000 to 400, hdr10?.contentLight)
+        assertNull(hlg.copy(dynamicRange = DynamicRange.HDR10, hdrMetadata = HdrMetadata(dolbyVision = true)).toNative().hdrMetadata)
+    }
+
+    @Test
     fun hdrTakesTenBitsAndTenBitsTakeHevcOrAv1() {
         assertFailsWith<IllegalArgumentException> {
             VideoEncoderConfig(64, 64, FrameRate(30), VideoCodec.HEVC, DynamicRange.HLG, bitDepth = 8)

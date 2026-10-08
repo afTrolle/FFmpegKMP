@@ -50,7 +50,7 @@ void ffplaykmp_reset_video_metadata(ffplaykmp_snapshot *snapshot) {
     snapshot->color_space = AVCOL_SPC_UNSPECIFIED;
     snapshot->color_range = AVCOL_RANGE_UNSPECIFIED;
     snapshot->chroma_location = AVCHROMA_LOC_UNSPECIFIED;
-    snapshot->hdr_type = FFPLAYKMP_HDR_SDR;
+    snapshot->hdr_flags = 0;
     snapshot->mastering_has_primaries = 0;
     snapshot->mastering_has_luminance = 0;
     snapshot->mastering_red_x = 0.0;
@@ -138,26 +138,13 @@ void ffplaykmp_read_stream_metadata(
     if (av_packet_side_data_get(
             parameters->coded_side_data,
             parameters->nb_coded_side_data,
-            AV_PKT_DATA_DOVI_CONF)) {
-        snapshot->hdr_type = FFPLAYKMP_HDR_DOLBY_VISION;
-    } else if (av_packet_side_data_get(
+            AV_PKT_DATA_DOVI_CONF))
+        snapshot->hdr_flags |= FFPLAYKMP_HDR_DOLBY_VISION;
+    if (av_packet_side_data_get(
             parameters->coded_side_data,
             parameters->nb_coded_side_data,
-            AV_PKT_DATA_DYNAMIC_HDR10_PLUS)) {
-        snapshot->hdr_type = FFPLAYKMP_HDR_HDR10_PLUS;
-    } else if (parameters->color_trc == AVCOL_TRC_ARIB_STD_B67) {
-        snapshot->hdr_type = FFPLAYKMP_HDR_HLG;
-    } else if (parameters->color_trc == AVCOL_TRC_SMPTE2084) {
-        snapshot->hdr_type = FFPLAYKMP_HDR_HDR10;
-    } else if (parameters->color_trc == AVCOL_TRC_UNSPECIFIED ||
-            parameters->color_trc == AVCOL_TRC_BT709 ||
-            parameters->color_trc == AVCOL_TRC_GAMMA22 ||
-            parameters->color_trc == AVCOL_TRC_GAMMA28 ||
-            parameters->color_trc == AVCOL_TRC_IEC61966_2_1) {
-        snapshot->hdr_type = FFPLAYKMP_HDR_SDR;
-    } else {
-        snapshot->hdr_type = FFPLAYKMP_HDR_UNKNOWN;
-    }
+            AV_PKT_DATA_DYNAMIC_HDR10_PLUS))
+        snapshot->hdr_flags |= FFPLAYKMP_HDR_HDR10_PLUS;
 }
 
 void ffplaykmp_read_frame_metadata(
@@ -207,15 +194,10 @@ void ffplaykmp_read_frame_metadata(
         snapshot->max_frame_average_light_level = content_light->MaxFALL;
     }
     if (av_frame_get_side_data(frame, AV_FRAME_DATA_DOVI_METADATA) ||
-            av_frame_get_side_data(frame, AV_FRAME_DATA_DOVI_RPU_BUFFER)) {
-        snapshot->hdr_type = FFPLAYKMP_HDR_DOLBY_VISION;
-    } else if (av_frame_get_side_data(frame, AV_FRAME_DATA_DYNAMIC_HDR_PLUS)) {
-        snapshot->hdr_type = FFPLAYKMP_HDR_HDR10_PLUS;
-    } else if (frame->color_trc == AVCOL_TRC_ARIB_STD_B67) {
-        snapshot->hdr_type = FFPLAYKMP_HDR_HLG;
-    } else if (frame->color_trc == AVCOL_TRC_SMPTE2084) {
-        snapshot->hdr_type = FFPLAYKMP_HDR_HDR10;
-    }
+            av_frame_get_side_data(frame, AV_FRAME_DATA_DOVI_RPU_BUFFER))
+        snapshot->hdr_flags |= FFPLAYKMP_HDR_DOLBY_VISION;
+    if (av_frame_get_side_data(frame, AV_FRAME_DATA_DYNAMIC_HDR_PLUS))
+        snapshot->hdr_flags |= FFPLAYKMP_HDR_HDR10_PLUS;
 }
 
 int ffplaykmp_is_hardware_frame(const AVFrame *frame) {
