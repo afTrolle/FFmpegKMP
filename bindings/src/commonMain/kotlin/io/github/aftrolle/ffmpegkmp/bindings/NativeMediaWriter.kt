@@ -58,6 +58,8 @@ public class NativeVideoTrackInfo(
     public val inputFormat: NativeFrameFormat,
     public val hardware: Boolean,
     public val encoder: String,
+    /** Bits per second the encoder opened with; 0 where the platform does not say. */
+    public val bitRate: Long = 0,
 )
 
 @InternalFFmpegKmpApi

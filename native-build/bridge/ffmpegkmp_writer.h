@@ -100,6 +100,8 @@ typedef struct ffmpegkmp_video_track_info {
     /* Frames in this format reach the encoder without a conversion. */
     ffmpegkmp_frame_format input_format;
     int32_t hardware;
+    /* Bits per second the encoder opened with, or would: the config's, else one that suits the size and rate. */
+    int64_t bit_rate;
     char encoder[64];
 } ffmpegkmp_video_track_info;
 
@@ -210,6 +212,15 @@ FFPLAYKMP_EXPORT int ffmpegkmp_writer_write_packet(
         int32_t key_frame,
         const uint8_t *extradata,
         int32_t extradata_size);
+/*
+ * Turns a video track that has taken no frame into a packet track, as if it had been added with
+ * ffmpegkmp_writer_add_packet_track: frees its encoder, on the thread that opened it, and
+ * ffmpegkmp_writer_write_video fails for it from then on. For a platform encoder that takes its
+ * input some other way, such as an Android MediaCodec's input Surface, whose packets
+ * ffmpegkmp_writer_write_packet takes. Fails with FFPLAYKMP_ERROR_INVALID_STATE once the track
+ * has taken a frame or is a packet track already, leaving it as it was.
+ */
+FFPLAYKMP_EXPORT int ffmpegkmp_writer_use_packets(ffmpegkmp_writer *writer, int32_t track);
 /* Drains the track's encoder and frees it, on its thread; the track takes no more input. */
 FFPLAYKMP_EXPORT int ffmpegkmp_writer_end_track(ffmpegkmp_writer *writer, int32_t track);
 /* Frees the track's encoder without draining it, on its thread: for an output that is abandoned. */

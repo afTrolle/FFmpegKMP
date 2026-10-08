@@ -183,4 +183,5 @@ private fun ffmpegkmp_video_track_info.toNative(): NativeVideoTrackInfo = Native
     ),
     hardware = hardware != 0,
     encoder = encoder.toKString(),
+    bitRate = bit_rate,
 )

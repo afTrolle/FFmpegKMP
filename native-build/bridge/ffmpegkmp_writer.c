@@ -447,6 +447,7 @@ static void ffmpegkmp_describe_track(const ffmpegkmp_writer_track *track, ffmpeg
         return;
     info->input_format = track->input_format;
     info->hardware = track->hardware;
+    info->bit_rate = track->config.bit_rate > 0 ? track->config.bit_rate : ffmpegkmp_default_bit_rate(&track->config);
     snprintf(info->encoder, sizeof(info->encoder), "%s", track->codec->name);
 }
 
@@ -460,6 +461,7 @@ int ffmpegkmp_writer_can_encode(
     if (result < 0)
         return result;
     memset(&track, 0, sizeof(track));
+    track.config = *config;
     if (ffmpegkmp_choose_video_encoder(&track, config, 1) < 0)
         return 0;
     ffmpegkmp_describe_input(config, track.layout, &track.input_format);
@@ -1139,6 +1141,13 @@ static enum AVCodecID ffmpegkmp_codec_id(int codec) {
     return codec == FFMPEGKMP_VIDEO_CODEC_HEVC ? AV_CODEC_ID_HEVC : AV_CODEC_ID_AV1;
 }
 
+/* The time base an encoder of the config would have. */
+static AVRational ffmpegkmp_packet_time_base(const ffmpegkmp_video_encoder_config *config) {
+    return config->frame_rate_num > 0
+            ? (AVRational){ config->frame_rate_den, config->frame_rate_num }
+            : FFMPEGKMP_VFR_TIME_BASE;
+}
+
 int ffmpegkmp_writer_add_packet_track(ffmpegkmp_writer *writer, const ffmpegkmp_video_encoder_config *config) {
     ffmpegkmp_writer_track track;
     int result;
@@ -1149,10 +1158,7 @@ int ffmpegkmp_writer_add_packet_track(ffmpegkmp_writer *writer, const ffmpegkmp_
     ffmpegkmp_init_track(&track, AVMEDIA_TYPE_VIDEO);
     track.config = *config;
     track.packets = 1;
-    /* The time base an encoder of the config would have. */
-    track.time_base = config->frame_rate_num > 0
-            ? (AVRational){ config->frame_rate_den, config->frame_rate_num }
-            : FFMPEGKMP_VFR_TIME_BASE;
+    track.time_base = ffmpegkmp_packet_time_base(config);
     if (!(track.packet = av_packet_alloc()))
         return AVERROR(ENOMEM);
     return ffmpegkmp_attach_track(writer, &track, 0);
@@ -1273,6 +1279,22 @@ int ffmpegkmp_writer_write_packet(
     }
     track->last_pts = pts;
     return ffmpegkmp_mux(writer, track, packet);
+}
+
+int ffmpegkmp_writer_use_packets(ffmpegkmp_writer *writer, int32_t index) {
+    ffmpegkmp_writer_track *track = ffmpegkmp_track(writer, index, AVMEDIA_TYPE_VIDEO);
+    if (!track)
+        return FFPLAYKMP_ERROR_INVALID_ARGUMENT;
+    if (atomic_load(&writer->aborted))
+        return AVERROR_EXIT;
+    if (track->packets || track->started || track->ended || track->open_at_first_frame || writer->finished ||
+            track->last_pts != AV_NOPTS_VALUE)
+        return FFPLAYKMP_ERROR_INVALID_STATE;
+    /* Freed on the thread that opened it, as MediaCodec needs. */
+    avcodec_free_context(&track->encoder);
+    track->packets = 1;
+    track->time_base = ffmpegkmp_packet_time_base(&track->config);
+    return 0;
 }
 
 int ffmpegkmp_writer_end_track(ffmpegkmp_writer *writer, int32_t index) {

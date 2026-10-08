@@ -166,5 +166,6 @@ private fun ffmpegkmp_video_track_info.toNative(): NativeVideoTrackInfo {
         inputFormat = NativeFrameFormat(format.layout(), format.primaries(), format.transfer(), format.matrix(), format.range()),
         hardware = hardware() != 0,
         encoder = encoder().string,
+        bitRate = bit_rate(),
     )
 }
