@@ -5,6 +5,9 @@ package io.github.aftrolle.ffmpegkmp.ffplay
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asComposeImageBitmap
 import androidx.compose.ui.graphics.drawscope.DrawScope
+import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.IntRect
+import androidx.compose.ui.unit.IntSize
 import io.github.aftrolle.ffmpegkmp.codec.ColorPrimaries
 import io.github.aftrolle.ffmpegkmp.codec.ColorTransfer
 import io.github.aftrolle.ffmpegkmp.codec.FrameFormat
@@ -31,11 +34,19 @@ internal actual fun gpuFrameWraps(): GpuFrameWraps = NoGpuFrameWraps
 
 internal actual fun DrawScope.checkDrawsGpuImages() = Unit
 
+internal actual fun DrawScope.drawCodedImage(
+    image: ImageBitmap,
+    source: IntRect,
+    dstOffset: IntOffset,
+    dstSize: IntSize,
+    transfer: ColorTransfer,
+): Unit = throw IllegalStateException("Only Android frames lie in GPU memory")
+
 /** Skia's platforms decode into memory only. */
 private object NoGpuFrameWraps : GpuFrameWraps {
     override val count: Int = 0
 
-    override fun wrap(frame: VideoFrame): ImageBitmap = throw IllegalStateException("Only Android frames lie in GPU memory: $frame")
+    override fun wrap(frame: VideoFrame): GpuImage = throw IllegalStateException("Only Android frames lie in GPU memory: $frame")
 
     override fun close() = Unit
 }

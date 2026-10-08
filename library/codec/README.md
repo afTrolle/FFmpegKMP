@@ -195,8 +195,9 @@ blocked in; elsewhere such a read has to return on its own first.
   that latest frame: the caller may hold two more, which is what ffplay's `FrameImage`, which draws
   these frames with no copy, holds. So `frames()` into one `FrameImage` uses exactly the three. Holding more makes the next `frameAt` that needs a new frame wait, and at
   the timeout fail; these frames cannot be converted, so hold fewer.
-  Sources deeper than 8 bits, and sources no MediaCodec decoder takes under `AUTO`, come in memory
-  as decoded and `decoderKind` reports `SOFTWARE`. Elsewhere, and before Android 14, `open` fails
+  Sources deeper than 8 bits stay in GPU memory in 10 bits, an HDR10 or HLG one's buffer holding
+  its PQ or HLG codes, which ffplay's `FrameImage` draws as linear light. Sources no MediaCodec
+  decoder takes under `AUTO` come in memory as decoded and `decoderKind` reports `SOFTWARE`. Elsewhere, and before Android 14, `open` fails
   with an `IllegalArgumentException`.
 
 ```kotlin

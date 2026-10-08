@@ -20,6 +20,7 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntRect
 import androidx.compose.ui.unit.IntSize
+import io.github.aftrolle.ffmpegkmp.codec.ColorTransfer
 import io.github.aftrolle.ffmpegkmp.codec.FrameFormat
 import io.github.aftrolle.ffmpegkmp.codec.VideoFrame
 import kotlin.math.roundToInt
@@ -46,9 +47,15 @@ import kotlin.time.Duration
  * bitmap of its own: [update] wraps its `HardwareBuffer` anew, since a wrap of a buffer shows
  * only the frame the buffer held when it was made, and draws its crop. A wrap shows its frame only
  * while the frame is open, so the image retains the frames of its last two updates, the one on
- * screen and the one a drawing may still be using, and closes each once two more updates have come. With a decoder's ring of three, that leaves
- * room for the frame `frames()` decodes ahead. Such frames need a GPU canvas: drawing one onto a
- * software canvas, such as `ComposeFrameRenderer`'s software path, fails.
+ * screen and the one a drawing may still be using, and closes each once two more updates have
+ * come. With a decoder's ring of three, that leaves room for the frame `frames()` decodes ahead.
+ * Such frames need a GPU canvas: drawing one onto a software canvas, such as
+ * `ComposeFrameRenderer`'s software path, fails.
+ *
+ * A 10-bit PQ or HLG buffer draws through a shader of the renderer's own, as linear light with 1.0
+ * at 203 nits, as the same frame from memory does on an `RgbaF16` canvas. It is not tone mapped, so
+ * draw it on an `RgbaF16` canvas, and take an SDR export's HDR sources from `Memory(canvasFormat)`,
+ * which tone maps.
  */
 public class FrameImage : AutoCloseable {
     /**
@@ -145,12 +152,12 @@ public class FrameImage : AutoCloseable {
         if (again && previous.rotationDegrees == frame.rotationDegrees && previous.sampleAspectRatio == frame.sampleAspectRatio) {
             return
         }
-        val image = wraps.wrap(frame)
+        val wrapped = wraps.wrap(frame)
         if (!again) hold(frame.retain())
         // The next frame from memory converts, whatever the bitmap off screen holds.
         convertedPts = null
         val source = IntRect(buffer.cropLeft, buffer.cropTop, buffer.cropRight, buffer.cropBottom)
-        show(Shown(image, source, frame.rotationDegrees, frame.sampleAspectRatio, gpu = true))
+        show(Shown(wrapped.image, source, frame.rotationDegrees, frame.sampleAspectRatio, gpu = true, wrapped.transfer))
     }
 
     /** Keeps [frame] as the last update's, and closes the one from two updates before it. */
@@ -171,13 +178,17 @@ public class FrameImage : AutoCloseable {
     private fun FrameBitmap.holds(frame: VideoFrame, format: FrameFormat): Boolean =
         width == frame.width && height == frame.height && this.format == format
 
-    /** The [source] rectangle of [image], drawn turned and stretched; [gpu] when the image lies in GPU memory. */
+    /**
+     * The [source] rectangle of [image], drawn turned and stretched; [gpu] when the image lies in GPU
+     * memory, where [transfer] says how its pixels are coded: PQ and HLG ones are drawn as light.
+     */
     internal class Shown(
         val image: ImageBitmap,
         val source: IntRect,
         val rotationDegrees: Double,
         val sampleAspectRatio: Double,
         val gpu: Boolean,
+        val transfer: ColorTransfer = ColorTransfer.SRGB,
     ) {
         val displaySize: Size = displaySize(source.width, source.height, sampleAspectRatio, rotationDegrees)
     }
@@ -198,21 +209,26 @@ public fun DrawScope.drawFrameImage(
 ) {
     val shown = image.shown ?: return
     if (shown.gpu) checkDrawsGpuImages()
-    drawUpright(shown.image, shown.source, shown.rotationDegrees, Rect(topLeft, size))
+    drawUpright(shown.image, shown.source, shown.rotationDegrees, Rect(topLeft, size), shown.transfer)
 }
 
 /** Draws [source] of [image] turned upright by [rotationDegrees], so that it fills [destination]. */
-internal fun DrawScope.drawUpright(image: ImageBitmap, source: IntRect, rotationDegrees: Double, destination: Rect) {
+internal fun DrawScope.drawUpright(
+    image: ImageBitmap,
+    source: IntRect,
+    rotationDegrees: Double,
+    destination: Rect,
+    transfer: ColorTransfer = ColorTransfer.SRGB,
+) {
     val turn = uprightTurn(rotationDegrees)
     val target = destination.beforeTurn(turn)
+    val dstOffset = IntOffset(target.left.roundToInt(), target.top.roundToInt())
+    val dstSize = IntSize(target.width.roundToInt(), target.height.roundToInt())
     withTransform({ rotate(turn, destination.center) }) {
-        drawImage(
-            image = image,
-            srcOffset = source.topLeft,
-            srcSize = source.size,
-            dstOffset = IntOffset(target.left.roundToInt(), target.top.roundToInt()),
-            dstSize = IntSize(target.width.roundToInt(), target.height.roundToInt()),
-        )
+        when (transfer) {
+            ColorTransfer.PQ, ColorTransfer.HLG -> drawCodedImage(image, source, dstOffset, dstSize, transfer)
+            else -> drawImage(image, srcOffset = source.topLeft, srcSize = source.size, dstOffset = dstOffset, dstSize = dstSize)
+        }
     }
 }
 

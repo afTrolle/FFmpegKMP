@@ -17,7 +17,6 @@ import kotlin.time.Duration.Companion.seconds
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.runBlocking
 import okio.Buffer
 import org.junit.Assume.assumeFalse
@@ -94,7 +93,7 @@ class VideoDecoderGpuBuffersDeviceTest {
     }
 
     @Test
-    fun theSoftwareDecoderAndTenBitSourcesGiveFramesInMemory() = runBlocking {
+    fun theSoftwareDecoderGivesFramesInMemory() = runBlocking {
         assumeGpuBuffers()
         open("cfr-30-h264-128.mp4", DecoderPreference.SOFTWARE).use { decoder ->
             assertEquals(DecoderKind.SOFTWARE, decoder.decoderKind)
@@ -103,15 +102,19 @@ class VideoDecoderGpuBuffersDeviceTest {
                 assertNotNull(frame.format)
             }
         }
-        open("hdr10-pq.mp4").use { decoder ->
-            assertEquals(DecoderKind.SOFTWARE, decoder.decoderKind, "a 10-bit source decodes into memory")
-            val frames = decoder.frames(until = 0.2.seconds).toList()
-            assertTrue(frames.isNotEmpty())
-            frames.forEach { frame ->
-                frame.use {
-                    assertNull(it.hardwareBuffer)
-                    assertEquals(PixelLayout.YUV420P10, it.format?.layout)
-                }
+    }
+
+    @Test
+    fun aTenBitSourceStaysInGpuMemoryWhenAHardwareDecoderTakesIt() = runBlocking {
+        assumeGpuBuffers()
+        open("hdr10-pq-large.mp4").use { decoder ->
+            assumeTrue("a hardware decoder takes the 320x192 HDR10 fixture", decoder.decoderKind == DecoderKind.HARDWARE)
+            decoder.frameAt(0.5.seconds).use { frame ->
+                val buffer = assertNotNull(frame.hardwareBuffer)
+                val crop = assertNotNull(frame.hardwareBufferCrop)
+                println("VideoDecoderGpuBuffersDeviceTest: HDR10 frame in a ${buffer.width}x${buffer.height} buffer of format ${buffer.format}")
+                assertNull(frame.format)
+                assertEquals(320 to 192, crop.width() to crop.height())
             }
         }
     }

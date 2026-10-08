@@ -3,8 +3,11 @@ package io.github.aftrolle.ffmpegkmp.ffplay
 
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.drawscope.DrawScope
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntRect
+import androidx.compose.ui.unit.IntSize
 import io.github.aftrolle.ffmpegkmp.codec.ColorMatrix
+import io.github.aftrolle.ffmpegkmp.codec.ColorTransfer
 import io.github.aftrolle.ffmpegkmp.codec.FrameFormat
 import io.github.aftrolle.ffmpegkmp.codec.PixelLayout
 import io.github.aftrolle.ffmpegkmp.codec.VideoFrame
@@ -59,14 +62,34 @@ internal interface GpuFrameWraps : AutoCloseable {
      * A new image of [frame]'s whole buffer, which shows the frame while it is open, without a copy.
      * It stays valid until two more have been made, and is closed with the wraps.
      */
-    fun wrap(frame: VideoFrame): ImageBitmap
+    fun wrap(frame: VideoFrame): GpuImage
 }
+
+/**
+ * An image over a frame's GPU buffer, and how its pixels are coded: [ColorTransfer.PQ] and
+ * [ColorTransfer.HLG] ones are the signal's codes as they are, which [drawCodedImage] turns into
+ * light, and any other is a plain image.
+ */
+internal class GpuImage(val image: ImageBitmap, val transfer: ColorTransfer)
 
 /** Android's `HardwareBuffer` wraps; elsewhere no frame lies in GPU memory, and wrapping fails. */
 internal expect fun gpuFrameWraps(): GpuFrameWraps
 
 /** Fails, saying why, where this canvas cannot draw an image in GPU memory: on Android, a software canvas. */
 internal expect fun DrawScope.checkDrawsGpuImages()
+
+/**
+ * Draws [source] of a [GpuImage] whose [transfer] is PQ or HLG, as [drawUpright] draws a plain one
+ * into [dstSize] at [dstOffset], as linear light on the canvas's scale, 1.0 at 203 nits, which a canvas
+ * that holds values above 1.0 shows in full.
+ */
+internal expect fun DrawScope.drawCodedImage(
+    image: ImageBitmap,
+    source: IntRect,
+    dstOffset: IntOffset,
+    dstSize: IntSize,
+    transfer: ColorTransfer,
+)
 
 /** A new bitmap of [format] holding this frame, converted into it. */
 internal expect fun VideoFrame.toFrameBitmap(format: FrameFormat): FrameBitmap

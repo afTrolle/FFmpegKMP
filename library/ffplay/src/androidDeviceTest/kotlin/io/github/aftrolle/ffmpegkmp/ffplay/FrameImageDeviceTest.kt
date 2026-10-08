@@ -16,7 +16,6 @@ import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asAndroidBitmap
 import androidx.compose.ui.unit.Density
 import androidx.test.platform.app.InstrumentationRegistry
-import io.github.aftrolle.ffmpegkmp.bindings.gpuBuffersKeepDeepSources
 import io.github.aftrolle.ffmpegkmp.codec.DecoderKind
 import io.github.aftrolle.ffmpegkmp.codec.DecoderPreference
 import io.github.aftrolle.ffmpegkmp.codec.FrameFormat
@@ -232,45 +231,39 @@ class FrameImageDeviceTest {
 
     /**
      * The HDR check: an HDR10 source through `GpuBuffers`, drawn into an F16 canvas, keeps its 1,000-nit highlight at
-     * 1000/203, as the same frame from memory does. Until it passes, sources deeper than 8 bits decode into memory.
+     * 1000/203, as the same frame from memory does. HWUI tone maps a PQ-labelled hardware bitmap to SDR on an offscreen
+     * canvas (0.79 here), so the wrap is labelled linear sRGB and the renderer's own shader decodes the PQ codes.
      */
     @Test
     fun anHdr10FrameInAGpuBufferKeepsItsHighlightOnAnF16CanvasAsFromMemory() = runBlocking<Unit> {
         assumeGpuBuffers()
-        // The gate on 10-bit sources staying on the GPU. It fails today: HWUI maps a BT.2020 PQ hardware bitmap to SDR
-        // when it composites offscreen, so the 1000-nit highlight reads 0.79 on the F16 canvas where memory reads 4.93.
         assumeTrue(
             "Runs only with the hdrGpuCheck=true instrumentation argument",
             InstrumentationRegistry.getArguments().getString("hdrGpuCheck") == "true",
         )
-        gpuBuffersKeepDeepSources = true
-        try {
-            val highlights = listOf(VideoOutput.GpuBuffers, VideoOutput.Memory(FrameFormat.RgbaF16)).map { output ->
-                open("hdr10-pq-large.mp4", output, DecoderPreference.AUTO).use { decoder ->
-                    if (output == VideoOutput.GpuBuffers) {
-                        assumeTrue("a hardware decoder takes the 320x192 HDR10 fixture", decoder.decoderKind == DecoderKind.HARDWARE)
-                    }
-                    FrameImage().use { image ->
-                        ComposeFrameRenderer<FrameImage>(context, 320, 192, FrameFormat.RgbaF16, Density(1f), true) {
-                            Canvas(Modifier.fillMaxSize()) { drawFrameImage(it) }
-                        }.use { renderer ->
-                            decoder.frameAt(0.5.seconds).use { frame ->
-                                assertEquals(output == VideoOutput.GpuBuffers, frame.hardwareBuffer != null, "$output")
-                                image.update(frame)
-                                renderer.render(frame.pts, image).use { drawn ->
-                                    assertTrue(renderer.drewOnGpu)
-                                    assertNotNull(drawn.usePlanes { planes -> planes.single().half(y = 96, x = 280) })
-                                }
+        val highlights = listOf(VideoOutput.GpuBuffers, VideoOutput.Memory(FrameFormat.RgbaF16)).map { output ->
+            open("hdr10-pq-large.mp4", output, DecoderPreference.AUTO).use { decoder ->
+                if (output == VideoOutput.GpuBuffers) {
+                    assumeTrue("a hardware decoder takes the 320x192 HDR10 fixture", decoder.decoderKind == DecoderKind.HARDWARE)
+                }
+                FrameImage().use { image ->
+                    ComposeFrameRenderer<FrameImage>(context, 320, 192, FrameFormat.RgbaF16, Density(1f), true) {
+                        Canvas(Modifier.fillMaxSize()) { drawFrameImage(it) }
+                    }.use { renderer ->
+                        decoder.frameAt(0.5.seconds).use { frame ->
+                            assertEquals(output == VideoOutput.GpuBuffers, frame.hardwareBuffer != null, "$output")
+                            image.update(frame)
+                            renderer.render(frame.pts, image).use { drawn ->
+                                assertTrue(renderer.drewOnGpu)
+                                assertNotNull(drawn.usePlanes { planes -> planes.single().half(y = 96, x = 280) })
                             }
                         }
                     }
                 }
             }
-            println("FrameImageDeviceTest: HDR10 highlight ${highlights[0]} through GpuBuffers, ${highlights[1]} from memory")
-            highlights.forEach { assertEquals(1000.0 / 203.0, it, 0.15) }
-        } finally {
-            gpuBuffersKeepDeepSources = false
         }
+        println("FrameImageDeviceTest: HDR10 highlight ${highlights[0]} through GpuBuffers, ${highlights[1]} from memory")
+        highlights.forEach { assertEquals(1000.0 / 203.0, it, 0.15) }
     }
 
     /** A 4K H.264 update: a wrap of the frame's buffer through `GpuBuffers`, a 4K conversion from memory. */

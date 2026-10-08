@@ -54,8 +54,8 @@ import org.junit.Assume.assumeTrue
  *   -Pandroid.testInstrumentationRunnerArguments.compositeBudget=true
  * ```
  *
- * `clip` picks the sources: `pq` (the default), 10-bit HEVC PQ, or `h264`, 8-bit H.264, which
- * `GpuBuffers` keeps on the GPU, as it does no deeper source yet. The export is HDR10 for the PQ
+ * `clip` picks the sources: `pq` (the default), 10-bit HEVC PQ, or `h264`, 8-bit H.264, both of
+ * which `GpuBuffers` keeps on the GPU. The export is HDR10 for the PQ
  * clip where the phone encodes it and SDR otherwise; `range` (`SDR` or `HDR10`) picks one.
  * `cases` (such as `GpuBuffers,GpuBuffersToSurface`) narrows the cases by name, and `rounds` (1 by default)
  * repeats them. `GpuBuffersToSurface` needs an SDR export on Android 14 or later and is skipped for an HDR one.

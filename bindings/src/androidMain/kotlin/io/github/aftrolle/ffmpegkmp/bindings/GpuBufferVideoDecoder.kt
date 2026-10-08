@@ -11,15 +11,6 @@ import android.os.HandlerThread
 import java.util.concurrent.locks.ReentrantLock
 import kotlin.concurrent.withLock
 
-/**
- * Whether [NativeVideoDecoderOutput.GPU_BUFFERS] decoders keep sources deeper than 8 bits on the
- * GPU, which MediaCodec renders in 10 bits, rather than decoding them into memory. Off until
- * `FrameImage`'s HDR check passes on devices; that check turns it on for itself.
- */
-@InternalFFmpegKmpApi
-@Volatile
-public var gpuBuffersKeepDeepSources: Boolean = false
-
 /** The images in a GPU buffer decoder's `ImageReader`: its ring. */
 internal const val GPU_BUFFER_RING = 3
 
@@ -27,25 +18,21 @@ internal const val GPU_BUFFER_RING = 3
  * A [NativeVideoDecoderOutput.GPU_BUFFERS] decoder: [decoder] renders each hardware frame into
  * [reader]'s Surface, stamped with its pts, and [frameAt] hands it out as the reader's image with
  * that timestamp, in a [NativeGpuBuffer] that closes the image with the frame's last reference.
- * Software frames, from the `AUTO` fallback, pass through in memory.
+ * Software frames, from the `AUTO` fallback, pass through in memory. Sources deeper than 8 bits stay
+ * on the GPU when a hardware decoder takes them, 10 bits per component, and their frames carry the
+ * source's transfer for the drawing to read PQ and HLG by.
  *
  * The reader's [GPU_BUFFER_RING] images are the ring. This keeps a reference to the latest frame's
  * buffer, so the same position again returns the same buffer. While the caller holds every image,
  * a new frame's waits for one to close, at most the call's time left, then fails as a timeout.
  *
- * A source deeper than 8 bits is opened again for memory output with [reopenInMemory], unless
- * [gpuBuffersKeepDeepSources]. It needs Android 14 (API 34), which [createPlatformVideoDecoder]
- * checks.
+ * It needs Android 14 (API 34), which [createPlatformVideoDecoder] checks.
  */
 internal class GpuBufferVideoDecoder(
-    decoder: NativeVideoDecoder,
+    private val decoder: NativeVideoDecoder,
     private val reader: ImageReader,
     private val timeoutMicros: Long,
-    private val reopenInMemory: () -> NativeVideoDecoder,
 ) : NativeVideoDecoder {
-    @Volatile
-    private var decoder = decoder
-
     /** Guards the fields below; [changed] is signalled when an image arrives or closes, and on interrupt and abort. */
     private val lock = ReentrantLock()
     private val changed = lock.newCondition()
@@ -72,17 +59,7 @@ internal class GpuBufferVideoDecoder(
         reader.setOnImageAvailableListener({ lock.withLock { changed.signalAll() } }, gpuBufferCallbacks)
     }
 
-    override suspend fun start(): NativeVideoStream {
-        val stream = decoder.start()
-        colorTransfer = stream.info.colorTransfer
-        if (stream.info.bitDepth <= 8 || stream.activeDecoder != NativePlayerDecoderKind.HARDWARE || gpuBuffersKeepDeepSources) {
-            return stream
-        }
-        // FrameImage draws 10-bit buffers only once its HDR check passes, so until then such sources decode into memory.
-        decoder.close()
-        decoder = reopenInMemory().also { if (aborted) it.abort() }
-        return decoder.start()
-    }
+    override suspend fun start(): NativeVideoStream = decoder.start().also { colorTransfer = it.info.colorTransfer }
 
     override suspend fun seek(positionNanos: Long) = decoder.seek(positionNanos)
 

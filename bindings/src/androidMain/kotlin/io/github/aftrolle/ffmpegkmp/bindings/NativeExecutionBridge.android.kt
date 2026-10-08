@@ -90,11 +90,7 @@ private fun createGpuBufferVideoDecoder(
         reader.close()
         throw failure
     }
-    return GpuBufferVideoDecoder(decoder, reader, timeoutMicros) {
-        createJavaCppVideoDecoder(
-            source, NativeVideoDecoderOutput.MEMORY, null, 0, 0, decoderPreference, decoderThreads, timeoutMicros,
-        ) { 0 }
-    }
+    return GpuBufferVideoDecoder(decoder, reader, timeoutMicros)
 }
 
 private fun attachDecoderSurface(surface: Surface, decoder: ffmpegkmp_video_decoder): Int {

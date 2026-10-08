@@ -110,9 +110,13 @@ public sealed interface VideoOutput {
      * timeout fail, which leaves the decoder timed out. These frames cannot be converted, so to
      * keep more, hold fewer.
      *
-     * Where no hardware decoder takes the source under [DecoderPreference.AUTO], and for sources
-     * deeper than 8 bits, frames come in memory as decoded instead, as with [Memory], and
-     * [VideoDecoder.decoderKind] reports [DecoderKind.SOFTWARE]. Elsewhere and on earlier Android
+     * Sources deeper than 8 bits stay in GPU memory too, in 10 bits, and an HDR10 or HLG one's
+     * buffer holds its PQ or HLG codes, which `FrameImage` draws as linear light with its own shader
+     * (1.0 at 203 nits), so a canvas that keeps values above 1.0 shows the highlights.
+     *
+     * Where no hardware decoder takes the source under [DecoderPreference.AUTO], frames come in
+     * memory as decoded instead, as with [Memory], and [VideoDecoder.decoderKind] reports
+     * [DecoderKind.SOFTWARE]. Elsewhere and on earlier Android
      * versions, [VideoDecoder.open] fails with [IllegalArgumentException]; the browser fails it with
      * a [VideoDecodingException].
      */
