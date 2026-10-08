@@ -31,3 +31,11 @@ public actual fun createPlatformVideoDecoder(
         source, output, memoryFormat, memoryWidth, memoryHeight, decoderPreference, decoderThreads, timeoutMicros,
     ) { 0 }
 }
+
+@InternalFFmpegKmpApi
+public actual suspend fun createPlatformMediaWriter(
+    output: NativeWriterOutput,
+    container: NativeContainer,
+    fastStart: Boolean,
+    timeoutMicros: Long,
+): NativeMediaWriter = createJavaCppMediaWriter(output, container, fastStart, timeoutMicros, openEncoder = null)

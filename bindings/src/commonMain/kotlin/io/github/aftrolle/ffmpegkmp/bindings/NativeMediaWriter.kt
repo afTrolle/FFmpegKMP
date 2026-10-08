@@ -101,12 +101,35 @@ public interface NativeMediaWriter : AutoCloseable {
 
     public suspend fun endTrack(track: Int)
 
+    /**
+     * Android 14+ hardware encoders: turns [track], which has taken no frame, into one whose frames
+     * are drawn into the encoder's input Surface and queued with [NativeEncoderSurface.queue], and
+     * returns that surface. Null, with the track as it was, where the platform or the track's
+     * config does not allow it.
+     */
+    public suspend fun openInputSurface(track: Int): NativeEncoderSurface? = null
+
     /** Frees [track]'s encoder without draining it, on its thread, for an output that is abandoned. */
     public fun releaseTrack(track: Int)
 
     public suspend fun finish(): NativeWriterResult
 
     public fun abort()
+}
+
+/**
+ * A platform encoder's input surface, which a GPU draws into with no copy. [dequeue] lends a
+ * [NativeGpuBuffer] to draw into: on Android a `HardwareBuffer` from an `ImageWriter` on the
+ * encoder's `Surface`. Once the GPU has finished, [queue] hands it to the encoder, and releasing
+ * the buffer without queueing it gives it back.
+ */
+@InternalFFmpegKmpApi
+public interface NativeEncoderSurface {
+    /** The next buffer to draw into, waiting until the encoder has room; throws [NativeMediaWriterException] when the encoder failed. */
+    public fun dequeue(): NativeGpuBuffer
+
+    /** Encodes [buffer], which came from [dequeue] and holds a finished picture, shown from [ptsNanos]. */
+    public fun queue(buffer: NativeGpuBuffer, ptsNanos: Long)
 }
 
 @InternalFFmpegKmpApi
@@ -140,6 +163,7 @@ internal interface MediaWriterEngineCalls {
     fun writeVideo(track: Int, frame: NativeFrame, ptsNanos: Long): Int
     fun writeAudio(track: Int, samples: FloatArray, offset: Int, frames: Int): Int
     fun endTrack(track: Int): Int
+    fun openInputSurface(track: Int): NativeEncoderSurface? = null
     fun releaseTrack(track: Int)
     fun finish(): NativeWriterResult
     fun abort()
@@ -173,6 +197,8 @@ internal class GuardedMediaWriter(
     override suspend fun endTrack(track: Int) = guard.use(::closedError) {
         requireWriterSuccess(engine.endTrack(track), "finish track $track")
     }
+
+    override suspend fun openInputSurface(track: Int): NativeEncoderSurface? = guard.use(::closedError) { engine.openInputSurface(track) }
 
     override fun releaseTrack(track: Int) = guard.use({}) { engine.releaseTrack(track) }
 

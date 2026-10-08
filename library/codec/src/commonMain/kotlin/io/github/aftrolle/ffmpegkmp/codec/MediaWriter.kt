@@ -10,7 +10,9 @@ package io.github.aftrolle.ffmpegkmp.codec
 import io.github.aftrolle.ffmpegkmp.bindings.DecoderThread
 import io.github.aftrolle.ffmpegkmp.bindings.NativeBridgeUnavailableException
 import io.github.aftrolle.ffmpegkmp.bindings.NativeContainer
+import io.github.aftrolle.ffmpegkmp.bindings.NativeEncoderSurface
 import io.github.aftrolle.ffmpegkmp.bindings.NativeFileResource
+import io.github.aftrolle.ffmpegkmp.bindings.NativeGpuBuffer
 import io.github.aftrolle.ffmpegkmp.bindings.NativeIoAccess
 import io.github.aftrolle.ffmpegkmp.bindings.NativeMediaWriter
 import io.github.aftrolle.ffmpegkmp.bindings.NativeMediaWriterException
@@ -19,6 +21,7 @@ import io.github.aftrolle.ffmpegkmp.bindings.NativeWriterOutput
 import io.github.aftrolle.ffmpegkmp.bindings.createPlatformMediaWriter
 import io.github.aftrolle.ffmpegkmp.bindings.platformVideoEncoderFor
 import io.github.aftrolle.ffmpegkmp.core.FFmpegKmpException
+import io.github.aftrolle.ffmpegkmp.core.InternalFFmpegKmpApi
 import kotlin.concurrent.atomics.AtomicBoolean
 import kotlin.concurrent.atomics.AtomicInt
 import kotlin.concurrent.atomics.AtomicReference
@@ -291,25 +294,75 @@ public class VideoTrack internal constructor(
     public val encoderName: String,
     public val isHardware: Boolean,
 ) : WriterTrack(writer, thread, index) {
+    private val surface = AtomicReference<NativeEncoderSurface?>(null)
+
+    /**
+     * Whether this track's frames reach the encoder with no copy at all, drawn by a
+     * `ComposeFrameRenderer` on the GPU straight into the hardware encoder's input surface, which
+     * Android 14 (API 34) and later give 8-bit SDR H.264 and HEVC tracks. A renderer made for the
+     * track asks for it as it renders its first frame, so this is true from then on, and false for
+     * every other track, whose frames the writer converts once (see [write]). Such a track takes
+     * only frames from its renderer; [inputFormat] describes the other kind.
+     */
+    public val zeroCopy: Boolean get() = surface.load() != null
+
+    /**
+     * Turns the track into a [zeroCopy] one if the platform allows it, before it takes a frame,
+     * and tells whether it is one. Renderers call this.
+     */
+    @InternalFFmpegKmpApi
+    public suspend fun openInputSurface(): Boolean {
+        if (zeroCopy) return true
+        writer.checkOpen()
+        // An encoder the call opens belongs to the track, whatever happens to its caller.
+        withContext(NonCancellable) {
+            thread.submit {
+                writing("open the encoder's input surface") { writer.native().openInputSurface(index) }
+                    ?.let { surface.compareAndSet(null, it) }
+            }.await()
+        }
+        return zeroCopy
+    }
+
+    /** A buffer of a [zeroCopy] track to draw into, waiting until the encoder has room; [write] a frame over it, or close that. */
+    @InternalFFmpegKmpApi
+    public fun dequeueFrameBuffer(): NativeGpuBuffer {
+        writer.checkOpen()
+        rethrowFailure()
+        val surface = checkNotNull(surface.load()) { "The track takes frames in memory, not drawn into the encoder's input surface" }
+        return writing("take a buffer from the encoder") { surface.dequeue() }
+    }
+
     /**
      * Encodes [frame], shown from [pts], and takes ownership of it: the writer closes it once it has
      * encoded it. Suspends while the encoder is full. A frame in [inputFormat] goes to the encoder
      * as it is; another is converted once, on the track's thread. It must have the track's size,
      * and each frame's [pts] must be later than the one before.
+     *
+     * A [zeroCopy] track takes only the frames its renderer drew, which it queues to the encoder
+     * as they are.
      */
     public suspend fun write(frame: VideoFrame, pts: Duration = frame.pts) {
         require(!pts.isNegative()) { "Timestamps must not be negative: $pts" }
         enqueue(discard = frame::close) {
-            // A reference of its own, since the browser's encoder suspends while it has the pixels.
-            val pixels = frame.useNative { native ->
-                requireNotNull(native?.takeIf { it.mappable }) {
-                    "The frame has no pixels to encode: it lies in GPU memory"
-                }.retain()
-            }
-            try {
-                writing("encode the frame at $pts") { writer.native().writeVideo(index, pixels, pts.inWholeNanoseconds) }
-            } finally {
-                pixels.close()
+            val surface = surface.load()
+            if (surface != null) {
+                val buffer = requireNotNull(frame.gpuBuffer) {
+                    "The track takes the frames its ComposeFrameRenderer draws into the encoder's input surface, not frames from memory"
+                }
+                writing("queue the frame at $pts") { surface.queue(buffer, pts.inWholeNanoseconds) }
+            } else {
+                // A reference of its own, since the browser's encoder suspends while it has the pixels.
+                val pixels = frame.useNative { native ->
+                    requireNotNull(native?.takeIf { it.mappable }) {
+                        "The frame has no pixels to encode: it lies in GPU memory"
+                    }.retain()
+                }
+                try {
+                    writing("encode the frame at $pts") { writer.native().writeVideo(index, pixels, pts.inWholeNanoseconds) }
+                } finally {
+                    pixels.close()
+                }
             }
             val end = pts + (frame.duration.takeIf { it.isPositive() } ?: config.frameRate?.timeOf(1) ?: Duration.ZERO)
             writer.encoded(video = 1, audio = 0, end = end)

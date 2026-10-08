@@ -60,6 +60,14 @@ public actual fun createPlatformVideoDecoder(
     ) { 0 }
 }
 
+@InternalFFmpegKmpApi
+public actual suspend fun createPlatformMediaWriter(
+    output: NativeWriterOutput,
+    container: NativeContainer,
+    fastStart: Boolean,
+    timeoutMicros: Long,
+): NativeMediaWriter = createJavaCppMediaWriter(output, container, fastStart, timeoutMicros, openSurfaceVideoEncoder)
+
 /**
  * A decoder rendering into an `ImageReader` of GPU-sampled private buffers, as [GPU_BUFFER_RING]
  * images. The reader is made before the stream's size is known: MediaCodec sets the buffers' size

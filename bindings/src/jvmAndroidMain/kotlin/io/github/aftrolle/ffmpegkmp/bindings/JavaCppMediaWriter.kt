@@ -10,15 +10,17 @@ import io.github.aftrolle.ffmpegkmp.bindings.generated.bridge.ffmpegkmp_writer
 import io.github.aftrolle.ffmpegkmp.bindings.generated.bridge.ffmpegkmp_writer_result
 import io.github.aftrolle.ffmpegkmp.bindings.generated.bridge.ffplaykmp_io_callback
 import io.github.aftrolle.ffmpegkmp.bindings.generated.bridge.global.bridge
+import java.util.concurrent.ConcurrentHashMap
 import org.bytedeco.javacpp.BytePointer
 import org.bytedeco.javacpp.Pointer
 
-@InternalFFmpegKmpApi
-public actual suspend fun createPlatformMediaWriter(
+/** A writer on the JavaCPP bridge; [openEncoder] opens the platform's own encoder for [NativeMediaWriter.openInputSurface], where it has one. */
+internal fun createJavaCppMediaWriter(
     output: NativeWriterOutput,
     container: NativeContainer,
     fastStart: Boolean,
     timeoutMicros: Long,
+    openEncoder: PacketEncoderFactory?,
 ): NativeMediaWriter {
     JavaCppBridgeLoader.load()
     val resource = (output as? NativeWriterOutput.Mounted)?.let { MountedResource(it.resource) }
@@ -44,7 +46,7 @@ public actual suspend fun createPlatformMediaWriter(
         ioCallback?.close()
         throw NativeMediaWriterException("Could not open '$url' for writing (error ${error[0]})", error[0])
     }
-    return GuardedMediaWriter(JavaCppMediaWriterEngine(writer, ioCallback), url)
+    return GuardedMediaWriter(JavaCppMediaWriterEngine(writer, ioCallback, timeoutMicros, openEncoder), url)
 }
 
 @InternalFFmpegKmpApi
@@ -67,9 +69,14 @@ private class JavaCppMediaWriterEngine(
     private val writer: ffmpegkmp_writer,
     /** Kept reachable for the writer's lifetime: native code calls back into it. */
     private val ioCallback: ffplaykmp_io_callback?,
+    private val timeoutMicros: Long,
+    private val openEncoder: PacketEncoderFactory?,
 ) : MediaWriterEngineCalls {
     /** Audio from an offset goes through here: JavaCPP passes arrays from their start. */
     private var samples = FloatArray(0)
+
+    private val videoTracks = ConcurrentHashMap<Int, Pair<NativeVideoEncoderConfig, NativeVideoTrackInfo>>()
+    private val encoders = ConcurrentHashMap<Int, PacketTrackEncoder>()
 
     override fun addVideoTrack(config: NativeVideoEncoderConfig): NativeAddedVideoTrack = config.withNative { native ->
         val info = ffmpegkmp_video_track_info()
@@ -77,7 +84,7 @@ private class JavaCppMediaWriterEngine(
             bridge.ffmpegkmp_video_track_info_init(info)
             val index = bridge.ffmpegkmp_writer_add_video_track(writer, native, info)
             requireWriterSuccess(index, "add a ${config.width}x${config.height} ${config.codec} ${config.dynamicRange} track")
-            NativeAddedVideoTrack(index, info.toNative())
+            NativeAddedVideoTrack(index, info.toNative()).also { videoTracks[index] = config to it.info }
         } finally {
             info.close()
         }
@@ -107,9 +114,38 @@ private class JavaCppMediaWriterEngine(
         return bridge.ffmpegkmp_writer_write_audio(writer, track, this.samples, frames)
     }
 
-    override fun endTrack(track: Int): Int = bridge.ffmpegkmp_writer_end_track(writer, track)
+    override fun endTrack(track: Int): Int {
+        val failure = encoders[track]?.finish() ?: 0
+        return if (failure < 0) failure else bridge.ffmpegkmp_writer_end_track(writer, track)
+    }
 
-    override fun releaseTrack(track: Int) = bridge.ffmpegkmp_writer_release_track(writer, track)
+    /**
+     * The platform's encoder opens first, beside the track's own, so that a device that cannot run
+     * two leaves the track as it was; the track gives up its encoder only once the platform's is
+     * ready, and the platform's packets flow only once the track takes them.
+     */
+    override fun openInputSurface(track: Int): NativeEncoderSurface? {
+        val (config, info) = videoTracks[track] ?: return null
+        val encoder = openEncoder?.invoke(config, info, packetSink(track), timeoutMicros) ?: return null
+        if (bridge.ffmpegkmp_writer_use_packets(writer, track) < 0) {
+            encoder.release()
+            return null
+        }
+        encoders[track] = encoder
+        encoder.start()
+        return encoder
+    }
+
+    private fun packetSink(track: Int) = PacketSink { data, size, ptsNanos, durationNanos, keyFrame, extradata ->
+        bridge.ffmpegkmp_writer_write_packet(
+            writer, track, data, size, ptsNanos, durationNanos, if (keyFrame) 1 else 0, extradata, extradata?.remaining() ?: 0,
+        )
+    }
+
+    override fun releaseTrack(track: Int) {
+        encoders.remove(track)?.release()
+        bridge.ffmpegkmp_writer_release_track(writer, track)
+    }
 
     override fun finish(): NativeWriterResult {
         val result = ffmpegkmp_writer_result()
