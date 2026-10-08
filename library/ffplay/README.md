@@ -6,7 +6,7 @@
 val player = rememberFFplayPlayer()
 
 LaunchedEffect(source) {
-    player.prepare(FFplaySource(source))
+    player.prepare(MediaSource(source))
     player.play()
 }
 
@@ -24,33 +24,22 @@ path cannot be opened. Frames more than one frame interval late are dropped; nat
 renderer rejections are summed in `FFplaySnapshot.droppedFrames`, kept across surface recreation
 and reset by a new source or `stop()`.
 
-`FFplayVideoInfo` carries pixel format, bit depth, aspect ratio, rotation, color description,
-mastering and content-light metadata, and the HDR10/HLG/HDR10+/Dolby Vision classification. HDR is
-reported as preserved only when the whole active output path advertises the source transfer and
-color space; otherwise PQ and HLG are tone mapped to BT.709 (`TONE_MAPPED`) and other HDR transfers
-are `UNSUPPORTED`. `FFplayHdrPolicy.FORCE_SDR` keeps HDR sources off the direct surfaces and tone maps
+`VideoInfo` carries pixel format, bit depth, aspect ratio, rotation, the colour as a `FrameColor`,
+and the mastering display and content-light metadata, with Dolby Vision and HDR10+ as flags on
+`HdrMetadata`. Whether a source is HDR follows from its transfer, PQ or HLG, whatever the flags say.
+HDR is reported as preserved only when the whole active output path advertises the source transfer
+and primaries; otherwise PQ and HLG are tone mapped to BT.709 (`TONE_MAPPED`), or are `UNSUPPORTED`
+where the output cannot tone map. `FFplayOutputInfo` reports the source's and the output's
+`ColorPrimaries`. `FFplayHdrPolicy.FORCE_SDR` keeps HDR sources off the direct surfaces and tone maps
 them in software.
 
 ## Types from `codec`
 
 The source, decoder and stream types come from the Compose-free [`codec`](../codec/README.md)
-module, which `ffplay` exposes as an API dependency. FFplay keeps its own names for them as
-typealiases:
-
-| FFplay name | `codec` type |
-| --- | --- |
-| `FFplaySource` | `MediaSource` |
-| `FFplayContentProtection` | `ContentProtection` |
-| `FFplayDecoderPreference` | `DecoderPreference` |
-| `FFplayDecoderKind` | `DecoderKind` |
-| `FFplayVideoInfo` | `VideoInfo` |
-| `FFplayHdrType` | `HdrType` |
-| `FFplayMasteringDisplayMetadata` | `MasteringDisplayMetadata` |
-| `FFplayContentLightMetadata` | `ContentLightMetadata` |
-
-Source code written against 0.2 compiles unchanged, but the classes now live in
-`io.github.aftrolle.ffmpegkmp.codec`, so binaries built against 0.2 need recompiling.
-`DecoderThreads` is only in `codec` (`io.github.aftrolle.ffmpegkmp.codec.DecoderThreads`).
+module, which `ffplay` exposes as an API dependency: `MediaSource` is what `prepare` takes,
+`DecoderPreference` and `DecoderThreads` configure the player, and `VideoInfo` and `DecoderKind`
+describe what it plays. They live in `io.github.aftrolle.ffmpegkmp.codec`; binaries built against
+0.2 need recompiling.
 
 ## Platforms
 
@@ -69,7 +58,7 @@ hardware only when the browser's decoder configuration confirms it.
 
 ## Protected content
 
-Mark protected inputs with `FFplayContentProtection.REQUIRE_SECURE_PATH`. Capability negotiation
+Mark protected inputs with `prepare(source, FFplayContentProtection.REQUIRE_SECURE_PATH)`. Capability negotiation
 then requires a platform-verified secure decoder and protected native surface; Compose Canvas,
 software downloads, screenshots, and ordinary GPU texture fallbacks are rejected. License and key
 exchange remains owned by the platform DRM backend—keys are never passed through the FFmpegKMP
@@ -228,7 +217,7 @@ frame, and returns a new pooled `VideoFrame` that the caller owns:
 
 ```kotlin
 MediaWriter.open(MediaOutput.File("export.mp4")).use { writer ->
-    VideoDecoder.open(source, VideoOutput.Memory(DynamicRange.HDR10.canvasFormat)).use { decoder ->
+    VideoDecoder.open(source, VideoOutput.Memory(FrameFormat.RgbaF16)).use { decoder ->
         val config = VideoEncoderConfig(
             3840, 2160, FrameRate(30), VideoCodec.HEVC, DynamicRange.HDR10,
             // Rendered frames carry no HDR10 metadata: take the source's.
@@ -254,7 +243,7 @@ MediaWriter.open(MediaOutput.File("export.mp4")).use { writer ->
 
 - The canvas is an RGB layout, since Skia draws RGB: `RGBA8` or `BGRA8` in sRGB or Display P3,
   `RGBA_1010102` for 10-bit SDR, and `RGBA_F16` in linear extended sRGB for HDR. The
-  `ComposeFrameRenderer(track)` constructor takes the track's `canvasFormat`, which its dynamic range
+  `ComposeFrameRenderer(track)` constructor takes the track's `config.canvasFormat`, which its dynamic range
   and bit depth decide, and `track.write` converts the canvas into the encoder's format once, on the
   track's thread. Android draws 10-bit bitmaps from Android 13 (API 33); before it, a 10-bit SDR
   track's renderer draws into `Rgba8`, which the track converts to 10 bits.
@@ -271,7 +260,7 @@ MediaWriter.open(MediaOutput.File("export.mp4")).use { writer ->
   `FrameImage`'s two bitmaps: at 4K in `RgbaF16` about 200 MB for the ring and 133 MB for the
   bitmaps. `VideoOutput.Memory()` has no ring to convert into, but `FrameImage` then converts the
   YUV frames into `Rgba8` bitmaps, tone mapping HDR, so an HDR export decodes into
-  `Memory(track.canvasFormat)` as above, and an SDR one may take either.
+  `Memory(track.config.canvasFormat)` as above, and an SDR one may take either.
   On Android 14 and later an 8-bit source through `VideoOutput.GpuBuffers` costs neither:
   `FrameImage` draws MediaCodec's buffers as they are. `CompositeExportBudgetDeviceTest` measures four 4K sources all three ways on
   a phone.

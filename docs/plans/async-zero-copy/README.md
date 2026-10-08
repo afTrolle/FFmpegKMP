@@ -6,6 +6,9 @@ their phone measurements, and so is 12's decoder half, short of its device
 runs. What is left is in [Remaining work](#remaining-work): those runs and
 measurements, then the decision on 12's encoder half. The work is rebased onto
 main at 78e9934 (v0.3.1, with its structured cancellation and session events).
+A [public surface pass](#public-surface-pass) after the over-engineering audit
+then gave a stream one typed colour and HDR description and narrowed the public
+API to the golden path.
 The measurements come from
 [`scripts/bench-video-decoder.sh`](../../../scripts/bench-video-decoder.sh).
 
@@ -78,18 +81,17 @@ needs, so a plain JVM server can decode and encode without depending on Compose:
 
 | Module | Holds | Depends on |
 |---|---|---|
-| `:library:codec` (new) | `FrameFormat`, `FrameColor`, `PixelLayout`, `DynamicRange`, `VideoFrame`, `FramePlane`, `FrameBytes`, `VideoDecoder` and `MediaWriter`, plus the source and metadata types they share with playback: `MediaSource`, `ContentProtection`, `DecoderPreference`, `DecoderKind`, `VideoInfo`, `HdrType` and the HDR metadata types | `core`, `bindings` |
+| `:library:codec` (new) | `FrameFormat`, `FrameColor`, `PixelLayout`, `DynamicRange`, `VideoFrame`, `FramePlane`, `FrameBytes`, `VideoDecoder` and `MediaWriter`, plus the source and metadata types they share with playback: `MediaSource`, `DecoderPreference`, `DecoderKind`, `VideoInfo` and `HdrMetadata` | `core`, `bindings` |
 | `:library:ffplay` | Playback (`FFplayPlayer`, `FFplaySurface`), `VideoFrame.toImageBitmap()` and `ComposeFrameRenderer` | `codec`, `player`, Compose |
 | `:library:player` | Unchanged: `AudioDecoder` and `AudioPlayer` | `core`, `bindings` |
 
 - `VideoDecoder` moves out of `ffplay` before it reaches `main`, so it is only
   ever published from `codec`.
-- The shared types move under codec names. `ffplay` keeps its current names as
-  typealiases: `typealias FFplaySource = MediaSource`, and likewise
-  `FFplayContentProtection`, `FFplayDecoderPreference`, `FFplayDecoderKind`,
-  `FFplayVideoInfo`, `FFplayHdrType` and the HDR metadata types. Source code
-  that uses them keeps compiling. Binaries built against 0.2 need recompiling,
-  which is acceptable before 1.0.
+- The shared types move under codec names, and `ffplay` uses them as they are:
+  `FFplaySource` is `MediaSource`, `FFplayVideoInfo` is `VideoInfo`, and so on.
+  Source code and binaries built against 0.2 need recompiling, which is
+  acceptable before 1.0. (An earlier version of this plan kept typealiases; the
+  [public surface pass](#public-surface-pass) removed them.)
 - The native code stays in `:bindings` with the rest of the bridge.
 
 ## The frame model
@@ -144,7 +146,7 @@ public class VideoFrame : AutoCloseable {
     public val height: Int
     public val rotationDegrees: Double
     public val sampleAspectRatio: Double
-    /** Null for frames that exist only on a GPU surface, such as Android's Surface output. */
+    /** Null for frames in GPU memory, such as Android's `GpuBuffers` output. */
     public val format: FrameFormat?
 
     /** Scoped access to the pixels without a copy; null when the frame has no CPU-visible memory. */
@@ -274,7 +276,7 @@ follows from it:
 
 | | `SDR` | `HDR10` | `HLG` |
 |---|---|---|---|
-| `track.canvasFormat`: what Compose draws into, and what decoded frames are delivered as for drawing | `Rgba8`, sRGB | `RgbaF16`, linear extended sRGB | `RgbaF16` |
+| `track.config.canvasFormat`: what Compose draws into, and what decoded frames are delivered as for drawing | `Rgba8`, sRGB | `RgbaF16`, linear extended sRGB | `RgbaF16` |
 | `track.inputFormat`: what the encoder receives | NV12, or YUV420P for a software encoder; BT.709 | P010, or YUV420P10 for a software encoder; BT.2020 PQ | the same, with HLG |
 | Codecs | H.264, HEVC, AV1 | HEVC Main10, AV1 10-bit | HEVC Main10, AV1 10-bit |
 | Stream metadata | BT.709 | BT.2020 and PQ, with mastering display and content light | BT.2020 and HLG |
@@ -287,9 +289,11 @@ hardware encoders, YUV420P or YUV420P10 for software ones. The Android HDR10
 profile is set from `avctx->profile`, as [Binding generation](../../bindings.md)
 already documents for commands.
 
-- **Matching a source:** `DynamicRange.of(info: FFplayVideoInfo)` maps a
-  source's `hdrType`: `HLG` to `HLG`, `SDR` to `SDR`, and any other HDR type to
-  `HDR10`. A match-the-source export is then
+- **Matching a source:** `DynamicRange.of(info: VideoInfo)` follows the
+  source's transfer function, `info.color.transfer`: PQ to `HDR10`, HLG to
+  `HLG` and the rest to `SDR`. Dolby Vision and HDR10+ are flags on
+  `info.hdrMetadata`, not ranges: a Dolby Vision 8.4 clip is HLG and stays HLG.
+  A match-the-source export is then
   `dynamicRange = DynamicRange.of(decoder.info)`.
 - **HDR10 metadata:** decoded HDR10 frames carry mastering-display and
   content-light side data, and the writer forwards what the first frame has.
@@ -323,7 +327,7 @@ frames, straight into their memory, because Skia can't draw YUV:
 
 Turning the canvas into the encoder's YUV is the one conversion, and
 `VideoTrack.write` does it on the encoder's thread. For an export,
-`track.canvasFormat` is the canvas, so the SDR or HDR choice above decides it.
+`track.config.canvasFormat` is the canvas, so the SDR or HDR choice above decides it.
 
 Skiko's `ColorSpace` offers three canvas spaces: `sRGB`, `sRGBLinear` and
 `displayP3`. HDR exports therefore draw in linear extended sRGB, whose extended
@@ -359,7 +363,7 @@ MediaWriter.open(MediaOutput.File("export.mp4")).use { writer ->
     val track = writer.addVideoTrack(
         VideoEncoderConfig(3840, 2160, FrameRate(30), VideoCodec.HEVC, dynamicRange = DynamicRange.HDR10),
     )
-    VideoDecoder.open(source, VideoOutput.Memory(track.canvasFormat)).use { decoder ->
+    VideoDecoder.open(source, VideoOutput.Memory(track.config.canvasFormat)).use { decoder ->
         ComposeFrameRenderer<ImageBitmap>(track) { background ->
             Image(background, contentDescription = null)
             Titles()
@@ -654,13 +658,13 @@ Decoding overlaps with the caller's work and stops when cancelled.
   the next call re-seek. The Kotlin call path fires it when the caller is
   cancelled, so `collectLatest { frameAt(it) }` drops stale work instead of
   queueing it. `abort()` stays for closing.
-- `frames(from, until, step, prefetch = 2): Flow<VideoFrame>` decodes ahead on
-  the decoder thread into a bounded channel, built on
+- `frames(from, until, step): Flow<VideoFrame>` decodes ahead on the decoder
+  thread into a bounded channel, built on
   `frameAt(previous.pts + previous.duration)`. Frames the collector never
-  receives are closed through `onUndeliveredElement`. `prefetch` is 0 for
-  Surface output. `step` is `FrameStep.Decoded`, `Every(interval)` or
-  `Rate(FrameRate)`: `Rate` computes each tick from its fraction, so 30 fps
-  stays exact where `1.seconds / 30` drifts by a nanosecond every three frames.
+  receives are closed through `onUndeliveredElement`. `step` is
+  `FrameStep.Decoded` or `Rate(FrameRate)`: `Rate` computes each tick from its
+  fraction, so 30 fps stays exact where `1.seconds / 30` drifts by a nanosecond
+  every three frames.
   `FrameRate` is the fraction `VideoEncoderConfig` takes in change set 6.
 - `AudioDecoder` moves to the same model: a thread of its own, with suspending
   `open`, `read` and `seek`.
@@ -679,7 +683,7 @@ public class MediaWriter : AutoCloseable {
     public companion object {
         public suspend fun open(
             output: MediaOutput,
-            container: ContainerFormat = ContainerFormat.Mp4(),
+            fastStart: Boolean = true,
             timeout: Duration = 10.seconds,
         ): MediaWriter
         /** Whether this platform and build have an encoder for [config], HDR included. */
@@ -705,8 +709,8 @@ public data class VideoEncoderConfig(
 )
 
 public class VideoTrack {
-    /** What to draw into and decode to for this track: Rgba8 for SDR, RgbaF16 for HDR. */
-    public val canvasFormat: FrameFormat
+    /** `config.canvasFormat` is what to draw into and decode to for this track: Rgba8 for SDR, RgbaF16 for HDR. */
+    public val config: VideoEncoderConfig
     /** Frames in this format reach the encoder without a conversion. */
     public val inputFormat: FrameFormat
     /** Android hardware encoders: a decoder's Surface output can render straight into this. */
@@ -722,8 +726,6 @@ public class AudioTrack {
 public sealed interface MediaOutput {
     public data class File(val path: String) : MediaOutput
     public data class Handle(val fileHandle: FileHandle) : MediaOutput
-    /** Only formats that never seek back: fragmented MP4, MPEG-TS, Matroska. */
-    public data class Stream(val sink: Sink) : MediaOutput
 }
 ```
 
@@ -746,17 +748,17 @@ Native, in a new `ffmpegkmp_writer.c`:
 - `dynamicRange` sets the stream's colour metadata, bit depth and profile.
   Mastering-display and content-light metadata are forwarded from the frames or
   taken from `hdrMetadata`, as the Android overlay already does for commands.
-- MP4 with `faststart` needs a seekable output (`File` or `Handle`). A `Stream`
-  output with a format that seeks fails in `open`.
+- MP4 with `faststart` needs a seekable output, `File` or `Handle`, which is why
+  there is no forward-only output (see the [public surface pass](#public-surface-pass)).
 
 Inputs without copies:
 
 - A frame already in `inputFormat`, from a decoder or a renderer, goes to the
-  encoder as it is. A frame in `canvasFormat` is converted once, on the encoder
+  encoder as it is. A frame in `config.canvasFormat` is converted once, on the encoder
   thread, so conversion overlaps with rendering the next frame.
 - Apple: `CVPixelBuffer`-backed frames go to VideoToolbox as
   `AV_PIX_FMT_VIDEOTOOLBOX`.
-- Android: `VideoOutput.Surface(track.inputSurface)` makes MediaCodec decode
+- Android: a Surface output (no longer public) would make MediaCodec decode
   straight into MediaCodec encode on the GPU. The decoder already stamps each
   rendered buffer with its pts. Not built yet: FFmpeg's MediaCodec encoder
   takes Surface input only through a hardware frames context, which is a change
@@ -858,8 +860,8 @@ could then go: `ffprobe_entry.c` and the temporary-file redirect in
 
 ### 9. Web decode and encode
 
-- `VideoDecoder` on the web through `BrowserDemuxer` and WebCodecs
-  `VideoDecoder`. `VideoFrame` wraps a WebCodecs `VideoFrame`, and `usePlanes`
+- `VideoDecoder` on the web through FFmpeg's demuxer in the decoder's worker and
+  WebCodecs `VideoDecoder`. `VideoFrame` wraps a WebCodecs `VideoFrame`, and `usePlanes`
   copies once through `copyTo`.
 - `MediaWriter` through WebCodecs `VideoEncoder`, with libavformat muxing in
   the worker.
@@ -945,7 +947,6 @@ only if the measurement at the end makes the case.
 ```kotlin
 public sealed interface VideoOutput {
     public data class Memory(…) : VideoOutput
-    public data class Surface(val surface: Any) : VideoOutput
     /** Android 14+: frames in GPU memory from a MediaCodec decoder, with no CPU pixels. */
     public data object GpuBuffers : VideoOutput
 }
@@ -969,9 +970,9 @@ The frame:
 
 The decoder, in Kotlin only:
 
-- `NativeVideoDecoderOutput` gains `GPU_BUFFERS`, which reaches C as `SURFACE`,
-  mapped explicitly rather than by ordinal. `GpuBuffers` is not Surface output,
-  so `frames()` decodes ahead within the ring.
+- `NativeVideoDecoderOutput` gains `GPU_BUFFERS`, which reaches C as the Surface
+  output, mapped explicitly rather than by ordinal. `frames()` decodes ahead
+  within the ring.
 - `createPlatformVideoDecoder` (`NativeExecutionBridge.android.kt`) creates an
   `ImageReader` of `ImageFormat.PRIVATE` with `USAGE_GPU_SAMPLED_IMAGE` and 3
   images, hands its Surface to the decoder as Surface output does, and wraps
@@ -1426,17 +1427,15 @@ a composite.
 Each source decodes frame N+1 while frame N is drawn or encoded, into memory
 that goes round. Nothing allocates per frame once running.
 
-`frames(prefetch)` keeps its meaning, frames decoded ahead of the collector, and
-its default drops from 2 to 1: the decoder holds the next frame ready while the
-collector works on the current one. It stays 0 for Surface output, and is at
-most 2, one less than the ring.
+`frames()` decodes one frame ahead of the collector, down from 2: the decoder
+holds the next frame ready while the collector works on the current one. This
+was the `prefetch` parameter, 0 to 2, until the public surface pass fixed it at 1.
 
 ```kotlin
 public fun frames(
     from: Duration = Duration.ZERO,
     until: Duration = Duration.INFINITE,
     step: FrameStep = FrameStep.Decoded,
-    prefetch: Int = if (surfaceOutput) 0 else 1,   // 0..2
 ): Flow<VideoFrame>
 ```
 
@@ -1564,6 +1563,51 @@ build's strict C11 lacks, and now uses `av_gettime`. On the JVM, 300 frames of
 counts flat from frame 10 on (the test makes the ring's three buffers first,
 since the third otherwise comes whenever a hand-out overtakes a close), and
 the heap after a collection within 40 KB.
+
+## Public surface pass
+
+The audit of this branch found the centre sound and the edges wide, and two of
+its proposals were taken. The library is for decoding several videos frame by
+frame, while an encoder encodes frame by frame what Compose renders into each
+frame, SDR or HDR without losing quality or colour; the public surface is what
+that needs, and the rest is internal or gone. Nothing was published yet, so
+removals are deletions.
+
+**One colour and HDR description.** `VideoInfo` carries `color: FrameColor`, the
+type a frame's `FrameFormat` carries, in place of five colour-name strings, the
+`MasteringDisplayMetadata` string map, a second copy of the HDR10 metadata and
+`HdrType`. It reads a stream's values as the converter reads them, so decoding a
+frame as it is gives the colour `info` reports. `HdrMetadata` is the one HDR
+description, shared with `VideoEncoderConfig`: the mastering display and content
+light levels, with `dolbyVision` and `hdr10Plus` as flags. HDR is decided by the
+transfer, PQ or HLG, alone. This fixes an iPhone Dolby Vision 8.4 clip, whose
+transfer is HLG: the bridge reported it as Dolby Vision, and `DynamicRange.of`
+then exported it as HDR10, in PQ. `DynamicRange.of(info)` now maps PQ to `HDR10`,
+HLG to `HLG` and the rest to `SDR`.
+`sampleAspectRatio` is a `Double`, and `hdrMetadata` is ignored by ranges other
+than HDR10, so a source's can be passed as it is. The native snapshot's
+`hdr_type` became `hdr_flags`, its Dolby Vision and HDR10+ bits; the colour
+fields were already raw FFmpeg values. The eight `FFplay*` typealiases are gone, and FFplay's
+capability sets and `FFplayOutputInfo` use `ColorPrimaries` and `ColorTransfer`
+rather than names.
+
+**The public surface.** Kept: `VideoDecoder`, `VideoFrame`, `FrameFormat`,
+`VideoInfo`, `FrameImage`, `ComposeFrameRenderer`, `MediaWriter`, with
+`VideoOutput.Memory` and `GpuBuffers`, `DecoderPreference`, `DecoderThreads`,
+`MediaSource`, `FrameRate`, `VideoEncoderConfig`, `DynamicRange` and
+`VideoCodec`. Removed from the public API:
+
+- `VideoOutput.Surface`, which only the `GpuBuffers` path used, inside the
+  bindings; and `NativeVideoDecoderOutput.SURFACE`.
+- The `prefetch` parameter of `frames()`, fixed at 1, and `FrameStep.Every`.
+- `MediaOutput.Stream`, `ContainerFormat` with its Matroska, MPEG-TS and
+  fragmented MP4 variants: a writer writes an MP4 to a `File` or a seekable
+  `Handle`, and `open` takes `fastStart`. The bridge's container switch stays.
+- `DynamicRange.canvasFormat` and `VideoTrack.canvasFormat`; the canvas is
+  `VideoEncoderConfig.canvasFormat`.
+- `ContentProtection` in `codec`, which a `VideoDecoder` could only reject. It is
+  `FFplayContentProtection` in `ffplay`, an argument of `FFplayPlayer.prepare`.
+- `BrowserDemuxer` and the worker's pull-demux messages, which nothing used.
 
 ## Remaining work
 

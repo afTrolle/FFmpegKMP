@@ -7,19 +7,19 @@ plain JVM server can decode video without depending on it:
   `FrameFormat` (a `PixelLayout` and a `FrameColor`), with its pixels read through `FramePlane`s
   of `FrameBytes`;
 - `VideoDecoder`, frame-accurate pull decoding;
-- `MediaWriter`, encoding video and audio tracks into MP4, Matroska or MPEG-TS, with the export's
+- `MediaWriter`, encoding video and audio tracks into an MP4, with the export's
   `DynamicRange` (`SDR`, `HDR10` or `HLG`) deciding every format along the way;
-- `MediaSource`, a path, URL or mounted `CommandIo` input, with its `ContentProtection`;
+- `MediaSource`, a path, URL or mounted `CommandIo` input;
 - `DecoderPreference` (`AUTO`, `REQUIRE_HARDWARE`, `SOFTWARE`), the `DecoderKind` that actually took
   a source, and `DecoderThreads`, the software decoder's threads;
-- `VideoInfo`, a stream's size, aspect ratio, rotation, pixel format, bit depth and colour
-  description, with its `HdrType` and the `MasteringDisplayMetadata` and `ContentLightMetadata` it
-  carries, also typed as the `HdrMetadata` an HDR10 export takes.
+- `VideoInfo`, a stream's size, aspect ratio, rotation, pixel format, bit depth and its colour as
+  the same `FrameColor` a frame carries, with the `HdrMetadata` it carries: HDR10's mastering
+  display and content light levels, which an HDR10 export takes, and Dolby Vision and HDR10+ as
+  flags. Whether a stream is HDR, and which kind, follows from its `color.transfer` alone.
 
-`ffplay` depends on `codec`, adds `VideoFrame.toImageBitmap()` for Compose, and keeps its own names
-for the source and stream types as typealiases (`FFplaySource = MediaSource`,
-`FFplayVideoInfo = VideoInfo`, and so on), so source code written against 0.2 still compiles.
-Binaries built against 0.2 need recompiling.
+`ffplay` depends on `codec` and adds `VideoFrame.toImageBitmap()` for Compose. It uses the
+`codec` types (`MediaSource`, `VideoInfo`, `DecoderPreference`) as they are. Binaries built against
+0.2 need recompiling.
 
 `codec` publishes every target the other library modules do, including tvOS and watchOS.
 
@@ -39,10 +39,11 @@ colour it holds:
 
 The layouts are `RGBA8`, `BGRA8`, `RGBA_1010102`, `RGBA_F16`, `NV12`, `P010`, `YUV420P` and
 `YUV420P10`; RGB layouts take `ColorMatrix.RGB` and YUV ones a YUV matrix (`BT709`, `BT2020_NCL`
-or `BT601`). `format` is null for a frame that exists only on a GPU surface (Android's Surface
-output) or in GPU memory (Android's `GpuBuffers` output), and for one decoded in another layout, such as 4:2:2, whose planes `usePlanes` still
-reaches. Colour values FFmpeg has but the enums do not name are reported as the converter takes
-them: unknown primaries as BT.709, SDR curves as BT.709.
+or `BT601`). `format` is null for a frame in GPU memory (Android's `GpuBuffers` output), and for
+one decoded in another layout, such as 4:2:2, whose planes `usePlanes` still reaches. Colour values
+FFmpeg has but the enums do not name are reported as the converter takes them: unknown primaries as
+BT.709, SDR curves as BT.709, an unspecified YUV matrix as BT.709. `VideoInfo.color` reads a
+stream's colour the same way, so decoding a frame as it is gives the colour `info` reports.
 
 Each `VideoFrame` is one reference to its memory:
 
@@ -125,8 +126,7 @@ covers:
 - `Memory()` on Apple, whose software frames are copies into pooled `CVPixelBuffer`s.
 
 Elsewhere `Memory()` hands out avcodec's own buffers, which avcodec reuses, or a hardware frame read
-into memory of its own; VideoToolbox's frames are VideoToolbox's, and a `Surface` output's are
-MediaCodec's. A `GpuBuffers` output's ring is the three images of its `ImageReader` (see below).
+into memory of its own; VideoToolbox's frames are VideoToolbox's. A `GpuBuffers` output's ring is the three images of its `ImageReader` (see below).
 The browser copies each frame into page memory and has no ring.
 
 ### Frame flows
@@ -139,23 +139,21 @@ decoder.frames(from = trimStart, until = trimEnd, step = FrameStep.Rate(FrameRat
 }
 ```
 
-`FrameStep.Decoded`, the default, delivers each decoded frame once. `FrameStep.Rate(rate)` and
-`FrameStep.Every(interval)` deliver the frame shown at each tick, as a constant-rate export samples
-the video, so a frame that covers several ticks comes once for each. `Rate` computes every tick
-from its fraction, so 30 fps or 30000/1001 stays exact over any length, where `1.seconds / 30`
-rounds to a nanosecond and drifts by one every three frames. The flow ends at `until` or at the end
-of the video. Up to `prefetch` frames, 0 to 2, are decoded while the collector works, and frames
-it never takes, because it stopped early or failed, are closed. The default, 1, keeps the next
-frame ready while the collector works on the current one; 2 leaves one frame of the ring for the
-collector's own. A `Surface` output renders each frame as
-it decodes, so it cannot decode ahead, and there `prefetch` is 0.
+`FrameStep.Decoded`, the default, delivers each decoded frame once. `FrameStep.Rate(rate)`
+delivers the frame shown at each frame time of `rate`, as a constant-rate export samples the video,
+so a frame that covers several ticks comes once for each. `Rate` computes every tick from its
+fraction, so 30 fps or 30000/1001 stays exact over any length, where `1.seconds / 30` rounds to a
+nanosecond and drifts by one every three frames. The flow ends at `until` or at the end of the
+video. One frame is decoded ahead while the collector works, and a frame it never takes, because it
+stopped early or failed, is closed. That keeps the next frame ready while the collector works on
+the current one, and leaves two frames of the ring for the collector's own.
 
 On the JVM, with a collector that spends 7 ms on each of 72 frames of 1080p MPEG-4 Part 2 into
-`Rgba8`, which decode well within that, the collector waits for frames about 200 ms in all with
-`prefetch = 0`, and with the default 1 finds most frames already decoded, waiting 6 to 44 ms in all
-while other work loads the machine. A decoder slower than its collector
-gains nothing beyond one frame ahead: 4K H.264 written as one slice a frame decodes in about 29 ms,
-and the same collector waits 2.15 s at 0 and 1.42 s at 1 or 2.
+`Rgba8`, which decode well within that, the collector finds most frames already decoded, waiting
+6 to 44 ms in all while other work loads the machine, against about 200 ms with no decoding ahead.
+A decoder slower than its collector gains nothing beyond one frame ahead: 4K H.264 written as one
+slice a frame decodes in about 29 ms, and the same collector waits 2.15 s with none ahead and
+1.42 s with one.
 
 ### Concurrency and cancellation
 
@@ -187,25 +185,19 @@ blocked in; elsewhere such a read has to return on its own first.
 - On Android, `Memory` output decodes 8-bit sources with MediaCodec straight into memory (its
   ByteBuffer mode, as NV12 or YUV420P), with the software decoder as the `AUTO` fallback. Deeper
   sources such as HDR10 decode in software, because MediaCodec's memory output would drop their
-  precision, so `REQUIRE_HARDWARE` fails on them; `Surface` output keeps them in hardware.
-- `VideoOutput.Surface(surface)` (Android) has MediaCodec render each frame into the Surface, for
-  example an `ImageReader`'s, stamped with its pts; the frame's `format` is then null. When no
-  MediaCodec decoder takes the source, frames come in memory as decoded and `decoderKind` reports
-  `SOFTWARE`.
+  precision, so `REQUIRE_HARDWARE` fails on them.
 - `VideoOutput.GpuBuffers` (Android 14, API 34, and later) has MediaCodec decode each frame into GPU
   memory, a `HardwareBuffer` from an `ImageReader` the decoder keeps: `frame.hardwareBuffer`, with
   the picture in `frame.hardwareBufferCrop`, since the buffer can be larger. Such a frame has no
-  CPU-visible pixels: its `format` and `usePlanes` are null and `convert` fails. Unlike `Surface`,
-  `frames()` decodes ahead. The reader's three images are the decoder's ring, and a frame's buffer
+  CPU-visible pixels: its `format` and `usePlanes` are null and `convert` fails. The reader's three images are the decoder's ring, and a frame's buffer
   goes back to MediaCodec when its last reference closes. The decoder keeps the latest frame's, so
   the same position again gives the same buffer, and `frames()` holds its one frame ahead, which is
   that latest frame: the caller may hold two more, which is what ffplay's `FrameImage`, which draws
-  these frames with no copy, holds. So `frames()` with the default prefetch into one `FrameImage`
-  uses exactly the three. Holding more makes the next `frameAt` that needs a new frame wait, and at
+  these frames with no copy, holds. So `frames()` into one `FrameImage` uses exactly the three. Holding more makes the next `frameAt` that needs a new frame wait, and at
   the timeout fail; these frames cannot be converted, so hold fewer.
   Sources deeper than 8 bits, and sources no MediaCodec decoder takes under `AUTO`, come in memory
   as decoded and `decoderKind` reports `SOFTWARE`. Elsewhere, and before Android 14, `open` fails
-  as it does for `Surface` off Android.
+  with an `IllegalArgumentException`.
 
 ```kotlin
 VideoDecoder.open(MediaSource("clip.mp4")).use { decoder ->
@@ -288,7 +280,7 @@ track reports the formats that follow from them:
 ```kotlin
 MediaWriter.open(MediaOutput.File("export.mp4")).use { writer ->
     val track = writer.addVideoTrack(VideoEncoderConfig(3840, 2160, FrameRate(30), VideoCodec.HEVC, DynamicRange.HDR10))
-    VideoDecoder.open(source, VideoOutput.Memory(track.canvasFormat)).use { decoder ->
+    VideoDecoder.open(source, VideoOutput.Memory(track.config.canvasFormat)).use { decoder ->
         decoder.frames(step = FrameStep.Rate(FrameRate(30))).collect { track.write(it) }
     }
     writer.finish()
@@ -297,7 +289,7 @@ MediaWriter.open(MediaOutput.File("export.mp4")).use { writer ->
 
 | | `SDR`, 8-bit | `SDR`, `bitDepth = 10` | `HDR10` | `HLG` |
 |---|---|---|---|---|
-| `canvasFormat`, what to draw into and decode to | `Rgba8`, sRGB | `RGBA_1010102`, sRGB | `RgbaF16`, linear, 1.0 at 203 nits | `RgbaF16` |
+| `config.canvasFormat`, what to draw into and decode to | `Rgba8`, sRGB | `RGBA_1010102`, sRGB | `RgbaF16`, linear, 1.0 at 203 nits | `RgbaF16` |
 | `inputFormat`, what the encoder takes | NV12 (or YUV420P), BT.709 | P010 (or YUV420P10), BT.709 | P010 (or YUV420P10), BT.2020 PQ | the same with HLG |
 | Codecs | H.264, HEVC, AV1 | HEVC Main10, AV1 | HEVC Main10, AV1 | HEVC Main10, AV1 |
 
@@ -307,16 +299,20 @@ an encoder takes it, as for HDR.
 
 - `write(frame)` takes ownership of the frame and suspends only while its encoder is full, two
   frames deep. A frame in `inputFormat` goes to the encoder as it is; another, such as one in
-  `canvasFormat`, is converted once on the track's thread, so conversion overlaps with drawing the
+  `config.canvasFormat`, is converted once on the track's thread, so conversion overlaps with drawing the
   next frame. Each track encodes on a thread of its own, since MediaCodec binds an encoder to one.
   On Apple, pooled frames are `CVPixelBuffer`s, which VideoToolbox takes without a copy.
-- A source keeps its colour through `DynamicRange.of(decoder.info)`. An SDR source in an HDR export
-  sits at 203 nits, BT.2408's graphics white; an HDR source in an SDR export is tone mapped.
+- A source keeps its colour through `DynamicRange.of(decoder.info)`, which follows the transfer
+  function: PQ is `HDR10`, HLG is `HLG` and the rest `SDR`. Dolby Vision and HDR10+ are flags over
+  one of those, so an iPhone's Dolby Vision 8.4 clip, which is HLG, stays HLG. An SDR source in an
+  HDR export sits at 203 nits, BT.2408's graphics white; an HDR source in an SDR export is tone
+  mapped.
 - HDR10 metadata comes from `VideoEncoderConfig.hdrMetadata`, or else from the first frame, as a
   decoded HDR10 source carries it, and reaches both the encoder and the container's `mdcv` and
-  `clli` boxes. VideoToolbox adds Dolby Vision 8.4 metadata to HLG, which players without Dolby
-  Vision ignore. HEVC in MP4 is tagged `hvc1`, which Apple's players need.
-- A source reports its HDR10 metadata as `VideoInfo.hdrMetadata`, typed for the config, with a
+  `clli` boxes. Other dynamic ranges ignore `hdrMetadata`, and its Dolby Vision and HDR10+ flags
+  are never written. VideoToolbox adds Dolby Vision 8.4 metadata to HLG, which players without
+  Dolby Vision ignore. HEVC in MP4 is tagged `hvc1`, which Apple's players need.
+- A source reports its metadata as `VideoInfo.hdrMetadata`, the type the config takes, with a
   `MasteringDisplay` only when the stream gives both its primaries and its luminance, as the writer
   needs. Frames drawn for a composite carry none, and nothing fills the config for you: pass
   `HdrMetadata.combine(main, others)`, the main source's mastering display and the highest MaxCLL
@@ -327,8 +323,9 @@ an encoder takes it, as for HDR.
   the Android standard build has libaom for AV1. `MediaWriter.canEncode(config)` answers before
   opening, and `addVideoTrack` fails with the reason, HDR10 without a 10-bit encoder included:
   falling back to SDR is the caller's choice.
-- Outputs are a `File`, a seekable read-write `Handle`, which an MP4's fast start reads back to put
-  its index first, or a forward-only `Stream`, which takes a fragmented MP4, Matroska or MPEG-TS.
+- Outputs are a `File`, or a seekable read-write `Handle`, which an MP4's fast start reads back to
+  put its index first. The container is an MP4; `open(..., fastStart = true)` moves its index to
+  the front.
 - `open(..., timeout = 10.seconds)` bounds each write and each track's draining at `finish()`: an
   encoder that takes frames without giving packets, as the Android emulator's MediaCodec encoders
   do through FFmpeg, fails its track with a `MediaWritingException` instead of blocking. `close()`
@@ -338,15 +335,11 @@ an encoder takes it, as for HDR.
 
 In the browser WebCodecs encodes the video and FFmpeg's AAC encoder the audio, in a worker of the
 writer's own, where FFmpeg's muxer writes the output into memory; `finish()` then writes it to the
-`Stream` or `Handle`. There is no file system, so a `File` output fails. The browser encodes 8-bit
+`Handle`. There is no file system, so a `File` output fails. The browser encodes 8-bit
 SDR only: its frames are 8-bit RGB, so `canEncode` is false for HDR10, HLG and `bitDepth = 10`. Each frame is copied
 into a buffer the worker takes, once on Kotlin/JS and twice on Kotlin/Wasm, and WebCodecs copies it
 again into its `VideoFrame`; the tracks take `Rgba8`, as `ComposeFrameRenderer` draws it, without a
 conversion.
-
-A fragmented MP4 with an AAC track starts the video late by the encoder's 1024 priming samples,
-about 21 ms at 48 kHz, as FFmpeg's own muxer does on every platform: an edit list cannot go into a
-fragmented file. Matroska and an unfragmented MP4 keep the audio's start exact.
 
 ## Tests
 
@@ -360,10 +353,10 @@ Kotlin/Native (`src/systemTest`, e.g. `./gradlew :library:codec:jvmTest
 :library:codec:macosArm64Test`), over the clips in `src/commonTest/resources/video-decoder`;
 `generate.py` there rebuilds them, and `golden/` holds the conversion references that
 `scripts/test-converter.sh` records and checks. The `CVPixelBuffer` tests (`src/pixelBufferTest`)
-run on `iosSimulatorArm64Test` and `macosArm64Test`. The Android Memory, Surface, GpuBuffers and timeout tests
+run on `iosSimulatorArm64Test` and `macosArm64Test`. The Android Memory, GpuBuffers and timeout tests
 are device tests (`./gradlew :library:codec:connectedAndroidDeviceTest`). The MediaCodec checks need
-a real device: the emulator's decoders reject FFmpeg's input, and there the Surface and GpuBuffers
-tests are skipped.
+a real device: the emulator's decoders reject FFmpeg's input, and there the GpuBuffers tests are
+skipped.
 `ParallelDecoderBudgetDeviceTest` measures several 4K software decoders at once on a phone, over a
 clip that `scripts/generate-budget-clip.sh` makes, since it is too large to commit; it takes about
 ten minutes, so it runs only with the `parallelBudget=true` instrumentation argument (see the test

@@ -14,9 +14,9 @@ binding details.
 - `codec` owns the Compose-free frame model (`VideoFrame`, whose memory FFmpeg
   owns, and its `FrameFormat`), frame-accurate pull decoding (`VideoDecoder`)
   for exporters, and the types decoders and players share: the media source
-  (`MediaSource`, `ContentProtection`), the decoder choice and threads
+  (`MediaSource`), the decoder choice and threads
   (`DecoderPreference`, `DecoderKind`, `DecoderThreads`), and the stream
-  description (`VideoInfo`, `HdrType` and the HDR metadata types). The decoder
+  description (`VideoInfo`, with its colour as a `FrameColor` and its `HdrMetadata`). The decoder
   runs outside the command FIFO.
 - `player` owns audio decoding (`AudioDecoder`) and playback (`AudioPlayer`)
   with live per-track and master `AudioLevel`s and track selection. It uses the
@@ -26,5 +26,4 @@ binding details.
   and draws `codec` frames with `VideoFrame.toImageBitmap()`, or through one reused bitmap per
   source with `FrameImage`. Its `ComposeFrameRenderer`
   draws Compose content into `codec` frames for an export. It depends on
-  `codec` and keeps FFplay names for the `codec` types as typealiases
-  (`FFplaySource`, `FFplayVideoInfo`, …).
+  `codec` and uses its types (`MediaSource`, `VideoInfo`, …) as they are.

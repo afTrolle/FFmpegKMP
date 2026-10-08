@@ -45,9 +45,8 @@ The `library` modules provide the platform-neutral API:
   frame-accurate decoding (`VideoDecoder`), and the source, decoder and stream
   types that the decoders and players share (`MediaSource`,
   `DecoderPreference`, `DecoderThreads`, `VideoInfo`, …);
-- `ffplay` owns a per-player lifecycle and Compose video-output contract,
-  draws frames with `VideoFrame.toImageBitmap()`, and keeps its FFplay names for
-  the `codec` types as typealiases;
+- `ffplay` owns a per-player lifecycle and Compose video-output contract, and
+  draws frames with `VideoFrame.toImageBitmap()`;
 - `filters` provides the optional filter-graph DSL; and
 - `player` provides audio decoding and playback with live volume, mute, and
   track controls.
@@ -156,6 +155,15 @@ the same swscale call, bilinearly; on the HDR routes that is the first one, into
 the intermediate, so the transfer step and the gamut pass run at the smaller
 size. The destination gets the sample aspect ratio that keeps the source's
 display aspect.
+
+A stream's colour has one description, `FrameColor`, shared by `VideoInfo`,
+`VideoFrame.format`, `VideoEncoderConfig` and `DynamicRange`. The bridge reports
+FFmpeg's primaries, transfer, matrix and range values as they are, with the
+Dolby Vision and HDR10+ side data it found as `ffplaykmp_snapshot.hdr_flags`, and
+`VideoInfo.color` reads them the way the converter does, so decoding a frame as it
+is gives the colour `info` reports. Whether a stream is HDR follows from the
+transfer alone, PQ or HLG; the flags are signalling over one of them, and a Dolby
+Vision 8.4 clip is HLG, so `DynamicRange.of` keeps it HLG.
 
 `MediaWriter` (`ffmpegkmp_writer.c`, in `codec`) encodes with libavcodec and
 muxes with libavformat, through a path or the same host I/O callbacks the
