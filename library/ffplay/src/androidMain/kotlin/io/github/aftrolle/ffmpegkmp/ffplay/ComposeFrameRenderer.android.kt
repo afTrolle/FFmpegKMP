@@ -160,6 +160,7 @@ public class ComposeFrameRenderer<T> internal constructor(
         current.value = value
         val host = host ?: Host(context, width, height, density, root).also { host = it }
         host.awaitWindow()
+        awaitPendingMainMessages()
         host.performFrame(time.inWholeNanoseconds)
         drawOnGpu(host.view) ?: drawInSoftware(host.view)
     }
@@ -278,6 +279,19 @@ private class GpuCanvas(width: Int, height: Int, format: FrameFormat) : AutoClos
         node.discardDisplayList()
         buffer.close()
     }
+}
+
+/**
+ * Lets the main looper run what was posted before this frame. Compose posts a draw invalidation to the main handler
+ * when snapshot state such as [FrameImage.update] changes off the main thread, as an ordinary message;
+ * `Dispatchers.Main` dispatches [draw] as an asynchronous one, which a Choreographer sync barrier lets run first, so
+ * without this the frame would record the previous drawing. A plain post of our own queues behind the invalidation.
+ */
+private suspend fun awaitPendingMainMessages() = suspendCancellableCoroutine { continuation ->
+    val handler = android.os.Handler(android.os.Looper.getMainLooper())
+    val runnable = Runnable { continuation.resume(Unit) }
+    handler.post(runnable)
+    continuation.invokeOnCancellation { handler.removeCallbacks(runnable) }
 }
 
 private suspend fun awaitFrame() = suspendCancellableCoroutine { continuation ->
