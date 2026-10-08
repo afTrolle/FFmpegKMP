@@ -14,9 +14,7 @@ import kotlin.test.assertTrue
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
-import kotlinx.coroutines.async
-import kotlinx.coroutines.coroutineScope
-import kotlinx.coroutines.delay
+import kotlin.time.TimeSource
 import kotlinx.coroutines.runBlocking
 import okio.Buffer
 import org.junit.Assume.assumeFalse
@@ -56,24 +54,20 @@ class VideoDecoderGpuBuffersDeviceTest {
     }
 
     @Test
-    fun aFourthFrameWaitsForOneOfThreeHeldToCloseAndTimesOutOtherwise() = runBlocking {
+    fun aFourthFrameFailsAtOnceWhileThreeAreHeldAndTheDecoderGoesOnOnceOneCloses() = runBlocking {
         assumeGpuBuffers()
         open("cfr-30-h264-128.mp4").use { decoder ->
             val held = (0 until 3).map { decoder.frameAt(it.seconds / 30) }
-            coroutineScope {
-                val fourth = async { decoder.frameAt(3.seconds / 30) }
-                delay(500.milliseconds)
-                assertTrue(fourth.isActive, "the fourth frame waits while three are held")
-                held.first().close()
-                fourth.await().use { frame -> assertNotNull(frame.hardwareBuffer) }
-            }
+            val asked = TimeSource.Monotonic.markNow()
+            val failure = assertFailsWith<IllegalStateException> { decoder.frameAt(3.seconds / 30) }
+            val took = asked.elapsedNow()
+            println("VideoDecoderGpuBuffersDeviceTest: the fourth frame failed after $took: ${failure.message}")
+            assertTrue(failure.message!!.contains("holds all 3"), failure.message)
+            assertTrue(took < 2.seconds, "failed after $took, well before the 10 s timeout")
+            held.first().close()
+            decoder.frameAt(3.seconds / 30).use { frame -> assertNotNull(frame.hardwareBuffer) }
             held.drop(1).forEach(VideoFrame::close)
-        }
-        open("cfr-30-h264-128.mp4", timeout = 1.seconds).use { decoder ->
-            val held = (0 until 3).map { decoder.frameAt(it.seconds / 30) }
-            val failure = assertFailsWith<VideoDecodingException> { decoder.frameAt(3.seconds / 30) }
-            assertTrue(failure.message!!.contains("timed out"), failure.message)
-            held.forEach(VideoFrame::close)
+            decoder.frameAt(10.seconds / 30).use { frame -> assertNotNull(frame.hardwareBuffer) }
         }
     }
 

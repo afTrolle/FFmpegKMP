@@ -245,17 +245,15 @@ struct ffmpegkmp_frame {
 ffmpegkmp_frame *ffmpegkmp_frame_from_av(const AVFrame *frame);
 
 /*
- * ffmpegkmp_frame_pool_get, except that a full ring waits for one of its
- * frames to come back, asking `interrupted(opaque)` every 10 ms whether to
- * give up instead, with AVERROR_EXIT. A decoder's hand-out waits so.
+ * ffmpegkmp_frame_pool_get, except that a full ring fails with
+ * FFPLAYKMP_ERROR_RING_FULL, after a short grace for one of its frames to come
+ * back from another thread. A decoder's hand-out takes so, and stays usable.
  */
 int ffmpegkmp_frame_pool_take(
         ffmpegkmp_frame_pool *pool,
         const ffmpegkmp_frame_format *format,
         int32_t width,
         int32_t height,
-        int (*interrupted)(void *opaque),
-        void *opaque,
         ffmpegkmp_frame **frame);
 
 /*

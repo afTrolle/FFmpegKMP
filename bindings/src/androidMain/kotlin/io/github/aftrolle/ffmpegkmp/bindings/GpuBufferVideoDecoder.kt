@@ -15,6 +15,12 @@ import kotlin.concurrent.withLock
 internal const val GPU_BUFFER_RING = 3
 
 /**
+ * How long a frame waits for a place in a full ring before failing: enough for a frame closing on
+ * another thread, as a collector's does while the frame ahead of it is taken.
+ */
+private const val GPU_BUFFER_RING_GRACE_NANOS = 250_000_000L
+
+/**
  * A [NativeVideoDecoderOutput.GPU_BUFFERS] decoder: [decoder] renders each hardware frame into
  * [reader]'s Surface, stamped with its pts, and [frameAt] hands it out as the reader's image with
  * that timestamp, in a [NativeGpuBuffer] that closes the image with the frame's last reference.
@@ -24,7 +30,8 @@ internal const val GPU_BUFFER_RING = 3
  *
  * The reader's [GPU_BUFFER_RING] images are the ring. This keeps a reference to the latest frame's
  * buffer, so the same position again returns the same buffer. While the caller holds every image,
- * a new frame's waits for one to close, at most the call's time left, then fails as a timeout.
+ * a new frame's fails with [NativePlayerError.RING_FULL] after a short grace, and the next call
+ * takes the image the frame was rendered into.
  *
  * It needs Android 14 (API 34), which [createPlatformVideoDecoder] checks.
  */
@@ -132,10 +139,11 @@ internal class GpuBufferVideoDecoder(
 
     /**
      * The reader's image stamped with [ptsNanos], once the GPU may read it, waiting until [deadline]
-     * for MediaCodec to render it and for a place in the ring. Images an earlier, failed call left
-     * behind are closed.
+     * for MediaCodec to render it, and the grace for a place in the ring. Images an earlier, failed
+     * call left behind are closed.
      */
     private fun awaitImage(ptsNanos: Long, deadline: Long): Image {
+        var ringFullBy = 0L
         try {
             while (true) {
                 if (interrupted || aborted) {
@@ -155,20 +163,29 @@ internal class GpuBufferVideoDecoder(
                         NativePlayerError.TIMED_OUT,
                     )
                 }
-                val left = deadline - System.nanoTime()
-                if (left <= 0) {
-                    throw NativeVideoDecoderException(
-                        if (acquired >= GPU_BUFFER_RING) {
+                val now = System.nanoTime()
+                val until = if (acquired >= GPU_BUFFER_RING) {
+                    if (ringFullBy == 0L) ringFullBy = now + GPU_BUFFER_RING_GRACE_NANOS
+                    if (now >= minOf(deadline, ringFullBy)) {
+                        throw NativeVideoDecoderException(
                             "Could not take a buffer for the frame at ${ptsNanos}ns: the caller holds all " +
-                                "$GPU_BUFFER_RING of the decoder's frames, and none closed in time"
-                        } else {
-                            "MediaCodec rendered no buffer for the frame at ${ptsNanos}ns in time"
-                        },
-                        NativePlayerError.TIMED_OUT,
-                    )
+                                "$GPU_BUFFER_RING of the decoder's frames",
+                            NativePlayerError.RING_FULL,
+                        )
+                    }
+                    minOf(deadline, ringFullBy)
+                } else {
+                    ringFullBy = 0L
+                    if (now >= deadline) {
+                        throw NativeVideoDecoderException(
+                            "MediaCodec rendered no buffer for the frame at ${ptsNanos}ns in time",
+                            NativePlayerError.TIMED_OUT,
+                        )
+                    }
+                    deadline
                 }
                 waitDeadline = deadline
-                changed.awaitNanos(left)
+                changed.awaitNanos(until - now)
             }
         } finally {
             waitDeadline = 0L

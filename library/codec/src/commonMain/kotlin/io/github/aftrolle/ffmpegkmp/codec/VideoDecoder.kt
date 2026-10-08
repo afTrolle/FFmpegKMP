@@ -72,11 +72,9 @@ public sealed interface VideoOutput {
      * come from a ring the decoder keeps of three frames per layout and size, made once and handed
      * out again as they close, so nothing allocates per frame: the one the caller works on, the
      * one decoded ahead, and one so the caller can keep the previous frame while taking the next.
-     * While the caller holds all three, the next [VideoDecoder.frameAt] that needs a new frame
-     * waits for one to close, and at the decoder's timeout fails, which leaves the decoder timed
-     * out. [VideoFrame.retain] shares its frame's place in the ring, and [VideoFrame.convert] into
-     * another format copies into a pool without a bound: to keep more than three frames, keep
-     * conversions.
+     * While the caller holds all three, a [VideoDecoder.frameAt] that needs a new frame fails with
+     * [IllegalStateException] (see there); [VideoFrame.retain] shares its frame's place in the
+     * ring, and [VideoFrame.convert] copies into a pool without a bound.
      * Elsewhere frames as decoded are avcodec's own buffers, which it reuses, or a hardware frame
      * read into memory of its own, and VideoToolbox's frames are its own; the browser has no ring.
      */
@@ -105,9 +103,8 @@ public sealed interface VideoOutput {
      * frame ahead, which is that latest frame. That leaves the caller two, which is what a
      * `FrameImage` holds: the frames of its last two updates, the one on screen and the one a
      * drawing may still use. So `decoder.frames().collect { frame -> frame.use(image::update); … }`
-     * uses exactly the three. Each frame the caller holds beyond that makes the next
-     * [VideoDecoder.frameAt] that needs a new frame wait for one to close, and at the decoder's
-     * timeout fail, which leaves the decoder timed out. These frames cannot be converted, so to
+     * uses exactly the three; holding more fails the next [VideoDecoder.frameAt] that needs a new
+     * frame with [IllegalStateException] (see there). These frames cannot be converted, so to
      * keep more, hold fewer.
      *
      * Sources deeper than 8 bits stay in GPU memory too, in 10 bits, and an HDR10 or HLG one's
@@ -208,7 +205,8 @@ public class VideoDecoder private constructor(
      *
      * Where frames come from the decoder's ring of three (see [VideoOutput.Memory] and
      * [VideoOutput.GpuBuffers]), a call that needs a new frame while the caller holds three others
-     * waits for one of them to close, and times out if none does. [VideoFrame.convert] keeps a
+     * fails with [IllegalStateException] after a short grace for one closing on another thread,
+     * and the decoder stays usable: close a frame and call again. [VideoFrame.convert] keeps a
      * memory frame beyond the ring.
      */
     public suspend fun frameAt(position: Duration): VideoFrame {
@@ -225,7 +223,8 @@ public class VideoDecoder private constructor(
      * One frame is decoded ahead on the decoder's thread while the collector works, and a frame it
      * never receives is closed. That holds the next frame ready while the collector works on the
      * current one, which is all a collector slower than the decoder can use, and leaves two of the
-     * decoder's ring of three (see [VideoOutput.Memory]) for the collector's own frames.
+     * decoder's ring of three (see [VideoOutput.Memory]) for the collector's own frames; holding
+     * more fails the flow as [frameAt] fails.
      */
     public fun frames(
         from: Duration = Duration.ZERO,
@@ -444,9 +443,18 @@ private fun Duration.requireNonNegativeNanos(): Long {
     return inWholeNanoseconds
 }
 
+/** The frames a decoder keeps per layout and size: [VideoOutput.Memory] and [VideoOutput.GpuBuffers]. */
+private const val RING = 3
+
 private inline fun <T> decoding(action: String, block: () -> T): T = try {
     block()
 } catch (failure: NativeVideoDecoderException) {
+    if (failure.errorCode == NativePlayerError.RING_FULL) {
+        throw IllegalStateException(
+            "Could not $action: the caller holds all $RING frames of the decoder's ring; close one to take another",
+            failure,
+        )
+    }
     throw VideoDecodingException("Could not $action: ${failure.message}", failure)
 } catch (failure: NativeBridgeUnavailableException) {
     throw VideoDecodingException(failure.message ?: "The FFmpegKMP native runtime is unavailable", failure)

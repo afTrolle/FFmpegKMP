@@ -142,6 +142,9 @@ public object NativePlayerError {
     public const val UNSUPPORTED: Int = -1004
     public const val IO: Int = -1005
     public const val TIMED_OUT: Int = -1007
+
+    /** The caller holds every frame of the decoder's ring; the call fails and the decoder stays usable. */
+    public const val RING_FULL: Int = -1008
 }
 
 @InternalFFmpegKmpApi

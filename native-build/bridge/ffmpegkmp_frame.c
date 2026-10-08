@@ -488,8 +488,12 @@ void ffmpegkmp_frame_unmap(ffmpegkmp_frame *frame) {
 
 /* The most frames a bounded pool keeps per layout and size. */
 #define FFMPEGKMP_POOL_MAX_CAPACITY 8
-/* How often a wait for a bounded pool's frame asks whether to give up, in microseconds. */
-#define FFMPEGKMP_POOL_POLL_US 10000
+/*
+ * How long a decoder's take of a full ring waits for a frame to come back, in
+ * microseconds: enough for one closing on another thread, as a collector's
+ * does while the frame ahead of it is taken, and well short of any timeout.
+ */
+#define FFMPEGKMP_RING_GRACE_US 250000
 
 typedef struct ffmpegkmp_pool_entry {
     enum AVPixelFormat format;
@@ -804,10 +808,8 @@ static int ffmpegkmp_pool_take(ffmpegkmp_frame_pool *pool, ffmpegkmp_pool_entry 
     return 0;
 }
 
-/* Waits, with the pool locked, until one of its frames comes back or a poll interval has passed. */
-static void ffmpegkmp_pool_wait(ffmpegkmp_frame_pool *pool) {
-    /* The wall clock, which pthread_cond_timedwait measures by default. */
-    const int64_t until_us = av_gettime() + FFMPEGKMP_POOL_POLL_US;
+/* Waits, with the pool locked, until one of its frames comes back or the wall clock passes `until_us`. */
+static void ffmpegkmp_pool_wait(ffmpegkmp_frame_pool *pool, int64_t until_us) {
     struct timespec until;
     until.tv_sec = (time_t)(until_us / 1000000);
     until.tv_nsec = (long)(until_us % 1000000) * 1000;
@@ -816,13 +818,15 @@ static void ffmpegkmp_pool_wait(ffmpegkmp_frame_pool *pool) {
 
 /*
  * Gives `frame` pooled memory of `format` at this size; its colour is left to
- * the caller. A full ring waits while `interrupted` returns 0, or with none
- * fails with AVERROR(EAGAIN).
+ * the caller. A full ring fails with AVERROR(EAGAIN), after `grace_us` of
+ * waiting for a frame to come back.
  */
 static int ffmpegkmp_pool_fill(ffmpegkmp_frame_pool *pool, AVFrame *frame, enum AVPixelFormat format, int width,
-        int height, int full_range, int (*interrupted)(void *opaque), void *opaque) {
+        int height, int full_range, int64_t grace_us) {
     ffmpegkmp_pool_entry *entry;
     uint32_t pixel_buffer_format = 0;
+    /* The wall clock, which pthread_cond_timedwait measures by default. */
+    const int64_t until_us = av_gettime() + grace_us;
     int result;
 #if defined(FFMPEGKMP_PIXEL_BUFFER)
     pixel_buffer_format = ffmpegkmp_pixel_buffer_type(format, full_range);
@@ -835,13 +839,9 @@ static int ffmpegkmp_pool_fill(ffmpegkmp_frame_pool *pool, AVFrame *frame, enum 
         result = ffmpegkmp_pool_find(pool, format, pixel_buffer_format, width, height, &entry);
         if (result >= 0)
             result = ffmpegkmp_pool_take(pool, entry, frame);
-        if (result != AVERROR(EAGAIN) || !interrupted)
+        if (result != AVERROR(EAGAIN) || av_gettime() >= until_us)
             break;
-        if (interrupted(opaque)) {
-            result = AVERROR_EXIT;
-            break;
-        }
-        ffmpegkmp_pool_wait(pool);
+        ffmpegkmp_pool_wait(pool, until_us);
     }
     pthread_mutex_unlock(&pool->lock);
     frame->width = width;
@@ -882,13 +882,12 @@ void ffmpegkmp_frame_pool_free(ffmpegkmp_frame_pool *pool) {
         ffmpegkmp_pool_destroy(pool);
 }
 
-int ffmpegkmp_frame_pool_take(
+static int ffmpegkmp_pool_frame(
         ffmpegkmp_frame_pool *pool,
         const ffmpegkmp_frame_format *format,
         int32_t width,
         int32_t height,
-        int (*interrupted)(void *opaque),
-        void *opaque,
+        int64_t grace_us,
         ffmpegkmp_frame **frame) {
     ffmpegkmp_frame *created;
     int filled;
@@ -902,7 +901,7 @@ int ffmpegkmp_frame_pool_take(
         return AVERROR(ENOMEM);
     result = ffmpegkmp_pool_fill(pool ? pool : &ffmpegkmp_shared_pool, created->frame,
             ffmpegkmp_layout_pixel_format(format->layout), width, height, format->range == FFMPEGKMP_RANGE_FULL,
-            interrupted, opaque);
+            grace_us);
     if (result < 0) {
         ffmpegkmp_frame_unref(created);
         return result;
@@ -928,7 +927,17 @@ int ffmpegkmp_frame_pool_get(
         int32_t width,
         int32_t height,
         ffmpegkmp_frame **frame) {
-    return ffmpegkmp_frame_pool_take(pool, format, width, height, NULL, NULL, frame);
+    return ffmpegkmp_pool_frame(pool, format, width, height, 0, frame);
+}
+
+int ffmpegkmp_frame_pool_take(
+        ffmpegkmp_frame_pool *pool,
+        const ffmpegkmp_frame_format *format,
+        int32_t width,
+        int32_t height,
+        ffmpegkmp_frame **frame) {
+    const int result = ffmpegkmp_pool_frame(pool, format, width, height, FFMPEGKMP_RING_GRACE_US, frame);
+    return result == AVERROR(EAGAIN) ? FFPLAYKMP_ERROR_RING_FULL : result;
 }
 
 /* Conversion */

@@ -67,6 +67,8 @@ typedef enum ffplaykmp_error {
     FFPLAYKMP_ERROR_IO = -1005,
     FFPLAYKMP_ERROR_STALE = -1006,
     FFPLAYKMP_ERROR_TIMED_OUT = -1007,
+    /* Every frame of a decoder's ring is held by the caller; the call fails and the decoder stays usable. */
+    FFPLAYKMP_ERROR_RING_FULL = -1008,
 } ffplaykmp_error;
 
 typedef enum ffplaykmp_source_flags {
