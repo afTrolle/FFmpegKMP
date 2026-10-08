@@ -362,6 +362,12 @@ static int ffmpegkmp_source_view(const AVFrame *frame, AVFrame *view, AVFrame **
                 (size_t)av_image_get_buffer_size((*download)->format, (*download)->width, (*download)->height, 1));
     }
     *view = **download;
+    /* The download is the hardware pool's coded size (MediaCodec gives 1920x1088 for 1080p); the picture is the
+     * frame's. Rows and columns past it would overrun a destination of the picture's size. */
+    if (view->width > frame->width && frame->width > 0)
+        view->width = frame->width;
+    if (view->height > frame->height && frame->height > 0)
+        view->height = frame->height;
     return 0;
 }
 
