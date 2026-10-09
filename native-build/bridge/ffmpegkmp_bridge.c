@@ -20,7 +20,19 @@
 #endif
 
 #if FFMPEGKMP_EMBEDDED_FFTOOLS
+#include <limits.h>
+#include "libavutil/cpu.h"
 #include "libavutil/log.h"
+#include "libavutil/mem.h"
+#endif
+
+#if defined(__EMSCRIPTEN__)
+/* The worker's pthread pool is fixed at 32 (PTHREAD_POOL_SIZE_STRICT in native-build/wasm), and fftools' scheduler takes a
+ * thread for each demuxer, decoder, filter graph, encoder and muxer before any codec starts its own. FFmpeg sizes its
+ * codec, filter and scaler threads by the core count, which on a many-core host asks for more than the pool has
+ * (ff_frame_thread_encoder_init fails), so every browser command sees at most this many cores. -threads still asks for
+ * more explicitly. */
+#define FFMPEGKMP_BROWSER_CPU_COUNT 4
 #endif
 
 #if defined(__GNUC__) || defined(__clang__)
@@ -164,6 +176,7 @@ int ffmpegkmp_execute(
     int (*entry)(int, char **);
     int result;
 #if FFMPEGKMP_EMBEDDED_FFTOOLS
+    int host_log_level;
     char probe_output[512] = { 0 };
     char **effective_argv = (char **) argv;
     int effective_argc = argc;
@@ -177,11 +190,15 @@ int ffmpegkmp_execute(
     atomic_store(&active_kind, kind);
     av_ffmpegkmp_protocol_set_callback(context->io_callback, context->opaque);
 #if FFMPEGKMP_EMBEDDED_FFTOOLS
+    host_log_level = av_log_get_level();
     av_log_set_callback(ffmpegkmp_log_callback);
     /* fftools' -v/-loglevel mutates the process-global log level, so a run that
      * passed `-v error` (a typical ffprobe) would silence every later run in the
      * same process — including the stats lines callers parse. Reset per run. */
     av_log_set_level(AV_LOG_INFO);
+#if defined(__EMSCRIPTEN__)
+    av_cpu_force_count(FFMPEGKMP_BROWSER_CPU_COUNT);
+#endif
 #endif
     entry = kind == FFMPEGKMP_COMMAND_FFMPEG
             ? ffmpegkmp_ffmpeg_entry
@@ -230,6 +247,7 @@ int ffmpegkmp_execute(
         effective_argv = calloc((size_t) argc + 2, sizeof(*effective_argv));
         if (!effective_argv) {
             av_log_set_callback(av_log_default_callback);
+            av_log_set_level(host_log_level);
             av_ffmpegkmp_protocol_set_callback(NULL, NULL);
             atomic_store(&active_context, NULL);
             return -12;
@@ -259,6 +277,12 @@ int ffmpegkmp_execute(
     }
 #if FFMPEGKMP_EMBEDDED_FFTOOLS
     av_log_set_callback(av_log_default_callback);
+    /* -loglevel, -cpuflags, -cpucount and -max_alloc change libavutil for the whole
+     * process, including the decoders and players running beside commands. */
+    av_log_set_level(host_log_level);
+    av_force_cpu_flags(-1);
+    av_cpu_force_count(-1);
+    av_max_alloc(INT_MAX);
     if (probe_output[0]) {
         FILE *output = fopen(probe_output, "rb");
         if (output) {

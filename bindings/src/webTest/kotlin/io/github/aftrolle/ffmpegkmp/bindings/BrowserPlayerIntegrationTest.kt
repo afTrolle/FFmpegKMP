@@ -85,11 +85,50 @@ class BrowserPlayerIntegrationTest {
             } else {
                 assertTrue(platformFrames.isEmpty())
                 assertEquals(NativePlayerDecoderKind.SOFTWARE, bridge.snapshot().activeDecoder)
-                assertTrue(softwareFrames.first().rgba.isNotEmpty())
+                assertTrue(softwareFrames.first().frame.usePlanes { it.single().size } > 0)
             }
 
             bridge.pause()
             assertEquals(0, browserPlayerVideoFrameRegistrySize())
+            assertTrue(snapshots.none { it.state == NativePlayerState.FAILED })
+        } finally {
+            bridge.close()
+        }
+    }
+
+    @Test
+    fun theWasmSoftwareDecoderDecodesWithTheConfiguredThreads() = runTest {
+        configureBrowserPlayerTestRuntime()
+        val bytes = loadBrowserPlayerTestResource("/base/kotlin/hardware-h264.mp4")
+        val snapshots = mutableListOf<NativePlayerSnapshot>()
+        val firstFrame = CompletableDeferred<NativeVideoFrame>()
+        // Frame threads run on the worker's pthread pool, next to the playback thread.
+        val bridge = createPlatformPlayerBridge(
+            configuration = NativePlayerConfiguration(NativePlayerDecoderPreference.SOFTWARE, decoderThreads = 4),
+            update = snapshots::add,
+            frame = { frame -> firstFrame.complete(frame) },
+        )
+        try {
+            assertEquals(0, bridge.setOutput(NativePlayerOutputCapabilities(softwareFrameUpload = true)))
+            assertEquals(
+                0,
+                bridge.prepare(
+                    NativePlayerSource(
+                        input = "hardware-h264.mp4",
+                        mounts = listOf(
+                            NativeMountedIo(
+                                path = "hardware-h264.mp4",
+                                resource = NativeSourceResource(Buffer().write(bytes)),
+                            ),
+                        ),
+                    ),
+                ),
+            )
+            assertEquals(0, bridge.awaitPreparation())
+            assertEquals(0, bridge.play())
+            assertTrue(firstFrame.await().frame.usePlanes { it.single().size } > 0)
+            assertEquals(NativePlayerDecoderKind.SOFTWARE, bridge.snapshot().activeDecoder)
+            bridge.pause()
             assertTrue(snapshots.none { it.state == NativePlayerState.FAILED })
         } finally {
             bridge.close()

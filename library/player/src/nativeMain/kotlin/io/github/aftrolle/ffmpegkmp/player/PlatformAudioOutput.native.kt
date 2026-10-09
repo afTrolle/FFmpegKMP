@@ -34,7 +34,7 @@ private class AudioEngineOutput(private val format: PcmFormat) : PlatformAudioOu
     private val avFormat = requireNotNull(
         AVAudioFormat(standardFormatWithSampleRate = format.sampleRate.toDouble(), channels = format.channels.toUInt()),
     ) { "AVAudioEngine cannot play ${format.channels} channels at ${format.sampleRate} Hz" }
-    // intptr_t: 32 bits on watchOS's arm64_32 and armv7k, 64 elsewhere.
+    // intptr_t: 32 bits on watchOS's arm64_32, 64 elsewhere.
     private val slots = dispatch_semaphore_create(QUEUED_BUFFERS.convert())
     private val buffers = arrayOfNulls<AVAudioPCMBuffer>(QUEUED_BUFFERS)
     private var next = 0

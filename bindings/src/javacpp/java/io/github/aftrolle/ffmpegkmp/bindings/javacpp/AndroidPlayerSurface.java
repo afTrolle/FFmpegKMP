@@ -7,10 +7,10 @@ import org.bytedeco.javacpp.annotation.Name;
 import org.bytedeco.javacpp.annotation.Platform;
 import org.bytedeco.javacpp.annotation.Raw;
 
-/** Android-only raw-JNI seam for retaining an android.view.Surface in the player. */
+/** Android-only raw-JNI seam for retaining an android.view.Surface in the player or a video decoder. */
 @Platform(
         value = "android",
-        include = "<ffplaykmp_player.h>",
+        include = {"<ffplaykmp_player.h>", "<ffmpegkmp_decoder.h>"},
         link = {"ffmpegkmp_bridge#", "avdevice", "avfilter", "avformat", "avcodec", "swscale", "swresample", "avutil", "z", "android"}
 )
 public final class AndroidPlayerSurface {
@@ -21,4 +21,9 @@ public final class AndroidPlayerSurface {
             @Raw(withEnv = true) Object surface,
             @Cast("ffplaykmp_player *") Pointer player,
             int secure);
+
+    @Name("ffmpegkmp_video_decoder_set_android_surface")
+    public static native int setDecoderSurface(
+            @Raw(withEnv = true) Object surface,
+            @Cast("ffmpegkmp_video_decoder *") Pointer decoder);
 }

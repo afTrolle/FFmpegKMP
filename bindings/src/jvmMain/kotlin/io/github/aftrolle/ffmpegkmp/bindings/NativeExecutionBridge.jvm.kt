@@ -14,3 +14,28 @@ public actual fun createPlatformPlayerBridge(
     frame: (NativeVideoFrame) -> Unit,
     platformFrame: (NativePlatformVideoFrame) -> Boolean,
 ): NativePlayerBridge = createJavaCppPlayerBridge(configuration, update, frame, platformFrame)
+
+@InternalFFmpegKmpApi
+public actual fun createPlatformVideoDecoder(
+    source: NativePlayerSource,
+    output: NativeVideoDecoderOutput,
+    memoryFormat: NativeFrameFormat?,
+    memoryWidth: Int,
+    memoryHeight: Int,
+    decoderPreference: NativePlayerDecoderPreference,
+    decoderThreads: Int,
+    timeoutMicros: Long,
+): NativeVideoDecoder {
+    requireMemoryOutput(output)
+    return createJavaCppVideoDecoder(
+        source, output, memoryFormat, memoryWidth, memoryHeight, decoderPreference, decoderThreads, timeoutMicros,
+    ) { 0 }
+}
+
+@InternalFFmpegKmpApi
+public actual suspend fun createPlatformMediaWriter(
+    output: NativeWriterOutput,
+    container: NativeContainer,
+    fastStart: Boolean,
+    timeoutMicros: Long,
+): NativeMediaWriter = createJavaCppMediaWriter(output, container, fastStart, timeoutMicros, openEncoder = null)

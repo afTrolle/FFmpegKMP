@@ -118,7 +118,7 @@ exposes the same controls: `setVolume`, `setMuted`, `selectAudioTrack`,
 The optional `player` artifact plays or decodes audio on its own with live controls.
 `AudioPlayer` outputs through AudioTrack (Android), Java Sound (desktop) or
 AVAudioEngine (Apple); `AudioDecoder` gives the same mix as float PCM for your
-own pipeline. Both use FFmpeg's libraries directly rather than the command-line
+own pipeline, decoding on a thread of its own behind suspending `read` and `seek`. Both use FFmpeg's libraries directly rather than the command-line
 tools, so they run alongside `FFmpegClient` commands instead of queueing behind
 them. They are not available in the browser yet; there `FFplayPlayer` plays audio itself.
 
@@ -152,8 +152,15 @@ codecs advertise P010 and the HDR10 profile.
 | `ffmpeg` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | `ffprobe` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | `filters` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| `codec` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | `ffplay` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | — | — |
 | `player` | ✅ | ✅ | — | — | ✅ | ✅ | ✅ | ✅ |
+
+`codec` holds the Compose-free frame model (`VideoFrame`, `FrameFormat`),
+frame-accurate decoding (`VideoDecoder`, through WebCodecs in the browser), encoding
+(`MediaWriter`, SDR only in the browser), and the source,
+decoder and stream types (`MediaSource`, `DecoderThreads`, `VideoInfo`, …) that
+`ffplay` builds on and names with typealiases.
 
 `ffplay` excludes tvOS and watchOS because Compose UI artifacts are not
 published for those targets. `player` publishes JS and Wasm artifacts so shared
@@ -168,7 +175,7 @@ FFmpegKMP/
 ├── ffmpeg/            Pinned FFmpeg source checkout
 ├── native-build/      Android, Apple, JVM, and Wasm build pipelines
 ├── bindings/          One KMP module for native, JNI, and Wasm interop
-├── library/           Public core, FFmpeg, FFprobe, FFplay, and filter APIs
+├── library/           Public core, FFmpeg, FFprobe, codec, FFplay, and filter APIs
 └── samples/           Android, desktop, iOS, and web examples
 ```
 

@@ -9,6 +9,9 @@ package io.github.aftrolle.ffmpegkmp.ffplay
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
+import io.github.aftrolle.ffmpegkmp.codec.ColorPrimaries
+import io.github.aftrolle.ffmpegkmp.codec.ColorTransfer
+import io.github.aftrolle.ffmpegkmp.codec.VideoInfo
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
 import androidx.compose.runtime.key
@@ -24,7 +27,6 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.viewinterop.UIKitView
 import io.github.aftrolle.ffmpegkmp.bindings.NativePlatformVideoFrame
 import io.github.aftrolle.ffmpegkmp.bindings.NativePlatformVideoFrameKind
-import io.github.aftrolle.ffmpegkmp.bindings.NativeVideoFrame
 import kotlinx.cinterop.CPointer
 import kotlinx.cinterop.alloc
 import kotlinx.cinterop.memScoped
@@ -34,7 +36,6 @@ import kotlinx.cinterop.reinterpret
 import kotlinx.cinterop.useContents
 import kotlinx.cinterop.value
 import kotlinx.coroutines.flow.MutableStateFlow
-import kotlin.time.Duration.Companion.microseconds
 import platform.AVFoundation.AVLayerVideoGravityResize
 import platform.AVFoundation.AVLayerVideoGravityResizeAspect
 import platform.AVFoundation.AVLayerVideoGravityResizeAspectFill
@@ -136,20 +137,20 @@ private class IOSSampleBufferOutput : FFplayVideoOutput {
                 hardwareFrameImport = directPresentation,
                 softwareFrameUpload = true,
                 zeroCopy = directPresentation,
-                hdrTransfers = if (directPresentation) setOf("PQ", "HLG") else emptySet(),
+                hdrTransfers = if (directPresentation) setOf(ColorTransfer.PQ, ColorTransfer.HLG) else emptySet(),
                 colorSpaces = if (directPresentation) {
-                    setOf("sRGB", "Display P3", "BT.2020")
+                    setOf(ColorPrimaries.BT709, ColorPrimaries.DISPLAY_P3, ColorPrimaries.BT2020)
                 } else {
-                    setOf("sRGB")
+                    setOf(ColorPrimaries.BT709)
                 },
                 toneMapHdrToSdr = true,
             )
         }
 
     private var view: SampleBufferVideoView? = null
-    private var videoInfo: FFplayVideoInfo? = null
+    private var videoInfo: VideoInfo? = null
 
-    fun updateVideoInfo(videoInfo: FFplayVideoInfo?) {
+    fun updateVideoInfo(videoInfo: VideoInfo?) {
         this.videoInfo = videoInfo
     }
 
@@ -169,17 +170,7 @@ private class IOSSampleBufferOutput : FFplayVideoOutput {
         return true
     }
 
-    override fun submitNative(frame: NativeVideoFrame, video: FFplayVideoInfo?): Boolean {
-        frames.value = FFplayFrame(
-            image = frame.toImageBitmap(),
-            presentationTime = frame.presentationTimeUs.microseconds,
-            sampleAspectRatio = video.sampleAspectRatioValue(),
-            rotationDegrees = video?.rotationDegrees ?: 0.0,
-        )
-        return true
-    }
-
-    override fun submitPlatform(frame: NativePlatformVideoFrame, video: FFplayVideoInfo?): Boolean {
+    override fun submitPlatform(frame: NativePlatformVideoFrame, video: VideoInfo?): Boolean {
         if (frame.kind != NativePlatformVideoFrameKind.CV_PIXEL_BUFFER) return false
         val target = view ?: return false
         val imageBuffer = frame.handle as? CVImageBufferRef ?: return false
@@ -287,6 +278,6 @@ private fun ContentScale.toVideoGravity(): String? = when (this) {
     else -> AVLayerVideoGravityResizeAspect
 }
 
-private fun FFplayVideoInfo?.hasIdentityDisplayTransform(): Boolean =
+private fun VideoInfo?.hasIdentityDisplayTransform(): Boolean =
     this != null && rotationDegrees.normalizedRotation() == 0f &&
         kotlin.math.abs(sampleAspectRatioValue() - 1.0) < 0.000_001

@@ -5,6 +5,7 @@ import io.github.aftrolle.ffmpegkmp.bindings.InternalFFmpegKmpApi
 import io.github.aftrolle.ffmpegkmp.bindings.NativePlayerBridge
 import io.github.aftrolle.ffmpegkmp.bindings.NativePlayerSource
 import io.github.aftrolle.ffmpegkmp.bindings.createInMemoryPlayerBridge
+import io.github.aftrolle.ffmpegkmp.codec.MediaSource
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import kotlin.test.Test
@@ -38,7 +39,7 @@ class FFplayPrepareConcurrencyJvmTest {
             },
             audioOpener = { null },
         )
-        val preparing = async(Dispatchers.Default) { player.prepare(FFplaySource("slow-network.mp4")) }
+        val preparing = async(Dispatchers.Default) { player.prepare(MediaSource("slow-network.mp4")) }
         assertTrue(entered.await(5, TimeUnit.SECONDS))
 
         val elapsed = measureTime {

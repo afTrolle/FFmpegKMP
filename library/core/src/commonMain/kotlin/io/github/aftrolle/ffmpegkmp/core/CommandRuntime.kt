@@ -18,17 +18,13 @@ import io.github.aftrolle.ffmpegkmp.bindings.NativeSinkResource
 import io.github.aftrolle.ffmpegkmp.bindings.NativeSourceResource
 import io.github.aftrolle.ffmpegkmp.bindings.createPlatformExecutionBridge
 import kotlin.concurrent.atomics.AtomicBoolean
-import kotlin.concurrent.atomics.AtomicInt
 import kotlin.concurrent.atomics.AtomicReference
 import kotlin.concurrent.atomics.ExperimentalAtomicApi
-import kotlin.concurrent.atomics.decrementAndFetch
-import kotlin.concurrent.atomics.incrementAndFetch
 import kotlin.random.Random
 import kotlin.time.Duration
 import kotlin.time.TimeSource
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
-import kotlinx.coroutines.CompletableJob
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
@@ -48,6 +44,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.transformWhile
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.withContext
 import okio.Sink
 import okio.buffer
@@ -61,18 +58,20 @@ public class CommandRuntimeClient private constructor(
     private val kind: CommandKind,
     private val bridge: NativeExecutionBridge,
     private val limits: CommandRuntimeLimits,
+    private val scheduler: CommandScheduler,
     @Suppress("UNUSED_PARAMETER") constructorMarker: Unit,
 ) : AutoCloseable {
     public constructor(
         kind: CommandKind,
         limits: CommandRuntimeLimits = CommandRuntimeLimits.Default,
-    ) : this(kind, createPlatformExecutionBridge(), limits, Unit)
+    ) : this(kind, createPlatformExecutionBridge(), limits, GlobalCommandScheduler, Unit)
 
     internal constructor(
         kind: CommandKind,
         bridge: NativeExecutionBridge,
         limits: CommandRuntimeLimits = CommandRuntimeLimits.Default,
-    ) : this(kind, bridge, limits, Unit)
+        scheduler: CommandScheduler = GlobalCommandScheduler,
+    ) : this(kind, bridge, limits, scheduler, Unit)
 
     private val clientState = AtomicReference(ClientState())
     private val bridgeClosed = AtomicBoolean(false)
@@ -82,32 +81,50 @@ public class CommandRuntimeClient private constructor(
 
     /**
      * Starts the command in the background and returns a handle to it. The handle's `cancel`
-     * stops the native run; the session reports itself cancelled once the run has unwound.
+     * stops the native run; the session reports itself cancelled once the run has unwound. When
+     * 64 commands are already waiting, the session fails instead of waiting for room.
      */
     public fun enqueue(
         arguments: List<String>,
         io: CommandIo = CommandIo.Empty,
-    ): ExecutionSession<ExecutionResult> = start(enqueuedScope, arguments, io)
+    ): ExecutionSession<ExecutionResult> {
+        requireNoNul(arguments)
+        return start(enqueuedScope, arguments, io, scheduler.take())
+    }
 
     /**
-     * Runs the command and awaits its result. The session is a child of the calling coroutine, so
-     * cancelling the caller (including via `withTimeout`) cancels the native run, and this
-     * returns only after that run has unwound — otherwise an abandoned ffmpeg/ffprobe would keep
-     * the single-run bridge busy and block every later command in the process.
+     * Runs the command and awaits its result, first waiting for room in the queue if it is full.
+     * The session is a child of the calling coroutine, so cancelling the caller (including via
+     * `withTimeout`) cancels the native run, or withdraws the command while it waits for room, and
+     * this returns only after that run has unwound — otherwise an abandoned ffmpeg/ffprobe would
+     * keep the single-run bridge busy and block every later command in the process.
      */
     public suspend fun execute(
         arguments: List<String>,
         io: CommandIo = CommandIo.Empty,
     ): ExecutionResult {
-        currentCoroutineContext().ensureActive()
+        requireNoNul(arguments)
+        val ticket = try {
+            currentCoroutineContext().ensureActive()
+            scheduler.takeWhenRoom()
+        } catch (cancellation: CancellationException) {
+            io.closeMounts()
+            throw cancellation
+        }
         return coroutineScope {
-            start(this, arguments, io).await()
+            start(this, arguments, io, ticket).await()
         }
     }
 
-    private fun start(scope: CoroutineScope, arguments: List<String>, io: CommandIo): CommandExecutionSession {
+    private fun requireNoNul(arguments: List<String>) =
         require(arguments.none { '\u0000' in it }) { "Arguments must not contain NUL" }
 
+    private fun start(
+        scope: CoroutineScope,
+        arguments: List<String>,
+        io: CommandIo,
+        ticket: CommandScheduler.Ticket?,
+    ): CommandExecutionSession {
         val session = CommandExecutionSession(
             scope = scope,
             id = nextExecutionId(),
@@ -119,10 +136,11 @@ public class CommandRuntimeClient private constructor(
             onTerminal = ::removeSession,
         )
         if (!addSession(session)) {
+            ticket?.release()
             session.abandon()
             throw IllegalStateException("The command client is closed")
         }
-        session.start()
+        session.start(ticket)
         return session
     }
 
@@ -172,49 +190,103 @@ private data class ClientState(
 )
 
 /**
- * Hands the process-wide, single-run native runtime to sessions in the order they were started.
+ * Hands the process-wide native runtime to sessions in the order they were started, [lanes]
+ * sessions at a time: one where fftools runs in-process and keeps its state in globals, more
+ * where each command gets a runtime instance of its own.
  *
- * A session takes a ticket when it starts and waits for the ticket before it on its own
- * coroutine, so leaving the line is just cancelling that coroutine. A ticket is released when its
- * session ends, whether or not the session ever ran, and only passes the turn on once the ticket
- * before it has finished — a session that left the line must not let the one behind it run
- * beside the one still in front.
+ * A session takes a ticket when it starts and waits for its turn on its own coroutine, so leaving
+ * the line is just cancelling that coroutine. A ticket is released when its session ends, whether
+ * or not the session ever ran. A session that left the line without a turn never held a lane, and
+ * a lane is handed on only when the session holding it has finished.
  */
 @OptIn(ExperimentalAtomicApi::class)
-private object GlobalExecutionQueue {
-    private val tail = AtomicReference<Job>(Job().apply { complete() })
-    private val waiting = AtomicInt(0)
+internal class CommandScheduler(
+    private val lanes: Int,
+    capacity: Int = GLOBAL_EXECUTION_QUEUE_CAPACITY,
+) {
+    private val roomInLine = Semaphore(capacity)
+    private val state = AtomicReference(Lanes())
 
-    /** Null when [GLOBAL_EXECUTION_QUEUE_CAPACITY] sessions are already waiting for their turn. */
-    fun take(): Ticket? {
-        if (waiting.incrementAndFetch() > GLOBAL_EXECUTION_QUEUE_CAPACITY) {
-            waiting.decrementAndFetch()
-            return null
-        }
-        val turn = Job()
-        return Ticket(previous = tail.exchange(turn), turn = turn)
+    init {
+        require(lanes > 0) { "A command scheduler needs at least one lane" }
     }
 
-    class Ticket(private val previous: Job, private val turn: CompletableJob) {
+    /** Null when [GLOBAL_EXECUTION_QUEUE_CAPACITY] sessions are already waiting for their turn. */
+    fun take(): Ticket? = if (roomInLine.tryAcquire()) join() else null
+
+    /** Like [take], but suspends while the line is full. If this is cancelled, nothing was taken. */
+    suspend fun takeWhenRoom(): Ticket {
+        roomInLine.acquire()
+        return join()
+    }
+
+    /** Whenever a lane is free the line is empty, so a ticket either runs at once or queues. */
+    private class Lanes(val running: Int = 0, val line: List<Ticket> = emptyList())
+
+    private fun join(): Ticket {
+        val ticket = Ticket()
+        while (true) {
+            val current = state.load()
+            if (current.running < lanes) {
+                if (state.compareAndSet(current, Lanes(current.running + 1, current.line))) {
+                    ticket.grant()
+                    return ticket
+                }
+            } else if (state.compareAndSet(current, Lanes(current.running, current.line + ticket))) {
+                return ticket
+            }
+        }
+    }
+
+    private fun leave(ticket: Ticket) {
+        while (true) {
+            val current = state.load()
+            val queued = ticket in current.line
+            val next = if (queued) null else current.line.firstOrNull()
+            val updated = when {
+                queued -> Lanes(current.running, current.line - ticket)
+                next != null -> Lanes(current.running, current.line.drop(1))
+                else -> Lanes(current.running - 1, current.line)
+            }
+            if (state.compareAndSet(current, updated)) {
+                next?.grant()
+                return
+            }
+        }
+    }
+
+    inner class Ticket {
+        private val granted = CompletableDeferred<Unit>()
         private val waitingInLine = AtomicBoolean(true)
         private val released = AtomicBoolean(false)
 
-        suspend fun awaitTurn() {
-            previous.join()
-            leaveLine()
-        }
+        suspend fun awaitTurn() = granted.await()
 
         fun release() {
             if (!released.compareAndSet(expectedValue = false, newValue = true)) return
             leaveLine()
-            previous.invokeOnCompletion { turn.complete() }
+            leave(this)
+        }
+
+        fun grant() {
+            granted.complete(Unit)
+            leaveLine()
         }
 
         private fun leaveLine() {
-            if (waitingInLine.compareAndSet(expectedValue = true, newValue = false)) waiting.decrementAndFetch()
+            if (waitingInLine.compareAndSet(expectedValue = true, newValue = false)) roomInLine.release()
         }
     }
 }
+
+/** Shared by every client in the process, because fftools keeps its state in globals. */
+internal val GlobalCommandScheduler: CommandScheduler by lazy { CommandScheduler(platformCommandLanes) }
+
+/**
+ * How many commands may run at once in this process: 1 where fftools runs in-process and keeps
+ * its state in globals, more where each command gets its own runtime instance.
+ */
+internal expect val platformCommandLanes: Int
 
 internal const val GLOBAL_EXECUTION_QUEUE_CAPACITY: Int = 64
 
@@ -271,7 +343,7 @@ private class CommandExecutionSession(
     private val settled = AtomicBoolean(false)
 
     @kotlin.concurrent.Volatile
-    private var ticket: GlobalExecutionQueue.Ticket? = null
+    private var ticket: CommandScheduler.Ticket? = null
 
     // Native code and file copies run off the caller's dispatcher even when the caller is on Main.
     private val job: Job = scope.launch(Dispatchers.Default, start = CoroutineStart.LAZY) { run() }
@@ -298,13 +370,12 @@ private class CommandExecutionSession(
     }
 
     /**
-     * Takes a place in the global line and starts the job; the session fails if the line is full.
+     * Starts the job once it holds a place in the line; the session fails if there was none.
      * Called once the client has registered the session, so everything the completion handler
      * releases (the ticket, the I/O, the registration) exists by the time it can run — including
      * when the job was already cancelled with its scope and the handler runs right here.
      */
-    fun start() {
-        val taken = GlobalExecutionQueue.take()
+    fun start(taken: CommandScheduler.Ticket?) {
         if (taken == null) {
             fail(
                 NativeExecutionException(
@@ -542,18 +613,19 @@ private class CommandExecutionSession(
         }
     }
 
-    private fun closeIo() {
-        io.mounts.forEach { mount ->
-            runCatching {
-                when (val resource = mount.resource) {
-                    is NativeFileResource -> resource.fileHandle.close()
-                    is NativeSourceResource -> resource.source.close()
-                    is NativeSinkResource -> resource.sink.close()
-                }
+    private fun closeIo() = io.closeMounts()
+}
+
+private fun CommandIo.closeMounts() {
+    mounts.forEach { mount ->
+        runCatching {
+            when (val resource = mount.resource) {
+                is NativeFileResource -> resource.fileHandle.close()
+                is NativeSourceResource -> resource.source.close()
+                is NativeSinkResource -> resource.sink.close()
             }
         }
     }
-
 }
 
 /** FFmpeg's own exit status after a signal, reported for a session cancelled before it finished. */

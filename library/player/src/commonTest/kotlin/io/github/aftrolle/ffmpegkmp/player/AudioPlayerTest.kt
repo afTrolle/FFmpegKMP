@@ -133,7 +133,7 @@ class AudioPlayerTest {
         // A playing loop never idles, so this runs on a real dispatcher and waits in real time.
         val decoder = FakeDecoder(totalFrames = Int.MAX_VALUE)
         val output = FakeOutput()
-        val player = AudioPlayer(AudioDecoder(decoder), output, Dispatchers.Default, chunkFrames = 3)
+        val player = AudioPlayer(AudioDecoder(decoder, thread = null), output, Dispatchers.Default, chunkFrames = 3)
         player.play()
         withContext(Dispatchers.Default) {
             withTimeout(5_000) { player.state.first { it == PlaybackState.PLAYING } }
@@ -172,7 +172,7 @@ class AudioPlayerTest {
                 openDecoder = {
                     // The caller gives up while the (uninterruptible) native open is in progress.
                     coroutineContext.cancel()
-                    AudioDecoder(decoder)
+                    AudioDecoder(decoder, thread = null)
                 },
                 openOutput = { output },
                 dispatcher = dispatcher,
@@ -188,7 +188,7 @@ class AudioPlayerTest {
     private fun TestScope.player(totalFrames: Int): Triple<AudioPlayer, FakeDecoder, FakeOutput> {
         val decoder = FakeDecoder(totalFrames)
         val output = FakeOutput()
-        val player = AudioPlayer(AudioDecoder(decoder), output, StandardTestDispatcher(testScheduler), chunkFrames = 3)
+        val player = AudioPlayer(AudioDecoder(decoder, thread = null), output, StandardTestDispatcher(testScheduler), chunkFrames = 3)
         return Triple(player, decoder, output)
     }
 }

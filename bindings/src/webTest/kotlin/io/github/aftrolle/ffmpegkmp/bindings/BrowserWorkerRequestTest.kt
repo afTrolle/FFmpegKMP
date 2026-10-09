@@ -53,7 +53,7 @@ class BrowserWorkerRequestTest {
                 "\"activeDecoder\":2,\"pixelFormat\":23,\"pixelFormatName\":\"nv12\"," +
                 "\"bitDepth\":10,\"sarNum\":1,\"sarDen\":1,\"rotation\":90.0," +
                 "\"colorPrimaries\":9,\"colorTransfer\":16,\"colorSpace\":9," +
-                "\"colorRange\":1,\"chromaLocation\":1,\"hdrType\":1," +
+                "\"colorRange\":1,\"chromaLocation\":1,\"hdrFlags\":1," +
                 "\"masteringHasPrimaries\":0,\"masteringHasLuminance\":1," +
                 "\"masteringRedX\":0.0,\"masteringRedY\":0.0,\"masteringGreenX\":0.0," +
                 "\"masteringGreenY\":0.0,\"masteringBlueX\":0.0,\"masteringBlueY\":0.0," +
@@ -68,7 +68,8 @@ class BrowserWorkerRequestTest {
         assertNull(result.durationUs)
         assertEquals(7u, result.queueSerial)
         assertEquals(NativePlayerDecoderKind.SOFTWARE, result.activeDecoder)
-        assertEquals(NativePlayerHdrType.HDR10, result.videoInfo?.hdrType)
+        assertEquals(true, result.videoInfo?.dolbyVision)
+        assertEquals(false, result.videoInfo?.hdr10Plus)
         assertEquals(1000.0, result.videoInfo?.masteringDisplay?.maxLuminance)
         assertEquals(400, result.videoInfo?.maxFrameAverageLightLevel)
         assertEquals(3L, result.droppedFrames)

@@ -230,7 +230,7 @@ public class AudioPlayer internal constructor(
     }
 
     /** Repositions decoding and drops audio already queued on the device. */
-    private fun restart(position: Duration): Duration {
+    private suspend fun restart(position: Duration): Duration {
         val target = decoder.duration?.let { minOf(position, it) } ?: position
         output.flush()
         decoder.seek(target)
@@ -259,7 +259,7 @@ public class AudioPlayer internal constructor(
         public suspend fun open(fileHandle: FileHandle, format: PcmFormat = PcmFormat.Default): AudioPlayer =
             open(format) { AudioDecoder.open(fileHandle, format) }
 
-        private suspend fun open(format: PcmFormat, openDecoder: () -> AudioDecoder): AudioPlayer =
+        private suspend fun open(format: PcmFormat, openDecoder: suspend () -> AudioDecoder): AudioPlayer =
             openWith(openDecoder, { createPlatformAudioOutput(format) })
 
         /**
@@ -267,7 +267,7 @@ public class AudioPlayer internal constructor(
          * caller was cancelled meanwhile, the finished player is closed instead of leaked.
          */
         internal suspend fun openWith(
-            openDecoder: () -> AudioDecoder,
+            openDecoder: suspend () -> AudioDecoder,
             openOutput: () -> PlatformAudioOutput,
             dispatcher: CoroutineDispatcher = playbackDispatcher,
         ): AudioPlayer {

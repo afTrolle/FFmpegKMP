@@ -2,7 +2,11 @@
 package io.github.aftrolle.ffmpegkmp.ffplay
 
 import io.github.aftrolle.ffmpegkmp.bindings.InternalFFmpegKmpApi
-import io.github.aftrolle.ffmpegkmp.bindings.NativeVideoFrame
+import io.github.aftrolle.ffmpegkmp.codec.DecoderKind
+import io.github.aftrolle.ffmpegkmp.codec.DecoderPreference
+import io.github.aftrolle.ffmpegkmp.codec.MediaSource
+import io.github.aftrolle.ffmpegkmp.codec.VideoFrame
+import io.github.aftrolle.ffmpegkmp.codec.VideoInfo
 import io.github.aftrolle.ffmpegkmp.core.CommandIo
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
@@ -24,12 +28,12 @@ class FFplayProductionJvmTest {
             "Missing shared playback fixture"
         }.use { it.readBytes() }
         val output = ProductionOutput()
-        val player = FFplayPlayer(FFplayConfiguration(decoderPreference = FFplayDecoderPreference.SOFTWARE))
+        val player = FFplayPlayer(FFplayConfiguration(decoderPreference = DecoderPreference.SOFTWARE))
         player.attachOutput(output)
 
         try {
             player.prepare(
-                FFplaySource(
+                MediaSource(
                     input = "playback-color-patches-1s.mp4",
                     io = CommandIo {
                         input("playback-color-patches-1s.mp4", Buffer().write(bytes))
@@ -38,7 +42,7 @@ class FFplayProductionJvmTest {
             )
 
             assertEquals(FFplayState.READY, player.snapshot.value.state)
-            assertEquals(FFplayDecoderKind.SOFTWARE, player.snapshot.value.output?.decoder)
+            assertEquals(DecoderKind.SOFTWARE, player.snapshot.value.output?.decoder)
             assertNotNull(player.snapshot.value.video)
             assertTrue(output.framesReceived > 0)
         } finally {
@@ -56,7 +60,7 @@ class FFplayProductionJvmTest {
 
         val preparation = async(Dispatchers.Default) {
             assertFailsWith<IllegalStateException> {
-                player.prepare(FFplaySource("blocking.mp4"))
+                player.prepare(MediaSource("blocking.mp4"))
             }
         }
         assertTrue(enteredPrepare.await(2, TimeUnit.SECONDS), "prepare did not enter the engine")
@@ -80,7 +84,7 @@ class FFplayProductionJvmTest {
 
         val preparation = async(Dispatchers.Default) {
             assertFailsWith<IllegalStateException> {
-                player.prepare(FFplaySource("never-opened.mp4"))
+                player.prepare(MediaSource("never-opened.mp4"))
             }
         }
         assertTrue(resetEntered.await(2, TimeUnit.SECONDS), "cancellation reset did not start")
@@ -105,7 +109,8 @@ private class ProductionOutput : FFplayVideoOutput {
 
     override fun submit(frame: FFplayFrame): Boolean = true
 
-    override fun submitNative(frame: NativeVideoFrame, video: FFplayVideoInfo?): Boolean {
+    override fun submitNative(frame: VideoFrame, video: VideoInfo?): Boolean {
+        frame.close()
         framesReceived++
         return true
     }
@@ -123,7 +128,7 @@ private class BlockingPrepareEngine(
     var closeCount = 0
         private set
 
-    override fun prepare(source: FFplaySource) {
+    override fun prepare(source: MediaSource, protection: FFplayContentProtection) {
         enteredPrepare.countDown()
         while (!cancellationRequested) Thread.onSpinWait()
         prepareExited.countDown()
@@ -159,7 +164,7 @@ private class BlockingResetEngine(
         check(releaseReset.await(2, TimeUnit.SECONDS)) { "Timed out waiting to release reset" }
     }
 
-    override fun prepare(source: FFplaySource) {
+    override fun prepare(source: MediaSource, protection: FFplayContentProtection) {
         prepareCount++
     }
 

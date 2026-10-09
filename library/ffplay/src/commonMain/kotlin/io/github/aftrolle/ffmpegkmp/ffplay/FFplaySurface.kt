@@ -9,13 +9,11 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.DrawScope
-import androidx.compose.ui.graphics.drawscope.withTransform
 import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.unit.IntOffset
-import androidx.compose.ui.unit.IntSize
+import androidx.compose.ui.unit.IntRect
+import io.github.aftrolle.ffmpegkmp.codec.ColorPrimaries
 import kotlinx.coroutines.DelicateCoroutinesApi
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.GlobalScope
@@ -97,7 +95,7 @@ private class ComposeCanvasOutput : FFplayVideoOutput {
         // Wide-gamut/F16 support is promoted only by platform outputs after a
         // real display/backend capability check.
         hdrTransfers = emptySet(),
-        colorSpaces = setOf("sRGB"),
+        colorSpaces = setOf(ColorPrimaries.BT709),
         toneMapHdrToSdr = true,
     )
 
@@ -112,26 +110,9 @@ private class ComposeCanvasOutput : FFplayVideoOutput {
 }
 
 internal fun DrawScope.drawFrame(frame: FFplayFrame, contentScale: ContentScale) {
-    val rotation = frame.rotationDegrees.normalizedRotation()
-    val quarterTurn = rotation == 90f || rotation == 270f
-    val pixelWidth = frame.image.width * frame.sampleAspectRatio.toFloat()
-    val pixelHeight = frame.image.height.toFloat()
-    val source = if (quarterTurn) Size(pixelHeight, pixelWidth) else Size(pixelWidth, pixelHeight)
-    val scale = contentScale.computeScaleFactor(source, size)
-    val destination = Size(source.width * scale.scaleX, source.height * scale.scaleY)
-    val unrotatedWidth = if (quarterTurn) destination.height else destination.width
-    val unrotatedHeight = if (quarterTurn) destination.width else destination.height
-    val left = (size.width - unrotatedWidth) / 2f
-    val top = (size.height - unrotatedHeight) / 2f
-    withTransform({ rotate(rotation, center) }) {
-        drawImage(
-            image = frame.image,
-            srcOffset = IntOffset.Zero,
-            srcSize = IntSize(frame.image.width, frame.image.height),
-            dstOffset = IntOffset(left.toInt(), top.toInt()),
-            dstSize = IntSize(unrotatedWidth.toInt(), unrotatedHeight.toInt()),
-        )
-    }
+    val image = frame.image
+    val display = displaySize(image.width, image.height, frame.sampleAspectRatio, frame.rotationDegrees)
+    drawUpright(image, IntRect(0, 0, image.width, image.height), frame.rotationDegrees, contentScale.place(display, size))
 }
 
 internal fun Double.normalizedRotation(): Float =

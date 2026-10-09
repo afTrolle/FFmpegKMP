@@ -3,6 +3,7 @@
     ExperimentalWasmJsInterop::class,
     androidx.compose.ui.ExperimentalComposeUiApi::class,
     io.github.aftrolle.ffmpegkmp.bindings.InternalFFmpegKmpApi::class,
+    io.github.aftrolle.ffmpegkmp.core.InternalFFmpegKmpApi::class,
 )
 
 package io.github.aftrolle.ffmpegkmp.ffplay
@@ -15,9 +16,11 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.viewinterop.HtmlElementView
-import io.github.aftrolle.ffmpegkmp.bindings.NativeVideoFrame
+import io.github.aftrolle.ffmpegkmp.codec.ColorPrimaries
+import io.github.aftrolle.ffmpegkmp.codec.VideoFrame
 import io.github.aftrolle.ffmpegkmp.bindings.NativePlatformVideoFrame
 import io.github.aftrolle.ffmpegkmp.bindings.NativePlatformVideoFrameKind
+import io.github.aftrolle.ffmpegkmp.codec.VideoInfo
 import kotlin.js.ExperimentalWasmJsInterop
 import kotlin.js.JsAny
 import kotlinx.browser.document
@@ -66,7 +69,7 @@ private class WebCanvasOutput : FFplayVideoOutput {
         softwareFrameUpload = true,
         zeroCopy = false,
         hdrTransfers = emptySet(),
-        colorSpaces = setOf("sRGB"),
+        colorSpaces = setOf(ColorPrimaries.BT709),
         toneMapHdrToSdr = true,
     )
     var scaleMode: String = "fit"
@@ -74,20 +77,25 @@ private class WebCanvasOutput : FFplayVideoOutput {
 
     override fun submit(frame: FFplayFrame): Boolean = false
 
-    override fun submitNative(frame: NativeVideoFrame, video: FFplayVideoInfo?): Boolean {
-        drawRgba(
-            canvas,
-            frame.rgba.toCanvasBytes(),
-            frame.width,
-            frame.height,
-            scaleMode,
-            video.sampleAspectRatioValue(),
-            video?.rotationDegrees ?: 0.0,
-        )
-        return true
+    override fun submitNative(frame: VideoFrame, video: VideoInfo?): Boolean = frame.use {
+        // The worker's RGBA8 bytes, packed, straight into ImageData.
+        it.usePlanes { planes ->
+            planes.single().bytes.useArray { bytes, offset ->
+                check(offset == 0) { "The browser's frames start their array" }
+                drawRgba(
+                    canvas,
+                    bytes.toCanvasBytes(),
+                    it.width,
+                    it.height,
+                    scaleMode,
+                    it.sampleAspectRatio,
+                    it.rotationDegrees,
+                )
+            }
+        } != null
     }
 
-    override fun submitPlatform(frame: NativePlatformVideoFrame, video: FFplayVideoInfo?): Boolean {
+    override fun submitPlatform(frame: NativePlatformVideoFrame, video: VideoInfo?): Boolean {
         if (frame.kind != NativePlatformVideoFrameKind.WEB_VIDEO_FRAME) return false
         return drawRegisteredVideoFrame(
             canvas,
@@ -167,7 +175,7 @@ private fun drawRgba(
       context.clearRect(0, 0, targetWidth, targetHeight);
       context.save();
       context.translate(targetWidth / 2, targetHeight / 2);
-      context.rotate(normalizedRotation * Math.PI / 180);
+      context.rotate(-normalizedRotation * Math.PI / 180); // FFmpeg reports it anticlockwise
       context.drawImage(scratch, -drawWidth / 2, -drawHeight / 2, drawWidth, drawHeight);
       context.restore();
     }
@@ -228,7 +236,7 @@ private fun drawRegisteredVideoFrame(
         context.clearRect(0, 0, targetWidth, targetHeight);
         context.save();
         context.translate(targetWidth / 2, targetHeight / 2);
-        context.rotate(normalizedRotation * Math.PI / 180);
+        context.rotate(-normalizedRotation * Math.PI / 180); // FFmpeg reports it anticlockwise
         context.drawImage(frame, -drawWidth / 2, -drawHeight / 2, drawWidth, drawHeight);
         context.restore();
         return true;

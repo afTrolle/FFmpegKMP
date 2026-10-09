@@ -64,9 +64,9 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import io.github.aftrolle.ffmpegkmp.codec.MediaSource
 import io.github.aftrolle.ffmpegkmp.core.AudioLevel
 import io.github.aftrolle.ffmpegkmp.core.CommandIo
-import io.github.aftrolle.ffmpegkmp.ffplay.FFplaySource
 import io.github.aftrolle.ffmpegkmp.ffplay.FFplayState
 import io.github.aftrolle.ffmpegkmp.ffplay.FFplaySurface
 import io.github.aftrolle.ffmpegkmp.ffplay.rememberFFplayPlayer
@@ -276,7 +276,7 @@ private fun PreviewPanel(state: StudioState, modifier: Modifier = Modifier) {
             val path = "/studio/preview-${selectedClip.id}.${selectedClip.displayName.previewExtension()}"
             // Seekable, so the audio track can be read alongside the video from the same bytes.
             val io = CommandIo { input(path, ByteArrayFileHandle(bytes)) }
-            player.prepare(FFplaySource(path, io))
+            player.prepare(MediaSource(path, io))
             player.seekTo(selectedClip.trimStartSeconds.seconds)
             player.play()
         } catch (cancellation: CancellationException) {

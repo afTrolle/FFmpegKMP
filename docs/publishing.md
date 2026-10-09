@@ -10,7 +10,7 @@ These are declaration/API artifacts, not ready-to-run FFmpeg distributions.
 Consumers must build or otherwise provide a compatible native runtime under
 the applicable platform and licence rules.
 
-Only `:bindings` and the six projects under `:library` apply the publishing
+Only `:bindings` and the seven projects under `:library` apply the publishing
 plugin. Native-build and sample projects are excluded. The
 `verifyMavenPublicationScope` task fails if that allow-list changes, and the
 archive scan also rejects sample package paths.
@@ -24,6 +24,7 @@ target artifact.
 | --- | --- |
 | Bindings | `io.github.aftrolle.ffmpegkmp:bindings:<version>` |
 | Core | `io.github.aftrolle.ffmpegkmp:core:<version>` |
+| Codec types | `io.github.aftrolle.ffmpegkmp:codec:<version>` |
 | FFmpeg API | `io.github.aftrolle.ffmpegkmp:ffmpeg:<version>` |
 | FFprobe API | `io.github.aftrolle.ffmpegkmp:ffprobe:<version>` |
 | FFplay API | `io.github.aftrolle.ffmpegkmp:ffplay:<version>` |

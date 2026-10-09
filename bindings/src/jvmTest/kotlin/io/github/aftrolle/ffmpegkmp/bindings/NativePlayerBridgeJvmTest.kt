@@ -8,6 +8,7 @@ import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertNotEquals
 import kotlin.test.assertTrue
 import okio.Buffer
@@ -58,10 +59,19 @@ class NativePlayerBridgeJvmTest {
             val frame = frames.single()
             assertTrue(frame.width > 0)
             assertTrue(frame.height > 0)
-            assertEquals(frame.stride * frame.height, frame.rgba.size)
             assertEquals(frame.width, bridge.snapshot().videoWidth)
             assertEquals(frame.height, bridge.snapshot().videoHeight)
             assertTrue((bridge.snapshot().durationUs ?: 0) > 0)
+            // The decoded frame itself, not an RGBA copy: yuv420p in three planes.
+            frame.frame.use { decoded ->
+                assertEquals(frame.width, decoded.width)
+                assertEquals(YUV420P, decoded.format?.layout)
+                decoded.usePlanes { planes ->
+                    assertEquals(3, planes.size)
+                    assertEquals(frame.height, planes[0].rows)
+                    assertTrue(planes[0].rowBytes >= frame.width)
+                }
+            }
         }
     }
 
@@ -88,7 +98,11 @@ class NativePlayerBridgeJvmTest {
 
             assertEquals(NativePlayerDecoderKind.HARDWARE, bridge.snapshot().activeDecoder)
             assertEquals(1, frames.size)
-            assertTrue(frames.single().rgba.isNotEmpty())
+            // Downloaded from VideoToolbox's NV12.
+            frames.single().frame.use { frame ->
+                assertEquals(NV12, frame.format?.layout)
+                frame.usePlanes { planes -> assertEquals(2, planes.size) }
+            }
         }
     }
 
@@ -108,6 +122,7 @@ class NativePlayerBridgeJvmTest {
 
             assertEquals(NativePlayerDecoderKind.SOFTWARE, bridge.snapshot().activeDecoder)
             assertEquals(1, frames.size)
+            frames.forEach { it.frame.close() }
         }
     }
 
@@ -133,6 +148,7 @@ class NativePlayerBridgeJvmTest {
                 "Expected the preview plus multiple scheduled playback frames",
             )
             assertTrue(frames.map { it.presentationTimeUs }.distinct().size > 1)
+            frames.forEach { it.frame.close() }
             assertTrue(updates.any { it.state == NativePlayerState.PLAYING })
             assertTrue(updates.any { it.positionUs > 0 })
             assertEquals(0, bridge.pause())
@@ -152,6 +168,7 @@ class NativePlayerBridgeJvmTest {
             frame = {
                 // Simulate a renderer that takes longer than a video-frame interval.
                 Thread.sleep(120)
+                it.frame.close()
             },
         ).use { bridge ->
             assertEquals(0, bridge.setOutput(NativePlayerOutputCapabilities()))
@@ -201,7 +218,8 @@ class NativePlayerBridgeJvmTest {
             assertEquals(bridge.snapshot().videoHeight, video.height)
             assertEquals("yuv420p", video.pixelFormatName)
             assertEquals(8, video.bitDepth)
-            assertEquals(NativePlayerHdrType.SDR, video.hdrType)
+            assertFalse(video.dolbyVision)
+            assertFalse(video.hdr10Plus)
         }
     }
 
@@ -212,14 +230,13 @@ class NativePlayerBridgeJvmTest {
             val primaries: Int,
             val transfer: Int,
             val matrix: Int,
-            val hdrType: NativePlayerHdrType,
         )
 
         listOf(
-            ExpectedColor("sdr-bt709.mp4", 1, 1, 1, NativePlayerHdrType.SDR),
-            ExpectedColor("sdr-display-p3.mp4", 12, 1, 1, NativePlayerHdrType.SDR),
-            ExpectedColor("hdr10-pq.mp4", 9, 16, 9, NativePlayerHdrType.HDR10),
-            ExpectedColor("hdr-hlg.mp4", 9, 18, 9, NativePlayerHdrType.HLG),
+            ExpectedColor("sdr-bt709.mp4", 1, 1, 1),
+            ExpectedColor("sdr-display-p3.mp4", 12, 1, 1),
+            ExpectedColor("hdr10-pq.mp4", 9, 16, 9),
+            ExpectedColor("hdr-hlg.mp4", 9, 18, 9),
         ).forEach { expected ->
             createPlatformPlayerBridge(NativePlayerConfiguration(), update = {}).use { bridge ->
                 assertEquals(0, bridge.prepare(videoSource(expected.resource)))
@@ -227,41 +244,43 @@ class NativePlayerBridgeJvmTest {
                 assertEquals(expected.primaries, video.colorPrimaries, expected.resource)
                 assertEquals(expected.transfer, video.colorTransfer, expected.resource)
                 assertEquals(expected.matrix, video.colorSpace, expected.resource)
-                assertEquals(expected.hdrType, video.hdrType, expected.resource)
+                assertFalse(video.dolbyVision, expected.resource)
             }
         }
     }
 
     @Test
-    fun compiledPlayerToneMapsPqAndHlgSoftwareFramesIntoBoundedSdr() {
-        listOf("hdr10-pq.mp4", "hdr-hlg.mp4").forEach { resource ->
-            val passthrough = decodePreview(resource, toneMapHdrToSdr = false)
-            val toneMapped = decodePreview(resource, toneMapHdrToSdr = true)
-
-            assertEquals(passthrough.width, toneMapped.width, resource)
-            assertEquals(passthrough.height, toneMapped.height, resource)
-            assertTrue(
-                !passthrough.rgba.contentEquals(toneMapped.rgba),
-                "$resource must pass through the HDR transfer and gamut conversion",
-            )
-            assertTrue(
-                toneMapped.rgba.indices
-                    .filter { it % 4 == 3 }
-                    .all { toneMapped.rgba[it].toInt() and 0xff == 255 },
-                "$resource must retain opaque alpha",
-            )
-            val passthroughRgb = passthrough.rgba.indices
-                .filter { it % 4 != 3 }
-                .map { passthrough.rgba[it].toInt() and 0xff }
-            val toneMappedRgb = toneMapped.rgba.indices
-                .filter { it % 4 != 3 }
-                .map { toneMapped.rgba[it].toInt() and 0xff }
-            assertTrue(
-                toneMappedRgb.any { it in 1..254 },
-                "$resource must retain bounded SDR midtones; " +
-                    "clipped=${toneMappedRgb.count { it == 255 }}/${toneMappedRgb.size}, " +
-                    "passthroughClipped=${passthroughRgb.count { it == 255 }}/${passthroughRgb.size}",
-            )
+    fun compiledPlayerHandsOutHdrFramesAsDecodedForTheRendererToToneMap() {
+        listOf("hdr10-pq.mp4" to PQ, "hdr-hlg.mp4" to HLG).forEach { (resource, transfer) ->
+            decodePreview(resource).use { frame ->
+                assertEquals(BT2020, frame.format?.primaries, resource)
+                assertEquals(transfer, frame.format?.transfer, resource)
+                // Matrix only, keeping the HDR transfer, against the tone map into sRGB.
+                val passthrough = frame.rgba(NativeFrameFormat(RGBA8, BT2020, transfer, RGB, FULL))
+                val toneMapped = frame.rgba(NativeFrameFormat(RGBA8, BT709, SRGB, RGB, FULL))
+                assertTrue(
+                    !passthrough.contentEquals(toneMapped),
+                    "$resource must pass through the HDR transfer and gamut conversion",
+                )
+                assertTrue(
+                    toneMapped.indices
+                        .filter { it % 4 == 3 }
+                        .all { toneMapped[it].toInt() and 0xff == 255 },
+                    "$resource must retain opaque alpha",
+                )
+                val passthroughRgb = passthrough.indices
+                    .filter { it % 4 != 3 }
+                    .map { passthrough[it].toInt() and 0xff }
+                val toneMappedRgb = toneMapped.indices
+                    .filter { it % 4 != 3 }
+                    .map { toneMapped[it].toInt() and 0xff }
+                assertTrue(
+                    toneMappedRgb.any { it in 1..254 },
+                    "$resource must retain bounded SDR midtones; " +
+                        "clipped=${toneMappedRgb.count { it == 255 }}/${toneMappedRgb.size}, " +
+                        "passthroughClipped=${passthroughRgb.count { it == 255 }}/${passthroughRgb.size}",
+                )
+            }
         }
     }
 
@@ -327,26 +346,43 @@ class NativePlayerBridgeJvmTest {
     }
 }
 
-private fun NativePlayerBridgeJvmTest.decodePreview(
-    resourceName: String,
-    toneMapHdrToSdr: Boolean,
-): NativeVideoFrame {
+private fun NativePlayerBridgeJvmTest.decodePreview(resourceName: String): NativeFrame {
     val frames = mutableListOf<NativeVideoFrame>()
     createPlatformPlayerBridge(
         NativePlayerConfiguration(NativePlayerDecoderPreference.SOFTWARE),
         update = {},
         frame = frames::add,
     ).use { bridge ->
-        assertEquals(
-            0,
-            bridge.setOutput(
-                NativePlayerOutputCapabilities(toneMapHdrToSdr = toneMapHdrToSdr),
-            ),
-        )
+        assertEquals(0, bridge.setOutput(NativePlayerOutputCapabilities()))
         assertEquals(0, bridge.prepare(videoSource(resourceName)))
     }
-    return frames.single()
+    return frames.single().frame
 }
+
+/** The frame converted into [format], an RGBA8 one, as packed rows. */
+private fun NativeFrame.rgba(format: NativeFrameFormat): ByteArray = convert(format).use { converted ->
+    converted.usePlanes { planes ->
+        val plane = planes.single()
+        val buffer = plane.memory as java.nio.ByteBuffer
+        ByteArray(width * height * 4).also { rgba ->
+            for (row in 0 until height) {
+                buffer.duplicate().apply { position(row * plane.rowBytes) }.get(rgba, row * width * 4, width * 4)
+            }
+        }
+    }
+}
+
+// ffmpegkmp_frame.h's values.
+private const val RGBA8 = 0
+private const val NV12 = 4
+private const val YUV420P = 6
+private const val BT709 = 0
+private const val BT2020 = 1
+private const val SRGB = 0
+private const val PQ = 3
+private const val HLG = 4
+private const val RGB = 0
+private const val FULL = 1
 
 private fun NativePlayerBridgeJvmTest.clearVideoSource(
     requireSecurePath: Boolean = false,

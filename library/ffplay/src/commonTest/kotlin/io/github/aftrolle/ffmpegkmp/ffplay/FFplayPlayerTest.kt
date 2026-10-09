@@ -3,6 +3,10 @@
 
 package io.github.aftrolle.ffmpegkmp.ffplay
 
+import io.github.aftrolle.ffmpegkmp.codec.DecoderKind
+import io.github.aftrolle.ffmpegkmp.codec.DecoderPreference
+import io.github.aftrolle.ffmpegkmp.codec.MediaSource
+import io.github.aftrolle.ffmpegkmp.codec.VideoInfo
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
@@ -20,7 +24,7 @@ class FFplayPlayerTest {
     @Test
     fun prepareWaitsForOutputAndResumesPlayWhenAttached() = runTest {
         val player = testPlayer()
-        player.prepare(FFplaySource("movie.mp4"))
+        player.prepare(MediaSource("movie.mp4"))
         assertEquals(FFplayState.WAITING_FOR_OUTPUT, player.snapshot.value.state)
 
         player.play()
@@ -30,7 +34,7 @@ class FFplayPlayerTest {
         player.attachOutput(output)
         assertEquals(FFplayState.PLAYING, player.snapshot.value.state)
         assertEquals(FFplayRendererKind.COMPOSE_CANVAS, player.snapshot.value.output?.renderer)
-        assertEquals(FFplayDecoderKind.SOFTWARE, player.snapshot.value.output?.decoder)
+        assertEquals(DecoderKind.SOFTWARE, player.snapshot.value.output?.decoder)
 
         player.detachOutput(output)
         assertEquals(FFplayState.WAITING_FOR_OUTPUT, player.snapshot.value.state)
@@ -44,7 +48,7 @@ class FFplayPlayerTest {
         assertFailsWith<IllegalStateException> { player.seekTo(1.seconds) }
         assertFailsWith<IllegalArgumentException> { player.seekTo((-1).seconds) }
 
-        player.prepare(FFplaySource("movie.mp4"))
+        player.prepare(MediaSource("movie.mp4"))
         player.seekTo(4.seconds)
         assertEquals(4.seconds, player.snapshot.value.position)
         player.close()
@@ -52,17 +56,17 @@ class FFplayPlayerTest {
 
     @Test
     fun sourceAndVideoInfoValidateTheirInvariants() {
-        assertFailsWith<IllegalArgumentException> { FFplaySource(" ") }
-        assertFailsWith<IllegalArgumentException> { FFplaySource("bad\u0000path") }
-        assertFailsWith<IllegalArgumentException> { FFplayVideoInfo(width = 0, height = 1080) }
+        assertFailsWith<IllegalArgumentException> { MediaSource(" ") }
+        assertFailsWith<IllegalArgumentException> { MediaSource("bad\u0000path") }
+        assertFailsWith<IllegalArgumentException> { VideoInfo(width = 0, height = 1080) }
     }
 
     @Test
     fun strictHardwarePreferenceFailsTruthfullyOnCanvas() = runTest {
         val player = testPlayer(
-            FFplayConfiguration(decoderPreference = FFplayDecoderPreference.REQUIRE_HARDWARE),
+            FFplayConfiguration(decoderPreference = DecoderPreference.REQUIRE_HARDWARE),
         )
-        player.prepare(FFplaySource("movie.mp4"))
+        player.prepare(MediaSource("movie.mp4"))
         player.attachOutput(FakeOutput())
 
         assertEquals(FFplayState.FAILED, player.snapshot.value.state)
@@ -73,7 +77,7 @@ class FFplayPlayerTest {
     @Test
     fun automaticCanvasSelectionEmitsOneRendererFallbackPerSource() = runTest {
         val player = testPlayer()
-        player.prepare(FFplaySource("movie.mp4"))
+        player.prepare(MediaSource("movie.mp4"))
         val firstFallback = async {
             player.events.filterIsInstance<FFplayEvent.RendererFallback>().first()
         }
@@ -89,7 +93,7 @@ class FFplayPlayerTest {
         assertEquals(FFplayState.READY, player.snapshot.value.state)
 
         // A newly prepared source is a new negotiation and may report its own fallback.
-        player.prepare(FFplaySource("replacement.mp4"))
+        player.prepare(MediaSource("replacement.mp4"))
         val secondFallback = async {
             player.events.filterIsInstance<FFplayEvent.RendererFallback>().first()
         }
@@ -114,7 +118,7 @@ class FFplayPlayerTest {
             },
             audioOpener = { null },
         )
-        player.prepare(FFplaySource("movie.mp4"))
+        player.prepare(MediaSource("movie.mp4"))
         player.attachOutput(FakeOutput())
 
         assertTrue(events.none { it is FFplayEvent.RendererFallback })
@@ -124,12 +128,7 @@ class FFplayPlayerTest {
     @Test
     fun protectedSourceNeverFallsBackToCanvas() = runTest {
         val player = testPlayer()
-        player.prepare(
-            FFplaySource(
-                input = "protected.mpd",
-                protection = FFplayContentProtection.REQUIRE_SECURE_PATH,
-            ),
-        )
+        player.prepare(MediaSource("protected.mpd"), FFplayContentProtection.REQUIRE_SECURE_PATH)
         player.attachOutput(FakeOutput())
 
         assertEquals(FFplayState.FAILED, player.snapshot.value.state)
@@ -143,20 +142,15 @@ class FFplayPlayerTest {
     @Test
     fun protectedSourceAcceptsOnlyVerifiedSecureNativeOutput() = runTest {
         val player = testPlayer(
-            FFplayConfiguration(decoderPreference = FFplayDecoderPreference.REQUIRE_HARDWARE),
+            FFplayConfiguration(decoderPreference = DecoderPreference.REQUIRE_HARDWARE),
         )
-        player.prepare(
-            FFplaySource(
-                input = "protected.m3u8",
-                protection = FFplayContentProtection.REQUIRE_SECURE_PATH,
-            ),
-        )
+        player.prepare(MediaSource("protected.m3u8"), FFplayContentProtection.REQUIRE_SECURE_PATH)
         player.attachOutput(SecureFakeOutput())
 
         assertEquals(FFplayState.READY, player.snapshot.value.state)
         assertTrue(player.snapshot.value.output?.securePath == true)
         assertEquals(FFplayRendererKind.NATIVE_SURFACE, player.snapshot.value.output?.renderer)
-        assertEquals(FFplayDecoderKind.HARDWARE, player.snapshot.value.output?.decoder)
+        assertEquals(DecoderKind.HARDWARE, player.snapshot.value.output?.decoder)
         player.close()
     }
 
@@ -166,8 +160,8 @@ class FFplayPlayerTest {
         val second = testPlayer()
         first.attachOutput(FakeOutput())
         second.attachOutput(FakeOutput())
-        first.prepare(FFplaySource("first.mp4"))
-        second.prepare(FFplaySource("second.mp4"))
+        first.prepare(MediaSource("first.mp4"))
+        second.prepare(MediaSource("second.mp4"))
 
         first.play()
         second.seekTo(7.seconds)
@@ -186,7 +180,7 @@ class FFplayPlayerTest {
         val first = FakeOutput()
         val replacement = FakeOutput()
         player.attachOutput(first)
-        player.prepare(FFplaySource("movie.mp4"))
+        player.prepare(MediaSource("movie.mp4"))
         player.play()
 
         player.attachOutput(replacement)
@@ -221,12 +215,7 @@ class FFplayPlayerTest {
         player.attachOutput(insecureOutput)
 
         assertFailsWith<IllegalStateException> {
-            player.prepare(
-                FFplaySource(
-                    input = "protected.mpd",
-                    protection = FFplayContentProtection.REQUIRE_SECURE_PATH,
-                ),
-            )
+            player.prepare(MediaSource("protected.mpd"), FFplayContentProtection.REQUIRE_SECURE_PATH)
         }
 
         assertEquals(FFplayState.FAILED, player.snapshot.value.state)
@@ -244,7 +233,7 @@ class FFplayPlayerTest {
         val stale = FakeOutput()
         val active = FakeOutput()
         player.attachOutput(stale)
-        player.prepare(FFplaySource("movie.mp4"))
+        player.prepare(MediaSource("movie.mp4"))
         player.play()
         player.attachOutput(active)
 
@@ -263,7 +252,7 @@ class FFplayPlayerTest {
         player.attachOutput(output)
 
         repeat(25) { index ->
-            player.prepare(FFplaySource("movie-$index.mp4"))
+            player.prepare(MediaSource("movie-$index.mp4"))
             player.seekTo((index + 1).seconds)
             player.play()
             assertEquals(FFplayState.PLAYING, player.snapshot.value.state)
@@ -282,7 +271,7 @@ class FFplayPlayerTest {
         val player = testPlayer()
         val output = FakeOutput()
         player.attachOutput(output)
-        player.prepare(FFplaySource("movie.mp4"))
+        player.prepare(MediaSource("movie.mp4"))
 
         player.stop()
 

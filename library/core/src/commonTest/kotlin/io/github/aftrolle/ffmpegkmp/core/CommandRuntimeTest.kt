@@ -22,6 +22,7 @@ import kotlin.test.assertIs
 import kotlin.test.assertTrue
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.async
@@ -59,8 +60,9 @@ class CommandRuntimeTest {
             order += "start-${request.arguments.single()}"
             NativeExecutionResult(0)
         }
-        val firstClient = CommandRuntimeClient(CommandKind.FFMPEG, first)
-        val secondClient = CommandRuntimeClient(CommandKind.FFPROBE, second)
+        val scheduler = singleLaneScheduler()
+        val firstClient = CommandRuntimeClient(CommandKind.FFMPEG, first, scheduler = scheduler)
+        val secondClient = CommandRuntimeClient(CommandKind.FFPROBE, second, scheduler = scheduler)
 
         val sessionOne = firstClient.enqueue(listOf("one"))
         val sessionTwo = secondClient.enqueue(listOf("two"))
@@ -111,8 +113,9 @@ class CommandRuntimeTest {
         val firstBridge = FakeBridge { _, _ -> blocker.await(); NativeExecutionResult(0) }
         var secondExecuted = false
         val secondBridge = FakeBridge { _, _ -> secondExecuted = true; NativeExecutionResult(0) }
-        val firstClient = CommandRuntimeClient(CommandKind.FFMPEG, firstBridge)
-        val secondClient = CommandRuntimeClient(CommandKind.FFMPEG, secondBridge)
+        val scheduler = singleLaneScheduler()
+        val firstClient = CommandRuntimeClient(CommandKind.FFMPEG, firstBridge, scheduler = scheduler)
+        val secondClient = CommandRuntimeClient(CommandKind.FFMPEG, secondBridge, scheduler = scheduler)
 
         val first = firstClient.enqueue(listOf("first"))
         first.state.first { it == SessionState.RUNNING }
@@ -419,7 +422,7 @@ class CommandRuntimeTest {
                 }
             }
         }
-        val client = CommandRuntimeClient(CommandKind.FFMPEG, bridge)
+        val client = CommandRuntimeClient(CommandKind.FFMPEG, bridge, scheduler = singleLaneScheduler())
         val running = client.enqueue(listOf("running"))
         started.await()
         val queued = client.enqueue(listOf("queued"))
@@ -448,7 +451,7 @@ class CommandRuntimeTest {
             order += "end-${request.arguments.single()}"
             NativeExecutionResult(0)
         }
-        val client = CommandRuntimeClient(CommandKind.FFMPEG, bridge)
+        val client = CommandRuntimeClient(CommandKind.FFMPEG, bridge, scheduler = singleLaneScheduler())
         val first = client.enqueue(listOf("first"))
         firstStarted.await()
         val second = client.enqueue(listOf("second"))
@@ -496,7 +499,7 @@ class CommandRuntimeTest {
             }
             NativeExecutionResult(0)
         }
-        val client = CommandRuntimeClient(CommandKind.FFMPEG, bridge)
+        val client = CommandRuntimeClient(CommandKind.FFMPEG, bridge, scheduler = singleLaneScheduler())
         val blocker = client.enqueue(listOf("blocker"))
         firstStarted.await()
         val accepted = List(GLOBAL_EXECUTION_QUEUE_CAPACITY) { index ->
@@ -513,7 +516,113 @@ class CommandRuntimeTest {
         accepted.forEach { it.await() }
         client.close()
     }
+
+    @Test
+    fun executeWaitsForRoomInAFullQueue() = runTest {
+        val started = mutableListOf<String>()
+        val blockerStarted = CompletableDeferred<Unit>()
+        val releaseBlocker = CompletableDeferred<Unit>()
+        val bridge = FakeBridge { request, _ ->
+            started += request.arguments.single()
+            if (request.arguments.single() == "blocker") {
+                blockerStarted.complete(Unit)
+                releaseBlocker.await()
+            }
+            NativeExecutionResult(0)
+        }
+        val client = CommandRuntimeClient(CommandKind.FFMPEG, bridge, scheduler = singleLaneScheduler(capacity = 2))
+        val blocker = client.enqueue(listOf("blocker"))
+        blockerStarted.await()
+        val queued = List(2) { index -> client.enqueue(listOf("queued-$index")) }
+
+        val waiting = async(start = CoroutineStart.UNDISPATCHED) { client.execute(listOf("waiting")) }
+        // The queue is still full, so enqueue fails fast while execute keeps waiting.
+        val rejected = runCatching { client.enqueue(listOf("overflow")).await() }.exceptionOrNull()
+        assertIs<NativeExecutionException>(rejected)
+        assertFalse(waiting.isCompleted)
+
+        releaseBlocker.complete(Unit)
+        blocker.await()
+        queued.forEach { it.await() }
+        assertTrue(waiting.await().isSuccess)
+        assertEquals(listOf("blocker", "queued-0", "queued-1", "waiting"), started)
+        client.close()
+    }
+
+    @Test
+    fun cancellingAnExecuteThatWaitsForRoomQueuesNothing() = runTest {
+        val started = mutableListOf<String>()
+        val blockerStarted = CompletableDeferred<Unit>()
+        val releaseBlocker = CompletableDeferred<Unit>()
+        val bridge = FakeBridge { request, _ ->
+            started += request.arguments.single()
+            if (request.arguments.single() == "blocker") {
+                blockerStarted.complete(Unit)
+                releaseBlocker.await()
+            }
+            NativeExecutionResult(0)
+        }
+        val client = CommandRuntimeClient(CommandKind.FFMPEG, bridge, scheduler = singleLaneScheduler(capacity = 1))
+        val blocker = client.enqueue(listOf("blocker"))
+        blockerStarted.await()
+        val queued = client.enqueue(listOf("queued"))
+        val input = TrackingSource("never read".encodeToByteArray())
+
+        val waiting = launch(start = CoroutineStart.UNDISPATCHED) {
+            client.execute(listOf("withdrawn"), CommandIo { input("input.bin", input) })
+        }
+        waiting.cancelAndJoin()
+        assertEquals(1, input.closeCount)
+
+        releaseBlocker.complete(Unit)
+        blocker.await()
+        queued.await()
+        assertEquals(listOf("blocker", "queued"), started)
+        // The withdrawn command left no session behind, so closing closes the bridge at once.
+        client.close()
+        assertEquals(1, bridge.closeCount)
+    }
+
+    @Test
+    fun lanesRunCommandsAtOnceAndStartThemInOrder() = runTest {
+        val names = listOf("one", "two", "three", "four")
+        val startedCommands = names.associateWith { CompletableDeferred<Unit>() }
+        val releases = names.associateWith { CompletableDeferred<Unit>() }
+        val bridge = FakeBridge { request, _ ->
+            val name = request.arguments.single()
+            startedCommands.getValue(name).complete(Unit)
+            releases.getValue(name).await()
+            NativeExecutionResult(0)
+        }
+        val client = CommandRuntimeClient(CommandKind.FFMPEG, bridge, scheduler = CommandScheduler(lanes = 2))
+
+        val sessions = names.associateWith { client.enqueue(listOf(it)) }
+        startedCommands.getValue("one").await()
+        startedCommands.getValue("two").await()
+        assertFalse(startedCommands.getValue("three").isCompleted)
+
+        // The second command finishes first and frees its lane for the third, not the fourth.
+        releases.getValue("two").complete(Unit)
+        sessions.getValue("two").await()
+        startedCommands.getValue("three").await()
+        assertEquals(SessionState.RUNNING, sessions.getValue("one").state.value)
+        assertFalse(startedCommands.getValue("four").isCompleted)
+
+        // A session that leaves the line without a turn holds no lane.
+        sessions.getValue("four").cancelAndJoin()
+        releases.getValue("one").complete(Unit)
+        sessions.getValue("one").await()
+        assertFalse(startedCommands.getValue("four").isCompleted)
+
+        releases.getValue("three").complete(Unit)
+        sessions.getValue("three").await()
+        assertTrue(sessions.getValue("four").await().cancelled)
+        client.close()
+    }
 }
+
+private fun singleLaneScheduler(capacity: Int = GLOBAL_EXECUTION_QUEUE_CAPACITY) =
+    CommandScheduler(lanes = 1, capacity = capacity)
 
 // A collector launched beside its session may subscribe after the first events went out, so the
 // bridge keeps emitting until the collector has seen one.

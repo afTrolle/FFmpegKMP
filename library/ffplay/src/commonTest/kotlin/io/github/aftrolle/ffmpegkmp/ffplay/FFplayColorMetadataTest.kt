@@ -1,23 +1,21 @@
 // SPDX-License-Identifier: Apache-2.0
-@file:OptIn(io.github.aftrolle.ffmpegkmp.bindings.InternalFFmpegKmpApi::class)
-
 package io.github.aftrolle.ffmpegkmp.ffplay
 
-import io.github.aftrolle.ffmpegkmp.bindings.NativePlayerHdrType
-import io.github.aftrolle.ffmpegkmp.bindings.NativePlayerMasteringDisplayMetadata
-import io.github.aftrolle.ffmpegkmp.bindings.NativePlayerVideoInfo
+import io.github.aftrolle.ffmpegkmp.codec.ColorPrimaries
+import io.github.aftrolle.ffmpegkmp.codec.ColorTransfer
+import io.github.aftrolle.ffmpegkmp.codec.FrameColor
+import io.github.aftrolle.ffmpegkmp.codec.HdrMetadata
+import io.github.aftrolle.ffmpegkmp.codec.VideoInfo
 import kotlin.test.Test
 import kotlin.test.assertEquals
-import kotlin.test.assertNotNull
-import kotlin.test.assertNull
 
 class FFplayColorMetadataTest {
     @Test
     fun displayTransformNormalizesAspectRatioAndRotation() {
-        val video = FFplayVideoInfo(
+        val video = VideoInfo(
             width = 720,
             height = 576,
-            sampleAspectRatio = "16:15",
+            sampleAspectRatio = 16.0 / 15.0,
             rotationDegrees = -90.0,
         )
 
@@ -26,87 +24,18 @@ class FFplayColorMetadataTest {
     }
 
     @Test
-    fun mapsHdr10StreamMetadataWithoutLosingColorInformation() {
-        val video = NativePlayerVideoInfo(
-            width = 3840,
-            height = 2160,
-            pixelFormatName = "yuv420p10le",
-            bitDepth = 10,
-            sampleAspectRatioNumerator = 1,
-            sampleAspectRatioDenominator = 1,
-            rotationDegrees = 90.0,
-            colorPrimaries = 9,
-            colorTransfer = 16,
-            colorSpace = 9,
-            colorRange = 1,
-            chromaLocation = 1,
-            hdrType = NativePlayerHdrType.HDR10,
-            masteringDisplay = NativePlayerMasteringDisplayMetadata(
-                hasPrimaries = true,
-                hasLuminance = true,
-                redX = 0.68,
-                redY = 0.32,
-                greenX = 0.265,
-                greenY = 0.69,
-                blueX = 0.15,
-                blueY = 0.06,
-                whiteX = 0.3127,
-                whiteY = 0.329,
-                minLuminance = 0.005,
-                maxLuminance = 1000.0,
-            ),
-            maxContentLightLevel = 1000,
-            maxFrameAverageLightLevel = 400,
-        ).toPublicVideoInfo()
-
-        assertEquals("yuv420p10le", video.pixelFormat)
-        assertEquals(10, video.bitDepth)
-        assertEquals("1:1", video.sampleAspectRatio)
-        assertEquals(90.0, video.rotationDegrees)
-        assertEquals("BT.2020", video.colorPrimaries)
-        assertEquals("PQ", video.colorTransfer)
-        assertEquals("BT.2020 NCL", video.colorMatrix)
-        assertEquals("Limited", video.colorRange)
-        assertEquals("Left", video.chromaLocation)
-        assertEquals(FFplayHdrType.HDR10, video.hdrType)
-        assertEquals("1000.0", assertNotNull(video.masteringDisplay).raw["maxLuminance"])
-        val contentLight = assertNotNull(video.contentLight)
-        assertEquals(1000, contentLight.maxContentLightLevel)
-        assertEquals(400, contentLight.maxFrameAverageLightLevel)
-    }
-
-    @Test
-    fun unspecifiedColorFieldsStayUnspecified() {
-        val video = NativePlayerVideoInfo(
-            width = 640,
-            height = 360,
-            colorPrimaries = 2,
-            colorTransfer = 2,
-            colorSpace = 2,
-            colorRange = 0,
-            chromaLocation = 0,
-        ).toPublicVideoInfo()
-
-        assertNull(video.colorPrimaries)
-        assertNull(video.colorTransfer)
-        assertNull(video.colorMatrix)
-        assertNull(video.colorRange)
-        assertNull(video.chromaLocation)
-    }
-
-    @Test
     fun preservesHdrOnlyWhenTheWholeOutputPathAdvertisesSupport() {
         val video = hdr10Video()
         val capable = FFplayOutputCapabilities(
             hardwareFrameImport = true,
-            hdrTransfers = setOf("PQ"),
-            colorSpaces = setOf("BT.2020"),
+            hdrTransfers = setOf(ColorTransfer.PQ),
+            colorSpaces = setOf(ColorPrimaries.BT2020),
         )
 
         val result = decideColorOutput(video, capable, FFplayHdrPolicy.PRESERVE_OR_TONE_MAP)
 
-        assertEquals("BT.2020", result.sourceColorSpace)
-        assertEquals("BT.2020", result.outputColorSpace)
+        assertEquals(ColorPrimaries.BT2020, result.sourceColorSpace)
+        assertEquals(ColorPrimaries.BT2020, result.outputColorSpace)
         assertEquals(FFplayHdrResult.PRESERVED, result.hdrResult)
     }
 
@@ -115,7 +44,7 @@ class FFplayColorMetadataTest {
         val canvas = FFplayOutputCapabilities(
             softwareFrameUpload = true,
             hdrTransfers = emptySet(),
-            colorSpaces = setOf("sRGB"),
+            colorSpaces = setOf(ColorPrimaries.BT709),
             toneMapHdrToSdr = true,
         )
 
@@ -144,82 +73,70 @@ class FFplayColorMetadataTest {
     @Test
     fun sdrOutputIsNotMisreportedAsHdr() {
         val result = decideColorOutput(
-            FFplayVideoInfo(
-                width = 1920,
-                height = 1080,
-                colorPrimaries = "BT.709",
-                colorTransfer = "BT.709",
-            ),
-            FFplayOutputCapabilities(colorSpaces = setOf("BT.709")),
+            VideoInfo(width = 1920, height = 1080, color = FrameColor.Bt709),
+            FFplayOutputCapabilities(colorSpaces = setOf(ColorPrimaries.BT709)),
             FFplayHdrPolicy.PRESERVE_OR_TONE_MAP,
         )
 
         assertEquals(FFplayHdrResult.NOT_HDR, result.hdrResult)
-        assertEquals("BT.709", result.outputColorSpace)
+        assertEquals(ColorPrimaries.BT709, result.outputColorSpace)
     }
 
     @Test
-    fun unknownHdrTransferIsNotClaimedAsToneMapped() {
-        val unknown = hdr10Video().copy(
-            colorTransfer = null,
-            hdrType = FFplayHdrType.UNKNOWN_HDR,
-        )
+    fun aDolbyVisionStreamIsTheHdrItsTransferIs() {
+        val hlg = hlgVideo().copy(hdrMetadata = HdrMetadata(dolbyVision = true))
+        val sdr = hdr10Video().copy(color = FrameColor.Bt709, hdrMetadata = HdrMetadata(dolbyVision = true))
 
         assertEquals(
-            FFplayHdrResult.UNSUPPORTED,
+            FFplayHdrResult.PRESERVED,
             decideColorOutput(
-                unknown,
-                FFplayOutputCapabilities(toneMapHdrToSdr = true),
+                hlg,
+                FFplayOutputCapabilities(colorSpaces = setOf(ColorPrimaries.BT2020), hdrTransfers = setOf(ColorTransfer.HLG)),
                 FFplayHdrPolicy.PRESERVE_OR_TONE_MAP,
             ).hdrResult,
+        )
+        assertEquals(
+            FFplayHdrResult.NOT_HDR,
+            decideColorOutput(sdr, FFplayOutputCapabilities(toneMapHdrToSdr = true), FFplayHdrPolicy.PRESERVE_OR_TONE_MAP).hdrResult,
         )
     }
 
     @Test
     fun displayP3SdrRequiresAColorManagedP3Output() {
-        val video = FFplayVideoInfo(
+        val video = VideoInfo(
             width = 1920,
             height = 1080,
-            colorPrimaries = "Display P3",
-            colorTransfer = "BT.709",
-            hdrType = FFplayHdrType.SDR,
+            color = FrameColor.Bt709.copy(primaries = ColorPrimaries.DISPLAY_P3),
         )
 
         val p3 = decideColorOutput(
             video,
-            FFplayOutputCapabilities(colorSpaces = setOf("sRGB", "Display P3")),
+            FFplayOutputCapabilities(colorSpaces = setOf(ColorPrimaries.BT709, ColorPrimaries.DISPLAY_P3)),
             FFplayHdrPolicy.PRESERVE_OR_TONE_MAP,
         )
         val srgb = decideColorOutput(
             video,
-            FFplayOutputCapabilities(colorSpaces = setOf("sRGB")),
+            FFplayOutputCapabilities(colorSpaces = setOf(ColorPrimaries.BT709)),
             FFplayHdrPolicy.PRESERVE_OR_TONE_MAP,
         )
 
-        assertEquals("Display P3", p3.outputColorSpace)
-        assertEquals("sRGB", srgb.outputColorSpace)
+        assertEquals(ColorPrimaries.DISPLAY_P3, p3.outputColorSpace)
+        assertEquals(ColorPrimaries.BT709, srgb.outputColorSpace)
         assertEquals(FFplayHdrResult.NOT_HDR, p3.hdrResult)
         assertEquals(FFplayHdrResult.NOT_HDR, srgb.hdrResult)
     }
 
     @Test
     fun hlgPreservationRequiresBothBt2020AndHlgCapabilities() {
-        val hlg = FFplayVideoInfo(
-            width = 3840,
-            height = 2160,
-            colorPrimaries = "BT.2020",
-            colorTransfer = "HLG",
-            colorMatrix = "BT.2020 NCL",
-            hdrType = FFplayHdrType.HLG,
-        )
+        val hlg = hlgVideo()
 
         assertEquals(
             FFplayHdrResult.PRESERVED,
             decideColorOutput(
                 hlg,
                 FFplayOutputCapabilities(
-                    colorSpaces = setOf("BT.2020"),
-                    hdrTransfers = setOf("HLG"),
+                    colorSpaces = setOf(ColorPrimaries.BT2020),
+                    hdrTransfers = setOf(ColorTransfer.HLG),
                 ),
                 FFplayHdrPolicy.PRESERVE_OR_TONE_MAP,
             ).hdrResult,
@@ -229,20 +146,15 @@ class FFplayColorMetadataTest {
             decideColorOutput(
                 hlg,
                 FFplayOutputCapabilities(
-                    colorSpaces = setOf("BT.2020"),
-                    hdrTransfers = setOf("PQ"),
+                    colorSpaces = setOf(ColorPrimaries.BT2020),
+                    hdrTransfers = setOf(ColorTransfer.PQ),
                 ),
                 FFplayHdrPolicy.PRESERVE_OR_TONE_MAP,
             ).hdrResult,
         )
     }
 
-    private fun hdr10Video() = FFplayVideoInfo(
-        width = 3840,
-        height = 2160,
-        colorPrimaries = "BT.2020",
-        colorTransfer = "PQ",
-        colorMatrix = "BT.2020 NCL",
-        hdrType = FFplayHdrType.HDR10,
-    )
+    private fun hdr10Video() = VideoInfo(width = 3840, height = 2160, color = FrameColor.Bt2020Pq)
+
+    private fun hlgVideo() = VideoInfo(width = 3840, height = 2160, color = FrameColor.Bt2020Hlg)
 }

@@ -20,7 +20,7 @@ internal class NativeHandleGuard {
     val isOpen: Boolean get() = !closed.load()
 
     /** Runs [block] unless the handle is closed, in which case it returns [whenClosed]. */
-    fun <T> use(whenClosed: () -> T, block: () -> T): T {
+    inline fun <T> use(whenClosed: () -> T, block: () -> T): T {
         active.incrementAndFetch()
         try {
             return if (closed.load()) whenClosed() else block()

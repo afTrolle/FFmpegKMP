@@ -6,16 +6,26 @@
 
 package io.github.aftrolle.ffmpegkmp.player
 
+import io.github.aftrolle.ffmpegkmp.bindings.DecoderThread
 import io.github.aftrolle.ffmpegkmp.bindings.NativeAudioDecoder
 import io.github.aftrolle.ffmpegkmp.bindings.NativeAudioDecoderException
 import io.github.aftrolle.ffmpegkmp.bindings.NativeBridgeUnavailableException
 import io.github.aftrolle.ffmpegkmp.bindings.openPlatformAudioDecoder
 import io.github.aftrolle.ffmpegkmp.core.AudioLevel
 import io.github.aftrolle.ffmpegkmp.core.FFmpegKmpException
+import kotlin.concurrent.atomics.AtomicBoolean
 import kotlin.concurrent.atomics.AtomicReference
 import kotlin.concurrent.atomics.update
+import kotlin.coroutines.cancellation.CancellationException
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.microseconds
+import kotlin.time.Duration.Companion.seconds
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
 import okio.FileHandle
 
 /** Interleaved 32-bit float PCM, the format [AudioDecoder] produces and [AudioPlayer] plays. */
@@ -60,11 +70,16 @@ public class AudioDecodingException(message: String, cause: Throwable? = null) :
  * It is built on FFmpeg's libraries directly, not the ffmpeg command line, so it runs
  * alongside `FFmpegClient`/`FFprobeClient` commands instead of queueing behind them.
  *
- * Threading: [read], [seek] and [close] must not be called concurrently. Level and track
- * changes are safe from any thread and take effect on the next [read].
+ * Threading: each decoder decodes on a thread of its own, and [read] and [seek] suspend while it
+ * works, one at a time: calls from several coroutines queue in order. A cancelled call returns at
+ * once and its native work finishes on the decoder's thread; a cancelled read's samples are
+ * dropped and never reach its array. Level and track changes are safe from any thread and take
+ * effect on the next [read].
  */
 public class AudioDecoder internal constructor(
     private val native: NativeAudioDecoder,
+    /** Null runs the native calls on the caller's thread, as the tests' fakes need. */
+    private val thread: DecoderThread?,
 ) : AutoCloseable {
     public val format: PcmFormat = PcmFormat(native.sampleRate, native.channels)
 
@@ -87,8 +102,14 @@ public class AudioDecoder internal constructor(
     /** Null when the input does not report a duration (live streams, some raw formats). */
     public val duration: Duration? = native.durationMicros.takeIf { it >= 0 }?.microseconds
 
-    /** Media time of the next frame [read] returns. */
+    /** Media time of the next frame [read] returns, once the calls before have returned. */
     public val position: Duration get() = native.positionMicros.microseconds
+
+    private val calls = Mutex()
+    private val closed = AtomicBoolean(false)
+
+    /** The decoder's thread decodes here and [read] copies out, so a cancelled read never writes into the caller's array. */
+    private var decoded = FloatArray(0)
 
     /** Master level, applied to the mix of every enabled track. */
     public var level: AudioLevel
@@ -130,28 +151,55 @@ public class AudioDecoder internal constructor(
     }
 
     /** Seeks so the next [read] starts at [position], sample-accurately. */
-    public fun seek(position: Duration) {
+    public suspend fun seek(position: Duration) {
         require(!position.isNegative()) { "Seek position must not be negative" }
-        decoding("seek to $position") { native.seek(position.inWholeMicroseconds) }
+        call("seek to $position") { native.seek(position.inWholeMicroseconds) }
     }
 
     /**
-     * Decodes up to [frames] frames of interleaved PCM into [destination] from [offset]. Blocks
-     * while decoding. Returns the number of frames written (each [PcmFormat.channels] samples),
-     * or 0 once the input has ended. Silence is returned while every track is disabled.
+     * Decodes up to [frames] frames of interleaved PCM into [destination] from [offset], suspending
+     * while the decoder's thread works. Returns the number of frames written (each
+     * [PcmFormat.channels] samples), or 0 once the input has ended. Silence is returned while every
+     * track is disabled.
      */
-    public fun read(
+    public suspend fun read(
         destination: FloatArray,
         offset: Int = 0,
         frames: Int = (destination.size - offset) / format.channels,
-    ): Int = decoding("decode audio") { native.read(destination, offset, frames) }
+    ): Int {
+        val samples = frames * format.channels
+        require(offset >= 0 && frames >= 0 && offset + samples <= destination.size) {
+            "$frames frames from $offset do not fit an array of ${destination.size} samples"
+        }
+        if (thread == null) return call("decode audio") { native.read(destination, offset, frames) }
+        return calls.withLock {
+            val buffer = decoded.takeIf { it.size >= samples } ?: FloatArray(samples).also { decoded = it }
+            val count = onThread("decode audio") { native.read(buffer, 0, frames) }
+            buffer.copyInto(destination, offset, 0, count * format.channels)
+            count
+        }
+    }
 
+    /** Closes the decoder once a call still running has returned, without waiting on one that is stuck. */
     override fun close() {
-        native.close()
+        if (!closed.compareAndSet(expectedValue = false, newValue = true)) return
+        if (thread == null) return native.close()
+        native.abort()
+        thread.finish(CLOSE_BOUND) { native.close() }
     }
 
     internal fun abort() {
         native.abort()
+    }
+
+    private suspend fun <T> call(action: String, block: () -> T): T {
+        if (thread == null) return decoding(action, block)
+        return calls.withLock { onThread(action, block) }
+    }
+
+    private suspend fun <T> onThread(action: String, block: () -> T): T {
+        check(!closed.load()) { "The audio decoder is closed" }
+        return decoding(action) { checkNotNull(thread).submit(block).await() }
     }
 
     private fun requireDecodable(track: Int) {
@@ -167,26 +215,46 @@ public class AudioDecoder internal constructor(
     public companion object {
         /**
          * Opens [url] — a file path or any URL the FFmpeg build's protocols accept — for audio
-         * decoding. Blocks while probing the input; call it off the main thread.
+         * decoding, probing the input on the decoder's thread.
          */
-        public fun open(url: String, format: PcmFormat = PcmFormat.Default): AudioDecoder {
+        public suspend fun open(url: String, format: PcmFormat = PcmFormat.Default): AudioDecoder {
             require(url.isNotBlank()) { "Audio URL must not be blank" }
-            val native = decoding("open '$url'") { openPlatformAudioDecoder(url, format.sampleRate, format.channels) }
-            return AudioDecoder(native)
+            return open("open '$url'") { openPlatformAudioDecoder(url, format.sampleRate, format.channels) }
         }
 
         /**
          * Opens a random-access [fileHandle] — for example an Android content URI, or media
          * already in memory. The decoder reads it on demand and does not close it.
          */
-        public fun open(fileHandle: FileHandle, format: PcmFormat = PcmFormat.Default): AudioDecoder {
-            val native = decoding("open the file handle") {
-                openPlatformAudioDecoder(fileHandle, format.sampleRate, format.channels)
+        public suspend fun open(fileHandle: FileHandle, format: PcmFormat = PcmFormat.Default): AudioDecoder =
+            open("open the file handle") { openPlatformAudioDecoder(fileHandle, format.sampleRate, format.channels) }
+
+        /**
+         * Probing cannot be interrupted, so it runs to completion; if the caller was cancelled
+         * meanwhile, the decoder it opened is closed instead of leaked.
+         */
+        private suspend fun open(action: String, create: () -> NativeAudioDecoder): AudioDecoder {
+            val thread = DecoderThread("FFmpegKMP AudioDecoder")
+            val native = try {
+                withContext(NonCancellable) { thread.submit { decoding(action, create) }.await() }
+            } catch (failure: Throwable) {
+                thread.finish(Duration.ZERO) {}
+                throw failure
             }
-            return AudioDecoder(native)
+            val decoder = AudioDecoder(native, thread)
+            try {
+                currentCoroutineContext().ensureActive()
+            } catch (cancelled: CancellationException) {
+                decoder.close()
+                throw cancelled
+            }
+            return decoder
         }
     }
 }
+
+/** How long [AudioDecoder.close] waits for the native close queued behind a stuck call. */
+private val CLOSE_BOUND = 1.seconds
 
 private inline fun <T> decoding(action: String, block: () -> T): T = try {
     block()

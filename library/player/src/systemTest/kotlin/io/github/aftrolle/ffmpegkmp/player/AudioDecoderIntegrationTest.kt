@@ -15,6 +15,11 @@ import kotlin.test.assertFailsWith
 import kotlin.test.assertTrue
 import kotlin.test.fail
 import kotlin.time.Duration.Companion.milliseconds
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.test.runTest
 import okio.Buffer
 import okio.FileSystem
@@ -153,17 +158,36 @@ class AudioDecoderIntegrationTest {
     }
 
     @Test
-    fun reportsUnreadableInputs() {
+    fun readsFromSeveralCoroutinesQueueAndTogetherDecodeTheInputOnce() = decoder { decoder ->
+        val frames = coroutineScope {
+            List(4) {
+                async(Dispatchers.Default) {
+                    val chunk = FloatArray(1_000 * CHANNELS)
+                    var total = 0
+                    while (true) {
+                        val count = decoder.read(chunk)
+                        if (count == 0) break
+                        total += count
+                    }
+                    total
+                }
+            }.awaitAll()
+        }
+        assertEquals(SAMPLE_RATE, frames.sum())
+    }
+
+    @Test
+    fun reportsUnreadableInputs() = runBlocking<Unit> {
         assertFailsWith<AudioDecodingException> {
             AudioDecoder.open((directory / "missing.nut").toString())
         }
     }
 
-    private fun decoder(block: (AudioDecoder) -> Unit) {
-        AudioDecoder.open(media.toString(), PcmFormat(SAMPLE_RATE, CHANNELS)).use(block)
+    private fun decoder(block: suspend (AudioDecoder) -> Unit) = runBlocking {
+        AudioDecoder.open(media.toString(), PcmFormat(SAMPLE_RATE, CHANNELS)).use { block(it) }
     }
 
-    private fun read(decoder: AudioDecoder, frames: Int): FloatArray {
+    private suspend fun read(decoder: AudioDecoder, frames: Int): FloatArray {
         val samples = FloatArray(frames * CHANNELS)
         var filled = 0
         while (filled < frames) {
@@ -174,7 +198,7 @@ class AudioDecoderIntegrationTest {
         return samples
     }
 
-    private fun decodeAll(decoder: AudioDecoder): FloatArray {
+    private suspend fun decodeAll(decoder: AudioDecoder): FloatArray {
         val chunk = FloatArray(4_096 * CHANNELS)
         val all = mutableListOf<Float>()
         while (true) {

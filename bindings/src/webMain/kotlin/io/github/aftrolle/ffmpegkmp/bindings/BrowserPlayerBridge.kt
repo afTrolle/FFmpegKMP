@@ -53,7 +53,7 @@ internal interface BrowserPlayerWorkerListener {
 }
 
 internal expect fun startBrowserPlayerWorker(
-    decoderPreference: Int,
+    configuration: NativePlayerConfiguration,
     listener: BrowserPlayerWorkerListener,
 ): BrowserPlayerWorker
 
@@ -62,7 +62,7 @@ internal fun createBrowserPlayerBridge(
     update: (NativePlayerSnapshot) -> Unit,
     frame: (NativeVideoFrame) -> Unit,
     platformFrame: (NativePlatformVideoFrame) -> Boolean,
-    workerFactory: (Int, BrowserPlayerWorkerListener) -> BrowserPlayerWorker =
+    workerFactory: (NativePlayerConfiguration, BrowserPlayerWorkerListener) -> BrowserPlayerWorker =
         ::startBrowserPlayerWorker,
 ): NativePlayerBridge = BrowserNativePlayerBridge(
     configuration,
@@ -77,7 +77,7 @@ private class BrowserNativePlayerBridge(
     private val update: (NativePlayerSnapshot) -> Unit,
     private val frame: (NativeVideoFrame) -> Unit,
     private val platformFrame: (NativePlatformVideoFrame) -> Boolean,
-    private val workerFactory: (Int, BrowserPlayerWorkerListener) -> BrowserPlayerWorker,
+    private val workerFactory: (NativePlayerConfiguration, BrowserPlayerWorkerListener) -> BrowserPlayerWorker,
 ) : NativePlayerBridge {
     private var current = NativePlayerSnapshot()
     private var source: NativePlayerSource? = null
@@ -223,10 +223,7 @@ private class BrowserNativePlayerBridge(
 
     private fun startWorker(): BrowserPlayerWorker {
         val generation = ++workerGeneration
-        return workerFactory(
-            configuration.decoderPreference.ordinal,
-            BrowserPlayerListener(generation),
-        )
+        return workerFactory(configuration, BrowserPlayerListener(generation))
     }
 
     private inner class BrowserPlayerListener(
@@ -259,10 +256,9 @@ private class BrowserNativePlayerBridge(
             if (closed || generation != workerGeneration || queueSerial != current.queueSerial) return
             frame(
                 NativeVideoFrame(
-                    rgba = bytes,
+                    frame = BrowserFrame.rgba(bytes, width, height, stride),
                     width = width,
                     height = height,
-                    stride = stride,
                     presentationTimeUs = presentationTimeUs,
                     queueSerial = queueSerial,
                 ),
@@ -324,20 +320,19 @@ private class PendingBrowserPreparation(
     val completion: CompletableDeferred<Int>,
 )
 
-private fun List<NativeMountedIo>.readBytesForBrowserPlayer(): Array<ByteArray> = map { mount ->
-    when (val resource = mount.resource) {
-        is NativeFileResource -> {
-            val buffer = Buffer()
-            resource.fileHandle.read(0L, buffer, resource.fileHandle.size())
-            buffer.readByteArray()
-        }
-        // Through the replay cache, so preparing the same source again still has its bytes.
-        is NativeSourceResource -> {
-            resource.replay.readAll()
-        }
-        is NativeSinkResource -> ByteArray(0)
+private fun List<NativeMountedIo>.readBytesForBrowserPlayer(): Array<ByteArray> = map { it.readBytesForBrowser() }.toTypedArray()
+
+/** The whole input a mount serves, which the browser's worker takes as bytes; nothing for an output. */
+internal fun NativeMountedIo.readBytesForBrowser(): ByteArray = when (val resource = resource) {
+    is NativeFileResource -> {
+        val buffer = Buffer()
+        resource.fileHandle.read(0L, buffer, resource.fileHandle.size())
+        buffer.readByteArray()
     }
-}.toTypedArray()
+    // Through the replay cache, so preparing the same source again still has its bytes.
+    is NativeSourceResource -> resource.replay.readAll()
+    is NativeSinkResource -> ByteArray(0)
+}
 
 internal fun String.toBrowserNativePlayerSnapshot(): NativePlayerSnapshot {
     val value = Json.parseToJsonElement(this) as JsonObject
@@ -363,7 +358,7 @@ internal fun String.toBrowserNativePlayerSnapshot(): NativePlayerSnapshot {
         colorSpace = value.int("colorSpace"),
         colorRange = value.int("colorRange"),
         chromaLocation = value.int("chromaLocation"),
-        hdrType = value.int("hdrType"),
+        hdrFlags = value.int("hdrFlags"),
         masteringHasPrimaries = value.int("masteringHasPrimaries") != 0,
         masteringHasLuminance = value.int("masteringHasLuminance") != 0,
         mastering = {
