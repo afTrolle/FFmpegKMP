@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 @file:OptIn(
     kotlinx.cinterop.ExperimentalForeignApi::class,
+    // memcpy's size_t differs in width across the shared native targets (arm64_32 watchOS).
+    kotlinx.cinterop.UnsafeNumber::class,
     kotlin.concurrent.atomics.ExperimentalAtomicApi::class,
 )
 
