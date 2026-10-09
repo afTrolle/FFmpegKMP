@@ -29,7 +29,12 @@ internal val openSurfaceVideoEncoder: PacketEncoderFactory = { config, info, sin
     } else {
         config.codec == NativeVideoCodec.HEVC
     }
-    if (Build.VERSION.SDK_INT >= 34 && info.hardware && qualifies) SurfaceVideoEncoder.open(config, info, sink, timeoutMicros) else null
+    if (Build.VERSION.SDK_INT >= 34 && info.hardware && qualifies) {
+        SurfaceVideoEncoder.open(config, info, sink, timeoutMicros)
+    } else {
+        println("FFmpegKMP: no input surface for ${config.width}x${config.height} ${config.dynamicRange} ${config.codec}: API ${Build.VERSION.SDK_INT}, ${info.encoder} hardware ${info.hardware}, qualifies $qualifies")
+        null
+    }
 }
 
 /**
@@ -280,15 +285,25 @@ internal class SurfaceVideoEncoder private constructor(
                 NativeDynamicRange.HDR10 -> listOf(MediaCodecInfo.CodecProfileLevel.HEVCProfileMain10HDR10, MediaCodecInfo.CodecProfileLevel.HEVCProfileMain10)
                 NativeDynamicRange.HLG -> listOf(MediaCodecInfo.CodecProfileLevel.HEVCProfileMain10)
             }
+            val reasons = mutableListOf<String>()
             for (profile in profiles) {
                 val format = formatOf(config, info, mime, profile)
-                for (name in hardwareEncoders(mime, format)) {
-                    val codec = runCatching { MediaCodec.createByCodecName(name) }.getOrNull() ?: continue
-                    val encoder = runCatching { opened(codec, format, config, sink, timeoutMicros) }.getOrNull()
+                val names = hardwareEncoders(mime, format)
+                if (names.isEmpty()) reasons += "no hardware encoder takes $format"
+                for (name in names) {
+                    val codec = runCatching { MediaCodec.createByCodecName(name) }.getOrElse { failure ->
+                        reasons += "$name: ${failure.message}"
+                        continue
+                    }
+                    val encoder = runCatching { opened(codec, format, config, sink, timeoutMicros) }.getOrElse { failure ->
+                        reasons += "$name (profile $profile): ${failure.message ?: failure.toString()}"
+                        null
+                    }
                     if (encoder != null) return encoder
                     runCatching(codec::release)
                 }
             }
+            println("FFmpegKMP: no input surface for ${config.width}x${config.height} ${config.dynamicRange} ${config.codec}: ${reasons.joinToString("; ")}")
             return null
         }
 

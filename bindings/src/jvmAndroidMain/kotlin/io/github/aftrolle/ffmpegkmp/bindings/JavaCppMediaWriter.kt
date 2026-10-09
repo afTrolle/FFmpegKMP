@@ -127,7 +127,9 @@ private class JavaCppMediaWriterEngine(
     override fun openInputSurface(track: Int): NativeEncoderSurface? {
         val (config, info) = videoTracks[track] ?: return null
         val encoder = openEncoder?.invoke(config, info, packetSink(track), timeoutMicros) ?: return null
-        if (bridge.ffmpegkmp_writer_use_packets(writer, track) < 0) {
+        val switched = bridge.ffmpegkmp_writer_use_packets(writer, track)
+        if (switched < 0) {
+            println("FFmpegKMP: the track did not switch to the platform encoder's packets ($switched); its frames stay on the one-copy path")
             encoder.release()
             return null
         }

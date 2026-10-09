@@ -173,8 +173,8 @@ public class ComposeFrameRenderer<T> internal constructor(
     private var gpuFailed = false
     private var closed = false
 
-    /** Whether the last frame was drawn on the GPU. */
-    internal var drewOnGpu: Boolean = false
+    /** Whether the last frame was drawn on the GPU: into the track's input surface or a buffer of the renderer's own. */
+    public var drewOnGpu: Boolean = false
         private set
 
     /**
@@ -339,7 +339,8 @@ private class GpuCanvas(
     private val colorSpace: ColorSpace,
     private val ownsBuffer: Boolean = false,
 ) : AutoCloseable {
-    private val node = RenderNode("FFmpegKMP ComposeFrameRenderer").apply { setPosition(0, 0, width, height) }
+    // Positioned through `also`: inside `apply` the node's own zero-sized width and height would shadow the canvas's.
+    private val node = RenderNode("FFmpegKMP ComposeFrameRenderer").also { it.setPosition(0, 0, width, height) }
     private val renderer = HardwareBufferRenderer(buffer).apply { setContentRoot(node) }
     private val paint = Paint()
 

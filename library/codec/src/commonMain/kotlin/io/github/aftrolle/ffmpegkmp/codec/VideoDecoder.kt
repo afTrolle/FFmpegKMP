@@ -223,8 +223,9 @@ public class VideoDecoder private constructor(
      * One frame is decoded ahead on the decoder's thread while the collector works, and a frame it
      * never receives is closed. That holds the next frame ready while the collector works on the
      * current one, which is all a collector slower than the decoder can use, and leaves two of the
-     * decoder's ring of three (see [VideoOutput.Memory]) for the collector's own frames; holding
-     * more fails the flow as [frameAt] fails.
+     * decoder's ring of three (see [VideoOutput.Memory]) for the collector's own frames. While the
+     * collector holds the whole ring, the frame ahead waits for it to close one, however long that
+     * takes: the collector is the one that closes frames, so this is its pace, not a mistake.
      */
     public fun frames(
         from: Duration = Duration.ZERO,
@@ -253,15 +254,18 @@ public class VideoDecoder private constructor(
     private suspend fun FlowCollector<VideoFrame>.decodeFrames(from: Duration, until: Duration, step: FrameStep) {
         var position = from
         var index = 0L
+        var last: Duration? = null
         while (position < until) {
-            val frame = frameAt(position)
+            val frame = awaitingRing { frameAt(position) }
             val end = frame.pts + frame.duration
-            // Past the last frame the decoder holds it: the video has ended.
-            if (position >= end) {
+            // Past the last frame the decoder holds it: the video has ended. A last frame without a duration ends at
+            // its own pts, so asked for there it is still new once.
+            if (position >= end && (frame.pts < position || frame.pts == last)) {
                 frame.close()
                 return
             }
             emit(frame)
+            last = frame.pts
             index++
             position = when (step) {
                 FrameStep.Decoded -> end
@@ -446,11 +450,27 @@ private fun Duration.requireNonNegativeNanos(): Long {
 /** The frames a decoder keeps per layout and size: [VideoOutput.Memory] and [VideoOutput.GpuBuffers]. */
 private const val RING = 3
 
+/**
+ * [block] again each time the decoder's ring is full, after its grace: the frames the collector
+ * holds are what fill it, and it closes them as it goes on.
+ */
+private suspend fun <T> awaitingRing(block: suspend () -> T): T {
+    while (true) {
+        try {
+            return block()
+        } catch (_: RingFullException) {
+            continue
+        }
+    }
+}
+
+private class RingFullException(message: String, cause: Throwable) : IllegalStateException(message, cause)
+
 private inline fun <T> decoding(action: String, block: () -> T): T = try {
     block()
 } catch (failure: NativeVideoDecoderException) {
     if (failure.errorCode == NativePlayerError.RING_FULL) {
-        throw IllegalStateException(
+        throw RingFullException(
             "Could not $action: the caller holds all $RING frames of the decoder's ring; close one to take another",
             failure,
         )

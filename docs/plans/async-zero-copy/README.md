@@ -1239,7 +1239,8 @@ depth, which sets how far the draw runs ahead.
 
 The HDR export's copy out of the F16 canvas was 53% of a frame, 51 ms at 4K,
 so the surface path now takes HDR10 and HLG HEVC Main10 tracks too. Status:
-built and host-verified; phone numbers to be filled in after the next run.
+built, and on the S25 Ultra the round trip passes and the four-source 4K HDR10
+export goes from 10.7 to 37.7 frames/s with the copy gone (table below).
 
 How it is built:
 
@@ -1286,16 +1287,24 @@ back as 10-bit BT.2020 PQ within 6% of the light plus 0.03 of each other and of
 what was drawn; the budget run's `copy` line should read about 0 for
 `GpuBuffersToSurface` in HDR10, with the rate against `GpuBuffers`:
 
-| Case, HDR10 4K | frames/s | copy | to be filled in after the next run |
-|---|---|---|---|
-| `GpuBuffers` | | 51 ms, 53% | |
-| `GpuBuffersToSurface` | | | |
+| Case, HDR10 4K, S25 Ultra | frames/s | copy | resident after 24 frames | draw |
+|---|---|---|---|---|
+| `GpuBuffers`, four sources | 10.7 | 49 ms, 53% | 900 MB | 13 ms |
+| `GpuBuffersToSurface`, four sources | 37.7 | 0 | 399 MB (818 MB peak) | 17 ms |
+| `GpuBuffersToSurface`, one source (`sources=1`) | 52.5 | 0 | 197 MB | 11 ms |
+| `GpuBuffersToSurface`, one source, SDR H.264 clip | 64.4 | 0 | 206 MB | 10 ms |
 
-Risks for that run: the encoder's surface refusing `RGBA_1010102` or the BT.2020
-data space (the probe falls back to the memory path, and the round trip skips
-with the reason); an encoder taking the HDR10 profile only with its own
-`KEY_HDR_STATIC_INFO` field order; and an encoder that reads the data space as
-limited range, which the patches would show as a lifted black and a dimmed peak.
+With one source the decoders are no longer the ceiling: the GPU draw of a 4K
+frame is, at 10 to 17 ms. The run found two faults on the way. An HDR10 config
+without mastering metadata makes the native track wait for its first frame, and
+`ffmpegkmp_writer_use_packets` refused such a track, silently, after the
+MediaCodec encoder had opened; it now switches it, and a refusal prints. And
+FFmpeg's MediaCodec encoders give packets no duration, so the MP4's track
+duration ended a frame early and the demuxer discarded the last sample;
+`ffmpegkmp_mux` now gives a video packet without one a frame at a fixed rate,
+else the step from the packet before. The encoder took `RGBA_1010102` in the
+BT.2020 PQ data space and the HDR10 profile with the packed static metadata, and
+read the data space as full range, as the patches show.
 
 ### 13. Decode at a size
 

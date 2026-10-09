@@ -117,7 +117,9 @@ again as they close, so nothing allocates per frame: the frame the caller works 
 ahead, and one so the caller can keep the previous frame while taking the next. Holding more than
 three frames from one decoder fails the next `frameAt` that needs a new frame with an
 `IllegalStateException`, after a short grace for a frame closing on another thread; the decoder
-stays usable, so closing a frame and calling again continues. To keep more, keep conversions into
+stays usable, so closing a frame and calling again continues. `frames()` is the exception: its
+frame ahead waits out a full ring, since the collector that fills it closes frames at its own pace.
+To keep more, keep conversions into
 another format (`convert(format)`), which copy into the process-wide pool, which has no bound; a
 `retain()` shares its frame's place in the ring, so it costs no other place but keeps that one
 taken. The ring covers:

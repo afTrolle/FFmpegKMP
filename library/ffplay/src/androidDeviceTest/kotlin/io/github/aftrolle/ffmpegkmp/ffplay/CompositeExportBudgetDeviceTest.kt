@@ -28,6 +28,8 @@ import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
 import kotlin.concurrent.thread
 import kotlin.test.Test
+import kotlin.math.ceil
+import kotlin.math.sqrt
 import kotlin.time.Duration.Companion.seconds
 import kotlin.time.TimeSource
 import kotlinx.coroutines.channels.Channel
@@ -57,8 +59,9 @@ import org.junit.Assume.assumeTrue
  * `clip` picks the sources: `pq` (the default), 10-bit HEVC PQ, or `h264`, 8-bit H.264, both of
  * which `GpuBuffers` keeps on the GPU. The export is HDR10 for the PQ
  * clip where the phone encodes it and SDR otherwise; `range` (`SDR` or `HDR10`) picks one.
- * `cases` (such as `GpuBuffers+GpuBuffersToSurface`) narrows the cases by name, and `rounds` (1 by default)
- * repeats them. `GpuBuffersToSurface` needs Android 14 or later; its `zeroCopy` line says whether the
+ * `cases` (such as `GpuBuffers+GpuBuffersToSurface`) narrows the cases by name, `rounds` (1 by default)
+ * repeats them, and `sources` (4 by default) sets how many decoders feed the frame: one shows the encoder's
+ * rate where the decoders are not the ceiling. `GpuBuffersToSurface` needs Android 14 or later; its `zeroCopy` line says whether the
  * encoder took the surface, for an HDR export through the renderer's encode pass.
  */
 class CompositeExportBudgetDeviceTest {
@@ -114,18 +117,19 @@ class CompositeExportBudgetDeviceTest {
             ?: if (pq && MediaWriter.canEncode(hdr)) DynamicRange.HDR10 else DynamicRange.SDR
         Log.i(TAG, "cores ${Runtime.getRuntime().availableProcessors()}, idle threads ${threads()}, ${if (pq) "PQ" else "H.264"} clip, export $range")
         val rounds = arguments.getString("rounds")?.toInt() ?: 1
+        val sources = arguments.getString("sources")?.toInt() ?: SOURCES
         // AGP splits an instrumentation argument on commas before it reaches the runner, so cases are joined with '+'.
         val names = arguments.getString("cases")?.split('+')
         for (round in 1..rounds) {
             for (case in cases.filter { names == null || it.name in names }) {
                 coolDown()
-                export(clip, hdr.copy(dynamicRange = range), case, round)
+                export(clip, hdr.copy(dynamicRange = range), case, round, sources)
             }
         }
         clip.delete()
     }
 
-    private suspend fun export(clip: File, config: VideoEncoderConfig, case: Case, round: Int) {
+    private suspend fun export(clip: File, config: VideoEncoderConfig, case: Case, round: Int, sources: Int) {
         val output = File.createTempFile("composite", ".mp4")
         val peakThreads = AtomicInteger(threads())
         val peakRss = AtomicInteger(rssMegabytes())
@@ -144,7 +148,7 @@ class CompositeExportBudgetDeviceTest {
         val started = TimeSource.Monotonic.markNow()
         MediaWriter.open(MediaOutput.File(output.path), timeout = 60.seconds).use { writer ->
             val track = writer.addVideoTrack(config)
-            val decoders = (0 until SOURCES).map {
+            val decoders = (0 until sources).map {
                 VideoDecoder.open(MediaSource(clip.path), case.output(track), case.decoder, 60.seconds)
             }
             Log.i(TAG, "${case.name}: ${decoders.map { it.decoderKind }}")
@@ -152,9 +156,11 @@ class CompositeExportBudgetDeviceTest {
             try {
                 val content: @Composable (List<FrameImage>) -> Unit = { shown ->
                     Canvas(Modifier.fillMaxSize()) {
-                        val tile = Size(size.width / 2, size.height / 2)
+                        // One source fills the frame; more tile it in the smallest square grid that holds them.
+                        val columns = ceil(sqrt(shown.size.toDouble())).toInt()
+                        val tile = Size(size.width / columns, size.height / columns)
                         shown.forEachIndexed { index, image ->
-                            drawFrameImage(image, Offset(tile.width * (index % 2), tile.height * (index / 2)), tile)
+                            drawFrameImage(image, Offset(tile.width * (index % columns), tile.height * (index / columns)), tile)
                         }
                     }
                 }
@@ -205,7 +211,7 @@ class CompositeExportBudgetDeviceTest {
         val copyShare = checkNotNull(phases.times["copy"]).average() / (took * 1000 / frames)
         Log.i(
             TAG,
-            "round=$round ${case.name} ${config.dynamicRange} | %.1f frames/s over $frames | peak ${peakThreads.get()} threads, ${peakRss.get()} MB | ".format(frames / took) +
+            "round=$round ${case.name} ${config.dynamicRange} sources=$sources | %.1f frames/s over $frames | peak ${peakThreads.get()} threads, ${peakRss.get()} MB | ".format(frames / took) +
                 "after $WARM_FRAMES frames $warmRss MB resident, native heap ${warmNative / MB} MB; at the end ${rssMegabytes()} MB, " +
                 "${Debug.getNativeHeapAllocatedSize() / MB} MB | $phases | copy %.0f%% of a frame".format(copyShare * 100),
         )

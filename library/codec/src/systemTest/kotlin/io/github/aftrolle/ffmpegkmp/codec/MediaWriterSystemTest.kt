@@ -83,6 +83,26 @@ class MediaWriterSystemTest {
     }
 
     @Test
+    fun framesDeliversTheLastFrameOfAVariableRateFileOnce() = runBlocking {
+        val config = VideoEncoderConfig(128, 128, frameRate = null)
+        if (!encodes(config)) return@runBlocking
+        val output = directory / "vfr-end.mp4"
+        val result = MediaWriter.open(MediaOutput.File(output.toString())).use { writer ->
+            val track = writer.addVideoTrack(config)
+            decoder("cfr-30-h264-128.mp4", VideoOutput.Memory(track.config.canvasFormat)).use { decoder ->
+                decoder.frames(until = 10.seconds / 30).collect { track.write(it) }
+            }
+            writer.finish()
+        }
+        assertEquals(10, result.videoFrames)
+        VideoDecoder.open(MediaSource(output.toString())).use { decoder ->
+            val frames = decoder.frames().map { frame -> frame.use { it.number() to it.duration } }.toList()
+            println("The variable-rate file's frames and durations: $frames")
+            assertEquals((0 until 10).toList(), frames.map { it.first })
+        }
+    }
+
+    @Test
     fun aTenBitSdrRoundTripKeepsBt709AtTenBits() = runBlocking {
         val config = VideoEncoderConfig(128, 128, FrameRate(30), VideoCodec.HEVC, DynamicRange.SDR, bitDepth = 10)
         if (!encodes(config)) return@runBlocking

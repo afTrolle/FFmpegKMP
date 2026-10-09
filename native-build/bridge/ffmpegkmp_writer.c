@@ -45,6 +45,7 @@ typedef struct ffmpegkmp_writer_track {
     int timed_out;
     int64_t first_pts;
     int64_t end_pts;
+    int64_t last_packet_pts;
     /* Video. */
     ffmpegkmp_video_encoder_config config;
     const AVCodec *codec;
@@ -740,6 +741,14 @@ static int ffmpegkmp_mux(ffmpegkmp_writer *writer, ffmpegkmp_writer_track *track
     int result = 0;
     packet->stream_index = track->stream->index;
     if (packet->pts != AV_NOPTS_VALUE) {
+        /* MediaCodec's encoders give packets no duration, and the container takes the last sample's from it:
+         * one frame at a fixed rate, else the step from the packet before. */
+        if (packet->duration <= 0 && track->stream->codecpar->codec_type == AVMEDIA_TYPE_VIDEO) {
+            packet->duration = track->config.frame_rate_num > 0 ? 1
+                    : track->last_packet_pts != AV_NOPTS_VALUE && packet->pts > track->last_packet_pts
+                            ? packet->pts - track->last_packet_pts : 0;
+        }
+        track->last_packet_pts = packet->pts;
         if (track->first_pts == AV_NOPTS_VALUE || packet->pts < track->first_pts)
             track->first_pts = packet->pts;
         if (packet->pts + packet->duration > track->end_pts)
@@ -853,6 +862,7 @@ static void ffmpegkmp_init_track(ffmpegkmp_writer_track *track, enum AVMediaType
     memset(track, 0, sizeof(*track));
     track->type = type;
     track->first_pts = AV_NOPTS_VALUE;
+    track->last_packet_pts = AV_NOPTS_VALUE;
     track->end_pts = INT64_MIN;
     track->last_pts = AV_NOPTS_VALUE;
 }
@@ -1287,11 +1297,11 @@ int ffmpegkmp_writer_use_packets(ffmpegkmp_writer *writer, int32_t index) {
         return FFPLAYKMP_ERROR_INVALID_ARGUMENT;
     if (atomic_load(&writer->aborted))
         return AVERROR_EXIT;
-    if (track->packets || track->started || track->ended || track->open_at_first_frame || writer->finished ||
-            track->last_pts != AV_NOPTS_VALUE)
+    if (track->packets || track->started || track->ended || writer->finished || track->last_pts != AV_NOPTS_VALUE)
         return FFPLAYKMP_ERROR_INVALID_STATE;
-    /* Freed on the thread that opened it, as MediaCodec needs. */
+    /* Freed on the thread that opened it, as MediaCodec needs; a track waiting for its first frame has none yet. */
     avcodec_free_context(&track->encoder);
+    track->open_at_first_frame = 0;
     track->packets = 1;
     track->time_base = ffmpegkmp_packet_time_base(&track->config);
     return 0;

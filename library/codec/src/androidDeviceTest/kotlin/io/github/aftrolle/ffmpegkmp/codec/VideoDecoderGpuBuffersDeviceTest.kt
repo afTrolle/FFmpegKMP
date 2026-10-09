@@ -54,7 +54,7 @@ class VideoDecoderGpuBuffersDeviceTest {
     }
 
     @Test
-    fun aFourthFrameFailsAtOnceWhileThreeAreHeldAndTheDecoderGoesOnOnceOneCloses() = runBlocking {
+    fun aFourthFrameFailsAtOnceWhileThreeAreHeldAndTheDecoderGoesOnOnceOneCloses() = runBlocking<Unit> {
         assumeGpuBuffers()
         open("cfr-30-h264-128.mp4").use { decoder ->
             val held = (0 until 3).map { decoder.frameAt(it.seconds / 30) }
