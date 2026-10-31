@@ -298,6 +298,9 @@ int ffmpegkmp_frame_format_is_valid(const ffmpegkmp_frame_format *format);
 /* Whether `frame` is a CVPixelBuffer the bridge can lock: VideoToolbox's, or from a frame pool. */
 int ffmpegkmp_frame_is_pixel_buffer(const AVFrame *frame);
 
+/* Whether `frame`'s memory is a bounded pool's (a decoder's ring), which stays taken while anything references it. */
+int ffmpegkmp_frame_is_ringed(const AVFrame *frame);
+
 /* Counts pixel memory the bridge allocated, for ffmpegkmp_frame_get_statistics. */
 void ffmpegkmp_frame_count_allocation(size_t bytes);
 
