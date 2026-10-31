@@ -178,7 +178,8 @@ header. A `ffmpegkmp_frame *` is one reference to an `AVFrame`:
   `CVPixelBufferRef` on Apple.
 - `ffmpegkmp_frame_map` and `ffmpegkmp_frame_unmap` bracket reading the planes
   and strides: a CVPixelBuffer is locked for reading, and another hardware frame
-  is downloaded once per handle.
+  is downloaded once per handle, into memory the player that decoded it reuses
+  while it has a buffer free.
 - `ffmpegkmp_frame_pool_get` allocates from a pool keyed by layout and size, a
   ring when `ffmpegkmp_frame_pool_alloc` gave it a capacity, where it fails with
   `EAGAIN` rather than wait while the ring is out;

@@ -23,6 +23,13 @@ public enum class NativePlayerDecoderPreference { AUTO, REQUIRE_HARDWARE, SOFTWA
 @InternalFFmpegKmpApi
 public enum class NativePlayerDecoderKind { UNKNOWN, HARDWARE, SOFTWARE }
 
+/**
+ * Why a player whose output wanted a hardware decoder decodes in software, mirroring
+ * `ffplaykmp_decoder_fallback`: none for the stream on this host, or it failed to open or decode.
+ */
+@InternalFFmpegKmpApi
+public enum class NativePlayerDecoderFallback { NONE, UNSUPPORTED, FAILED }
+
 @InternalFFmpegKmpApi
 public data class NativePlayerMasteringDisplayMetadata(
     val hasPrimaries: Boolean = false,
@@ -98,6 +105,7 @@ public data class NativePlayerSnapshot(
     val activeDecoder: NativePlayerDecoderKind = NativePlayerDecoderKind.UNKNOWN,
     val videoInfo: NativePlayerVideoInfo? = null,
     val droppedFrames: Long = 0,
+    val decoderFallback: NativePlayerDecoderFallback = NativePlayerDecoderFallback.NONE,
 )
 
 /**
@@ -146,6 +154,21 @@ public object NativePlayerError {
     /** The caller holds every frame of the decoder's ring; the call fails and the decoder stays usable. */
     public const val RING_FULL: Int = -1008
 }
+
+/** A player call that failed with [errorCode], a [NativePlayerError] code or an FFmpeg `AVERROR`. */
+@InternalFFmpegKmpApi
+public class NativePlayerException(message: String, errorCode: Int) : NativeCallException(message, errorCode)
+
+/**
+ * What the native players and decoders of the process have done since it started, mirroring
+ * `ffplaykmp_statistics`, for tests and benchmarks: the video decoders opened, the video packets the
+ * players read, and the hardware frames downloaded into memory. Always zero in the browser.
+ */
+@InternalFFmpegKmpApi
+public data class NativePlayerStatistics(val codecOpens: Long, val videoPackets: Long, val downloads: Long)
+
+@InternalFFmpegKmpApi
+public expect fun nativePlayerStatistics(): NativePlayerStatistics
 
 @InternalFFmpegKmpApi
 public interface NativePlayerBridge : AutoCloseable {
@@ -513,6 +536,7 @@ internal fun nativePlayerSnapshot(
     contentLightPresent: Boolean,
     maxContentLightLevel: Int,
     maxFrameAverageLightLevel: Int,
+    decoderFallback: Int = 0,
 ): NativePlayerSnapshot = NativePlayerSnapshot(
     state = NativePlayerState.entries.getOrElse(state) { NativePlayerState.FAILED },
     positionUs = positionUs,
@@ -524,6 +548,7 @@ internal fun nativePlayerSnapshot(
     videoHeight = videoHeight,
     activeDecoder = NativePlayerDecoderKind.entries.getOrElse(activeDecoder) { NativePlayerDecoderKind.UNKNOWN },
     droppedFrames = droppedFrames,
+    decoderFallback = NativePlayerDecoderFallback.entries.getOrElse(decoderFallback) { NativePlayerDecoderFallback.FAILED },
     videoInfo = if (videoWidth > 0 && videoHeight > 0) {
         NativePlayerVideoInfo(
             width = videoWidth,

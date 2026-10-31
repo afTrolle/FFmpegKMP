@@ -9,6 +9,7 @@ import io.github.aftrolle.ffmpegkmp.bindings.NativePlayerError
 import io.github.aftrolle.ffmpegkmp.bindings.NativePlayerBridge
 import io.github.aftrolle.ffmpegkmp.bindings.NativePlayerConfiguration
 import io.github.aftrolle.ffmpegkmp.bindings.NativePlayerDecoderKind
+import io.github.aftrolle.ffmpegkmp.bindings.NativePlayerException
 import io.github.aftrolle.ffmpegkmp.bindings.NativePlayerOutputCapabilities
 import io.github.aftrolle.ffmpegkmp.bindings.NativePlatformVideoFrame
 import io.github.aftrolle.ffmpegkmp.bindings.NativePlayerSnapshot
@@ -17,9 +18,11 @@ import io.github.aftrolle.ffmpegkmp.bindings.NativePlayerState
 import io.github.aftrolle.ffmpegkmp.bindings.NativeVideoFrame
 import io.github.aftrolle.ffmpegkmp.bindings.createInMemoryPlayerBridge
 import io.github.aftrolle.ffmpegkmp.bindings.createPlatformPlayerBridge
+import io.github.aftrolle.ffmpegkmp.bindings.requireNative
 import io.github.aftrolle.ffmpegkmp.codec.ColorPrimaries
 import io.github.aftrolle.ffmpegkmp.codec.ColorTransfer
 import io.github.aftrolle.ffmpegkmp.codec.CodecPreference
+import io.github.aftrolle.ffmpegkmp.codec.DecoderFallbackReason
 import io.github.aftrolle.ffmpegkmp.codec.VideoFrame
 import io.github.aftrolle.ffmpegkmp.codec.VideoInfo
 import io.github.aftrolle.ffmpegkmp.codec.toNative
@@ -319,13 +322,11 @@ private class FFplayBridgeEngine(
     private fun acceptNativeSnapshot(native: NativePlayerSnapshot) {
         nativeQueueSerial = native.queueSerial
         nativeDroppedFrames = native.droppedFrames
-        if (!decoderFallbackEmitted &&
-            configuration.decoderPreference == CodecPreference.AUTO &&
-            output != null && negotiated.hardwareFrameImport &&
-            native.activeDecoder == NativePlayerDecoderKind.SOFTWARE
-        ) {
+        // The native player reports a reason whenever its output wanted a hardware decoder it did not get.
+        val fallback = native.decoderFallback.toPublic()
+        if (fallback != null && !decoderFallbackEmitted && output != null) {
             decoderFallbackEmitted = true
-            emit(FFplayEvent.DecoderFallback("Hardware decoding was unavailable; using software decoding"))
+            emit(FFplayEvent.DecoderFallback(fallback.message(), fallback))
         }
         val video = native.videoInfo?.toPublicVideoInfo() ?: if (
             native.videoWidth > 0 && native.videoHeight > 0
@@ -352,7 +353,7 @@ private class FFplayBridgeEngine(
             seekable = native.durationUs != null,
             video = video,
             output = native.outputCapabilities?.let {
-                output?.outputInfo(native.activeDecoder, video)
+                output?.outputInfo(native.activeDecoder, fallback, video)
             },
             droppedFrames = nativeDroppedFrames + outputDroppedFrames,
             failure = native.errorCode.takeIf { it < 0 }?.let { code ->
@@ -426,6 +427,7 @@ private class FFplayBridgeEngine(
 
     private fun FFplayVideoOutput.outputInfo(
         activeDecoder: NativePlayerDecoderKind,
+        fallback: DecoderFallbackReason?,
         video: VideoInfo?,
     ): FFplayOutputInfo {
         val capabilities = negotiated
@@ -438,6 +440,7 @@ private class FFplayBridgeEngine(
             outputColorSpace = color.outputColorSpace,
             hdrResult = color.hdrResult,
             securePath = capabilities.protectedContent,
+            decoderFallback = fallback,
         )
     }
 
@@ -476,9 +479,9 @@ private class FFplayBridgeEngine(
         else -> null
     }
 
-    private fun requireNativeSuccess(operation: String, result: Int) {
-        if (result < 0) throw IllegalStateException(nativeError(operation, result))
-    }
+    /** Throws a [NativePlayerException] whose `errorCode` is the native result when [result] is an error. */
+    private fun requireNativeSuccess(operation: String, result: Int) =
+        requireNative(result, operation) { _, code -> NativePlayerException(nativeError(operation, code), code) }
 
     private fun checkPrepared() {
         checkOpen()
@@ -513,6 +516,11 @@ private fun NativePlayerState.toPublic(): FFplayState = when (this) {
     NativePlayerState.ENDED -> FFplayState.ENDED
     NativePlayerState.STOPPED -> FFplayState.STOPPED
     NativePlayerState.FAILED -> FFplayState.FAILED
+}
+
+private fun DecoderFallbackReason.message(): String = when (this) {
+    DecoderFallbackReason.UNSUPPORTED -> "No hardware decoder takes this video; using software decoding"
+    DecoderFallbackReason.FAILED -> "The hardware decoder failed; using software decoding"
 }
 
 private fun nativeError(operation: String, code: Int): String = when (code) {

@@ -32,6 +32,9 @@ import io.github.aftrolle.ffmpegkmp.bindings.cinterop.ffplaykmp_player_set_video
 import io.github.aftrolle.ffmpegkmp.bindings.cinterop.ffplaykmp_player_stop
 import io.github.aftrolle.ffmpegkmp.bindings.cinterop.ffplaykmp_snapshot
 import io.github.aftrolle.ffmpegkmp.bindings.cinterop.ffplaykmp_snapshot_init
+import io.github.aftrolle.ffmpegkmp.bindings.cinterop.ffplaykmp_statistics
+import io.github.aftrolle.ffmpegkmp.bindings.cinterop.ffplaykmp_statistics_init
+import io.github.aftrolle.ffmpegkmp.bindings.cinterop.ffplaykmp_get_statistics
 import io.github.aftrolle.ffmpegkmp.bindings.cinterop.ffplaykmp_video_frame
 import io.github.aftrolle.ffmpegkmp.bindings.cinterop.ffplaykmp_platform_video_frame
 import kotlinx.cinterop.COpaquePointer
@@ -264,4 +267,17 @@ internal fun ffplaykmp_snapshot.toNativeSnapshot(): NativePlayerSnapshot = nativ
     contentLightPresent = content_light_present != 0,
     maxContentLightLevel = max_content_light_level.toInt(),
     maxFrameAverageLightLevel = max_frame_average_light_level.toInt(),
+    decoderFallback = decoder_fallback.toInt(),
 )
+
+@InternalFFmpegKmpApi
+public actual fun nativePlayerStatistics(): NativePlayerStatistics = memScoped {
+    val statistics = alloc<ffplaykmp_statistics>()
+    ffplaykmp_statistics_init(statistics.ptr)
+    ffplaykmp_get_statistics(statistics.ptr)
+    NativePlayerStatistics(
+        codecOpens = statistics.codec_opens.toLong(),
+        videoPackets = statistics.video_packets.toLong(),
+        downloads = statistics.downloads.toLong(),
+    )
+}

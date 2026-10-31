@@ -232,6 +232,9 @@ int ffplaykmp_rgb_output(AVFrame *output, const AVFrame *source, enum AVPixelFor
 /* Downloads a hardware frame into `software`, keeping the frame properties. */
 int ffplaykmp_download_frame(AVFrame *software, const AVFrame *hardware);
 
+/* Counts a video packet a player read, for ffplaykmp_get_statistics. */
+void ffplaykmp_count_video_packet(void);
+
 /*
  * Frame handles (ffmpegkmp_frame.c). A handle is one reference to an AVFrame;
  * the bridge's own code reaches the AVFrame directly.
@@ -240,6 +243,8 @@ struct ffmpegkmp_frame {
     AVFrame *frame;
     /* A hardware frame's download, made on its first map or conversion. */
     AVFrame *download;
+    /* Where the download takes its buffer while one is free; NULL for a new one (ffmpegkmp_frame_set_download_pool). */
+    ffmpegkmp_frame_pool *download_pool;
     /* CVPixelBuffer read locks the handle's maps hold. */
     int locks;
     /* A map for writing is open (ffmpegkmp_frame_map_writable). */
@@ -266,6 +271,22 @@ ffmpegkmp_frame *ffmpegkmp_frame_from_av(const AVFrame *frame);
  */
 ffmpegkmp_frame_pool *ffmpegkmp_frame_pool_alloc(int32_t capacity);
 void ffmpegkmp_frame_pool_free(ffmpegkmp_frame_pool *pool);
+/* Drops a reference ffmpegkmp_frame_set_download_pool took; NULL is a no-op. */
+void ffmpegkmp_pool_release(ffmpegkmp_frame_pool *pool);
+
+/*
+ * Downloads `hardware` into `software`, an empty frame, keeping the frame
+ * properties: into a buffer of `pool` while it has one free for the layout and
+ * size, never a CVPixelBuffer, and otherwise (or with `pool` NULL) into a new one.
+ */
+int ffmpegkmp_download_into_pool(ffmpegkmp_frame_pool *pool, AVFrame *software, const AVFrame *hardware);
+
+/*
+ * Makes `frame`'s download, and that of every reference made from it, take
+ * its buffer from `pool` while one is free. The handle keeps the pool alive;
+ * a pool its owner has freed gives none.
+ */
+void ffmpegkmp_frame_set_download_pool(ffmpegkmp_frame *frame, ffmpegkmp_frame_pool *pool);
 
 /*
  * ffmpegkmp_frame_pool_get, except that a full ring fails with
@@ -281,7 +302,8 @@ int ffmpegkmp_frame_pool_take(
 
 /*
  * Converts `source` into `destination` with `converter`, reading a
- * CVPixelBuffer in place and downloading other hardware frames. The
+ * CVPixelBuffer in place and downloading other hardware frames, into a buffer
+ * of `download_pool` (may be NULL; see ffmpegkmp_download_into_pool). The
  * destination keeps its format, except that with `keep_colour` it takes the
  * source's colour: a layout-only conversion. Otherwise SDR curves convert as
  * they are shown, without a curve change: BT.709-coded video is sRGB.
@@ -290,6 +312,7 @@ int ffmpegkmp_frame_convert_with(
         ffmpegkmp_converter *converter,
         ffmpegkmp_frame *destination,
         const AVFrame *source,
+        ffmpegkmp_frame_pool *download_pool,
         int keep_colour);
 
 /* Whether `format` names a layout and colour of the model; RGB layouts take the RGB matrix. */

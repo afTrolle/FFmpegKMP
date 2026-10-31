@@ -9,7 +9,7 @@ public abstract class NativeCallException(
 ) : IllegalStateException(message)
 
 /** Throws the exception [failure] makes when [result], a bridge call's return code, is an error. */
-@OptIn(InternalFFmpegKmpApi::class)
-internal inline fun requireNative(result: Int, action: String, failure: (message: String, errorCode: Int) -> NativeCallException) {
+@InternalFFmpegKmpApi
+public inline fun requireNative(result: Int, action: String, failure: (message: String, errorCode: Int) -> NativeCallException) {
     if (result < 0) throw failure("Could not $action (error $result)", result)
 }

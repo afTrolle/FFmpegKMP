@@ -21,7 +21,9 @@ import android.os.HandlerThread
 import android.util.Log
 import android.view.Surface
 import androidx.compose.ui.layout.ContentScale
+import io.github.aftrolle.ffmpegkmp.bindings.nativePlayerStatistics
 import io.github.aftrolle.ffmpegkmp.codec.CodecPreference
+import io.github.aftrolle.ffmpegkmp.codec.DecoderFallbackReason
 import io.github.aftrolle.ffmpegkmp.codec.DecoderKind
 import io.github.aftrolle.ffmpegkmp.codec.VideoFrame
 import io.github.aftrolle.ffmpegkmp.codec.VideoInfo
@@ -36,6 +38,7 @@ import java.util.concurrent.TimeoutException
 import kotlin.math.floor
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import kotlin.test.fail
 import kotlin.time.Duration
@@ -122,6 +125,8 @@ class FFplayNativePlayerDeviceTest {
             within("pause") { player.pause() }
             assertTrue(playing.surface.settled().count - beforePlay >= 10, "frames drawn while playing")
             assertEquals(DecoderKind.SOFTWARE, player.snapshot.value.output?.decoder)
+            // The canvas wants no hardware decoder, so software is no fallback.
+            assertNull(player.snapshot.value.output?.decoderFallback)
             playing.check()
         }
     }
@@ -158,7 +163,17 @@ class FFplayNativePlayerDeviceTest {
             val beforeFit = playing.surface.settled()
             playing.show()
             playing.surface.await("the paused frame at Fit") { it.count > beforeFit.count }
-            log("back at Fit on ${player.snapshot.value.output?.decoder}, ${playing.surface.frames.value}")
+            val output = player.snapshot.value.output
+            log("back at Fit on ${output?.decoder} (fallback ${output?.decoderFallback}), ${playing.surface.frames.value}")
+            // Where MediaCodec cannot have the Surface back, the output says so, and why.
+            if (output?.decoder == DecoderKind.SOFTWARE) {
+                assertEquals(DecoderFallbackReason.FAILED, output.decoderFallback)
+                // Events reach the collector a moment after the state.
+                withTimeoutOrNull(2.seconds) { while (playing.decoderFallbacks().isEmpty()) delay(20) }
+                if (hardwareAvcDecoder()) assertEquals(listOf(DecoderFallbackReason.FAILED), playing.decoderFallbacks())
+            } else {
+                assertNull(output?.decoderFallback)
+            }
             playing.check()
         }
     }
@@ -320,6 +335,7 @@ class FFplayNativePlayerDeviceTest {
             log("$preference prepared on $decoder; zero copy ${player.snapshot.value.output?.zeroCopy}")
             assertExpectedDecoder(preference, decoder)
             playing.assertNoDecoderFallback()
+            val opens = nativePlayerStatistics().codecOpens
 
             val target = 1.55.seconds
             within("seek while paused") { player.seekTo(target) }
@@ -355,6 +371,8 @@ class FFplayNativePlayerDeviceTest {
             playing.surface.await("frames past ${frameAt(back + 0.5.seconds)}") {
                 it.number in frameAt(back + 0.5.seconds) until frameAt(back) + 2 * FPS
             }
+            // The codec opened for the Surface served every seek, pause and play since.
+            assertEquals(opens, nativePlayerStatistics().codecOpens, "codecs opened since the Surface was shown")
 
             // Past the end, while paused: the seek is bounded to the duration and shows the last frame.
             within("pause before the end") { player.pause() }
@@ -376,11 +394,17 @@ class FFplayNativePlayerDeviceTest {
         log("$preference lifecycle took ${(System.nanoTime() - started) / 1_000_000} ms")
     }
 
-    /** Destroys the Surface and attaches a new one, as `AndroidExternalSurface` does, while playing and while paused. */
+    /**
+     * Destroys the Surface and attaches a new one, as `AndroidExternalSurface` does, while playing and while paused. A
+     * MediaCodec renders to its Surface, so each new one takes a codec; a software codec draws through the canvas of
+     * whichever Surface there is, and stays.
+     */
     private suspend fun swapSurfaces(preference: CodecPreference) {
         Playing(preference).use { playing ->
             val player = playing.player
             playing.prepareAndShow()
+            val perSurface = if (player.snapshot.value.output?.decoder == DecoderKind.HARDWARE) 1L else 0L
+            val opens = nativePlayerStatistics().codecOpens
             within("play") { player.play() }
             player.await("playback") { it.position >= 0.5.seconds }
 
@@ -406,7 +430,54 @@ class FFplayNativePlayerDeviceTest {
             player.await("playback past ${paused + 1.seconds}") { it.position >= paused + 1.seconds }
             third.await("playback on the third Surface") { it.number >= frameAt(paused + 1.seconds) }
             assertExpectedDecoder(preference, player.snapshot.value.output?.decoder)
+            assertEquals(opens + 2 * perSurface, nativePlayerStatistics().codecOpens, "codecs opened for two new Surfaces")
             playing.check()
+        }
+    }
+
+    /**
+     * The Surface goes, while playing or paused, and a new one comes only later, as when the app goes to the background
+     * and back: the player waits for it at its position, then goes on from there.
+     */
+    @Test
+    fun playbackGoesOnOnASurfaceAttachedAfterTheLastOneWent() = runBlocking {
+        for (preference in listOf(CodecPreference.AUTO, CodecPreference.SOFTWARE)) {
+            Playing(preference).use { playing ->
+                val player = playing.player
+                playing.prepareAndShow()
+                within("play") { player.play() }
+                player.await("playback") { it.position >= 0.5.seconds }
+
+                // While playing.
+                playing.detach()
+                player.await("waiting for an output") { it.state == FFplayState.WAITING_FOR_OUTPUT }
+                val detached = player.snapshot.value.position
+                delay(300)
+                assertEquals(detached, player.snapshot.value.position, "the position holds without an output")
+                val second = playing.attachNewSurface()
+                player.await("playing on the new Surface") { it.state == FFplayState.PLAYING }
+                second.await("frames past ${frameAt(detached)}") { it.count >= 10 && it.number > frameAt(detached) }
+                assertExpectedDecoder(preference, player.snapshot.value.output?.decoder)
+
+                // While paused.
+                within("pause") { player.pause() }
+                val paused = player.snapshot.value.position
+                val held = second.settled()
+                playing.detach()
+                player.await("waiting for an output") { it.state == FFplayState.WAITING_FOR_OUTPUT }
+                delay(300)
+                val third = playing.attachNewSurface()
+                player.await("ready on the third Surface") { it.state == FFplayState.READY || it.state == FFplayState.PAUSED }
+                third.await("the paused frame") { it.count >= 1 }
+                assertEquals(paused, player.snapshot.value.position)
+                assertTrue(third.frames.value.number in held.number - 1..held.number + 1, "showing ${third.frames.value.number}, paused on ${held.number}")
+                within("play on the third Surface") { player.play() }
+                player.await("playback past ${paused + 0.5.seconds}") { it.position >= paused + 0.5.seconds }
+                third.await("playback on the third Surface") { it.number >= frameAt(paused + 0.5.seconds) }
+                assertExpectedDecoder(preference, player.snapshot.value.output?.decoder)
+                playing.check()
+                playing.assertNoDecoderFallback()
+            }
         }
     }
 
@@ -486,6 +557,12 @@ class FFplayNativePlayerDeviceTest {
 
         /** The composable's `onDestroyed` for the current Surface, then `onSurface` with a new one. */
         fun replaceSurface(): SurfaceReader {
+            detach()
+            return attachNewSurface()
+        }
+
+        /** The composable's `onDestroyed` for the current Surface, which then goes. */
+        fun detach() {
             val old = surface
             within("detach the output") {
                 player.detachOutput(output)
@@ -493,16 +570,24 @@ class FFplayNativePlayerDeviceTest {
             }
             old.close()
             retired += old
+        }
+
+        /** The composable's `onSurface` with a new Surface. */
+        fun attachNewSurface(): SurfaceReader {
             surface = SurfaceReader()
             show()
             return surface
         }
 
+        /** The reasons of the decoder fallbacks reported so far. */
+        fun decoderFallbacks(): List<DecoderFallbackReason> =
+            synchronized(events) { events.filterIsInstance<FFplayEvent.DecoderFallback>().map { it.reason } }
+
         /** Under AUTO, where the device has a hardware decoder for the clip, it was used throughout. */
         fun assertNoDecoderFallback() {
             if (preference != CodecPreference.AUTO || !hardwareAvcDecoder()) return
-            val fallbacks = synchronized(events) { events.filterIsInstance<FFplayEvent.DecoderFallback>() }
-            assertEquals(emptyList(), fallbacks, "decoder fallbacks")
+            assertEquals(emptyList(), decoderFallbacks(), "decoder fallbacks")
+            assertNull(player.snapshot.value.output?.decoderFallback)
         }
 
         /** Fails on a fatal event or a failure reading the Surfaces. */

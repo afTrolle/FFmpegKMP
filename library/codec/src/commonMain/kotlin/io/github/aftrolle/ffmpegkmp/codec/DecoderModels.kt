@@ -3,6 +3,7 @@
 
 package io.github.aftrolle.ffmpegkmp.codec
 
+import io.github.aftrolle.ffmpegkmp.bindings.NativePlayerDecoderFallback
 import io.github.aftrolle.ffmpegkmp.bindings.NativePlayerDecoderKind
 import io.github.aftrolle.ffmpegkmp.bindings.NativePlayerDecoderPreference
 import io.github.aftrolle.ffmpegkmp.core.InternalFFmpegKmpApi
@@ -17,6 +18,15 @@ public enum class CodecPreference { AUTO, REQUIRE_HARDWARE, SOFTWARE }
 
 /** The video decoder that actually took a source; [UNKNOWN] before one has opened. */
 public enum class DecoderKind { UNKNOWN, HARDWARE, SOFTWARE }
+
+/** Why a video that was to be decoded in hardware, under [CodecPreference.AUTO], is decoded in software. */
+public enum class DecoderFallbackReason {
+    /** The platform has no hardware decoder for the stream. */
+    UNSUPPORTED,
+
+    /** The hardware decoder failed to open or to decode; the source stays in software. */
+    FAILED,
+}
 
 /**
  * How many threads a software video decoder decodes with. The frames and their timestamps are the
@@ -58,6 +68,14 @@ public fun CodecPreference.toNative(): NativePlayerDecoderPreference = when (thi
 public fun DecoderThreads.toNative(): Int = when (this) {
     DecoderThreads.Auto -> 0
     is DecoderThreads.Fixed -> count
+}
+
+/** The fallback reason the bindings report, as the public API names it; null for none. */
+@InternalFFmpegKmpApi
+public fun NativePlayerDecoderFallback.toPublic(): DecoderFallbackReason? = when (this) {
+    NativePlayerDecoderFallback.NONE -> null
+    NativePlayerDecoderFallback.UNSUPPORTED -> DecoderFallbackReason.UNSUPPORTED
+    NativePlayerDecoderFallback.FAILED -> DecoderFallbackReason.FAILED
 }
 
 /** The decoder kind the bindings report, as the public API names it. */

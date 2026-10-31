@@ -11,6 +11,7 @@ import io.github.aftrolle.ffmpegkmp.bindings.generated.bridge.ffplaykmp_platform
 import io.github.aftrolle.ffmpegkmp.bindings.generated.bridge.ffplaykmp_platform_video_frame_callback
 import io.github.aftrolle.ffmpegkmp.bindings.generated.bridge.ffplaykmp_player
 import io.github.aftrolle.ffmpegkmp.bindings.generated.bridge.ffplaykmp_snapshot
+import io.github.aftrolle.ffmpegkmp.bindings.generated.bridge.ffplaykmp_statistics
 import io.github.aftrolle.ffmpegkmp.bindings.generated.bridge.ffplaykmp_state_callback
 import io.github.aftrolle.ffmpegkmp.bindings.generated.bridge.ffplaykmp_video_frame
 import io.github.aftrolle.ffmpegkmp.bindings.generated.bridge.ffplaykmp_video_frame_callback
@@ -212,4 +213,22 @@ internal fun ffplaykmp_snapshot.toNativeSnapshot(): NativePlayerSnapshot = nativ
     contentLightPresent = content_light_present() != 0,
     maxContentLightLevel = max_content_light_level(),
     maxFrameAverageLightLevel = max_frame_average_light_level(),
+    decoderFallback = decoder_fallback(),
 )
+
+@InternalFFmpegKmpApi
+public actual fun nativePlayerStatistics(): NativePlayerStatistics {
+    JavaCppBridgeLoader.load()
+    val statistics = ffplaykmp_statistics()
+    return try {
+        bridge.ffplaykmp_statistics_init(statistics)
+        bridge.ffplaykmp_get_statistics(statistics)
+        NativePlayerStatistics(
+            codecOpens = statistics.codec_opens(),
+            videoPackets = statistics.video_packets(),
+            downloads = statistics.downloads(),
+        )
+    } finally {
+        statistics.close()
+    }
+}

@@ -145,11 +145,12 @@ A frame as decoded is then in two buffers, the decoder's and the bitmap's, with 
 between. `toImageBitmap` leaves the frame open.
 
 The Compose Canvas fallback draws the player's frames the same way: the player hands over each
-frame as decoded (hardware frames downloaded), and the canvas output converts it into a
+frame as decoded, and the canvas output converts it into a
 [`FrameImage`](#two-bitmaps-per-source) on the player's thread. Since that thread updates the image
 at the video's rate, which drawing does not pace, the player's image keeps three bitmaps rather
 than two. Android's Surface fallback draws each frame onto the surface before it takes the next,
-so it converts every frame into one reused bitmap. Both convert straight to the size the frame is
+so it converts every frame into one reused bitmap. A desktop hardware frame is downloaded as it is
+converted, once, into one of two buffers the player reuses. Both convert straight to the size the frame is
 drawn at, not the source's (see [Bitmaps at the drawn size](#bitmaps-at-the-drawn-size)). The
 browser's worker converts its frames into RGBA8 bytes, at the source's size, before they cross to
 the page.

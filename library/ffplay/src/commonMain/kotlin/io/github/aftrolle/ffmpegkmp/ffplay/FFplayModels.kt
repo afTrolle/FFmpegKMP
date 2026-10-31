@@ -2,6 +2,7 @@
 package io.github.aftrolle.ffmpegkmp.ffplay
 
 import io.github.aftrolle.ffmpegkmp.codec.ColorPrimaries
+import io.github.aftrolle.ffmpegkmp.codec.DecoderFallbackReason
 import io.github.aftrolle.ffmpegkmp.codec.DecoderKind
 import io.github.aftrolle.ffmpegkmp.codec.CodecPreference
 import io.github.aftrolle.ffmpegkmp.codec.DecoderThreads
@@ -72,6 +73,8 @@ public data class FFplayOutputInfo(
     val outputColorSpace: ColorPrimaries? = null,
     val hdrResult: FFplayHdrResult = FFplayHdrResult.NOT_HDR,
     val securePath: Boolean = false,
+    /** Why [decoder] is software when the output wanted hardware; null when it is not, or none was wanted. */
+    val decoderFallback: DecoderFallbackReason? = null,
 )
 
 public data class FFplayFailure(
@@ -94,7 +97,11 @@ public sealed interface FFplayEvent {
     public val message: String
 
     public data class Warning(override val message: String) : FFplayEvent
-    public data class DecoderFallback(override val message: String) : FFplayEvent
+    /** Hardware decoding was wanted and software decodes instead, for [reason]; mirrored by [FFplayOutputInfo.decoderFallback]. */
+    public data class DecoderFallback(
+        override val message: String,
+        val reason: DecoderFallbackReason = DecoderFallbackReason.FAILED,
+    ) : FFplayEvent
     public data class RendererFallback(override val message: String) : FFplayEvent
     public data class SurfaceLost(override val message: String) : FFplayEvent
     public data class ProtectionRequired(override val message: String) : FFplayEvent

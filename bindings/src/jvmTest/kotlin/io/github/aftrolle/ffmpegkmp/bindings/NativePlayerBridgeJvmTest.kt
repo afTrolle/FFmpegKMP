@@ -99,6 +99,7 @@ class NativePlayerBridgeJvmTest {
             assertEquals(0, bridge.prepare(videoSource("hardware-h264.mp4")))
 
             assertEquals(NativePlayerDecoderKind.HARDWARE, bridge.snapshot().activeDecoder)
+            assertEquals(NativePlayerDecoderFallback.NONE, bridge.snapshot().decoderFallback)
             assertEquals(1, frames.size)
             // Downloaded from VideoToolbox's NV12.
             frames.single().frame.use { frame ->
@@ -123,8 +124,126 @@ class NativePlayerBridgeJvmTest {
             assertEquals(0, bridge.prepare(clearVideoSource()))
 
             assertEquals(NativePlayerDecoderKind.SOFTWARE, bridge.snapshot().activeDecoder)
+            assertEquals(NativePlayerDecoderFallback.FAILED, bridge.snapshot().decoderFallback)
             assertEquals(1, frames.size)
+            // Software from now on for this source: its seeks and playback open no codec, hardware or other.
+            val opens = nativePlayerStatistics().codecOpens
+            listOf(500_000L, 200_000L).forEach { assertEquals(0, bridge.seek(it)) }
+            assertEquals(0, bridge.play())
+            assertEquals(0, bridge.pause())
+            assertEquals(opens, nativePlayerStatistics().codecOpens)
+            assertEquals(NativePlayerDecoderFallback.FAILED, bridge.snapshot().decoderFallback)
             frames.forEach { it.frame.close() }
+        }
+    }
+
+    /**
+     * A desktop hardware frame reaches the output as decoded and is downloaded once, as it is
+     * converted, into one of the player's two download buffers: no new memory per frame.
+     */
+    @Test
+    fun desktopHardwareFramesAreDownloadedOnceIntoReusedMemory() {
+        if (!System.getProperty("os.name").contains("Mac", ignoreCase = true)) return
+        val bitmap = allocateNativeFrame(NativeFrameFormat(RGBA8, BT709, SRGB, RGB, FULL), 64, 64)
+        val converted = AtomicInteger()
+        val played = CountDownLatch(12)
+        createPlatformPlayerBridge(
+            NativePlayerConfiguration(NativePlayerDecoderPreference.AUTO),
+            update = {},
+            frame = { frame ->
+                // As a Canvas output: one conversion into its bitmap.
+                frame.frame.use { it.convertInto(bitmap) }
+                converted.incrementAndGet()
+                played.countDown()
+            },
+        ).use { bridge ->
+            assertEquals(0, bridge.setOutput(NativePlayerOutputCapabilities()))
+            assertEquals(0, bridge.prepare(videoSource("hardware-h264.mp4")))
+            assertEquals(NativePlayerDecoderKind.HARDWARE, bridge.snapshot().activeDecoder)
+            val before = nativePlayerStatistics()
+            val memory = nativeFrameStatistics()
+            val previews = converted.get()
+
+            assertEquals(0, bridge.play())
+            assertTrue(played.await(3, TimeUnit.SECONDS), "playback presented no frames")
+            assertEquals(0, bridge.pause())
+            val frames = converted.get() - previews
+            assertEquals(frames.toLong(), nativePlayerStatistics().downloads - before.downloads, "downloads for $frames frames")
+            val buffers = nativeFrameStatistics().buffers - memory.buffers
+            assertTrue(buffers <= 2, "$buffers buffers allocated for $frames frames")
+        }
+        bitmap.close()
+    }
+
+    @Test
+    fun theCodecIsKeptAcrossSeeksPausePlayAndOutputs() {
+        val played = CountDownLatch(3)
+        createPlatformPlayerBridge(
+            NativePlayerConfiguration(NativePlayerDecoderPreference.SOFTWARE),
+            update = {},
+            frame = { frame ->
+                frame.frame.close()
+                played.countDown()
+            },
+        ).use { bridge ->
+            assertEquals(0, bridge.setOutput(NativePlayerOutputCapabilities()))
+            assertEquals(0, bridge.prepare(clearVideoSource()))
+            val prepared = nativePlayerStatistics().codecOpens
+            listOf(900_000L, 100_000L, 500_000L, 0L).forEach { assertEquals(0, bridge.seek(it)) }
+            assertEquals(0, bridge.play())
+            assertTrue(played.await(3, TimeUnit.SECONDS), "playback presented no frames")
+            assertEquals(0, bridge.pause())
+            assertEquals(0, bridge.play())
+            assertEquals(0, bridge.pause())
+            assertEquals(0, bridge.seek(300_000))
+            // An output that takes the same frames needs the same codec.
+            bridge.clearOutput()
+            assertEquals(0, bridge.setOutput(NativePlayerOutputCapabilities()))
+            assertEquals(prepared, nativePlayerStatistics().codecOpens, "a seek, play, pause or output opened a codec")
+            // Software was asked for, so nothing fell back.
+            assertEquals(NativePlayerDecoderFallback.NONE, bridge.snapshot().decoderFallback)
+
+            assertEquals(0, bridge.stop())
+            assertEquals(0, bridge.prepare(clearVideoSource()))
+            assertEquals(prepared + 1, nativePlayerStatistics().codecOpens, "a new source opens a codec of its own")
+        }
+    }
+
+    /**
+     * Stepping forward a frame at a time while paused goes on from the frame on screen: each step
+     * reads about one packet and decodes one frame, where a seek would decode from the keyframe.
+     */
+    @Test
+    fun aForwardScrubDecodesEachFrameOnce() {
+        val frames = CopyOnWriteArrayList<NativeVideoFrame>()
+        createPlatformPlayerBridge(
+            NativePlayerConfiguration(NativePlayerDecoderPreference.SOFTWARE),
+            update = {},
+            frame = frames::add,
+        ).use { bridge ->
+            assertEquals(0, bridge.setOutput(NativePlayerOutputCapabilities()))
+            // 25 fps, B-frames, one keyframe.
+            assertEquals(0, bridge.prepare(videoSource("big-buck-bunny-1s.mp4")))
+            assertEquals(0, bridge.seek(40_000))
+            val before = nativePlayerStatistics()
+            val targets = (2..20).map { it * 40_000L }
+            for (target in targets) {
+                frames.forEach { it.frame.close() }
+                frames.clear()
+                assertEquals(0, bridge.seek(target))
+                assertEquals(target, frames.single().presentationTimeUs, "the frame shown after stepping to ${target}us")
+            }
+            val packets = nativePlayerStatistics().videoPackets - before.videoPackets
+            assertTrue(packets <= targets.size, "$packets packets read for ${targets.size} steps")
+
+            // Inside the frame on screen: that frame again, at the target, after at most the packet that shows where it ends.
+            frames.forEach { it.frame.close() }
+            frames.clear()
+            val inside = nativePlayerStatistics()
+            assertEquals(0, bridge.seek(targets.last() + 10_000))
+            assertEquals(listOf(targets.last() + 10_000), frames.map { it.presentationTimeUs })
+            assertTrue(nativePlayerStatistics().videoPackets - inside.videoPackets <= 1)
+            assertEquals(before.codecOpens, nativePlayerStatistics().codecOpens)
         }
     }
 

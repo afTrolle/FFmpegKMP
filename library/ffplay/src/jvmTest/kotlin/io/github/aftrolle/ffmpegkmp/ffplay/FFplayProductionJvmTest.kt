@@ -2,6 +2,7 @@
 package io.github.aftrolle.ffmpegkmp.ffplay
 
 import io.github.aftrolle.ffmpegkmp.bindings.InternalFFmpegKmpApi
+import io.github.aftrolle.ffmpegkmp.codec.DecoderFallbackReason
 import io.github.aftrolle.ffmpegkmp.codec.DecoderKind
 import io.github.aftrolle.ffmpegkmp.codec.CodecPreference
 import io.github.aftrolle.ffmpegkmp.codec.VideoFrame
@@ -14,10 +15,16 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertNotNull
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
+import kotlin.time.Duration.Companion.milliseconds
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
+import kotlinx.coroutines.flow.filterIsInstance
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeout
 import okio.Buffer
 
 @OptIn(InternalFFmpegKmpApi::class)
@@ -43,11 +50,47 @@ class FFplayProductionJvmTest {
 
             assertEquals(FFplayState.READY, player.snapshot.value.state)
             assertEquals(DecoderKind.SOFTWARE, player.snapshot.value.output?.decoder)
+            // Software was asked for, so nothing fell back.
+            assertNull(player.snapshot.value.output?.decoderFallback)
             assertNotNull(player.snapshot.value.video)
             assertTrue(output.framesReceived > 0)
         } finally {
             player.close()
         }
+    }
+
+    /**
+     * A Canvas output on the desktop wants a hardware decoder under AUTO, so a fallback is reported
+     * there too, with its reason: VideoToolbox advertises this MPEG-2 stream on macOS and fails it.
+     */
+    @Test
+    fun aDesktopCanvasOutputReportsWhyItDecodesInSoftware() = runBlocking {
+        if (!System.getProperty("os.name").contains("Mac", ignoreCase = true)) return@runBlocking
+        val player = FFplayPlayer(FFplayConfiguration(decoderPreference = CodecPreference.AUTO, audio = false))
+        val fallback = async(Dispatchers.Default, CoroutineStart.UNDISPATCHED) {
+            player.events.filterIsInstance<FFplayEvent.DecoderFallback>().first()
+        }
+        try {
+            player.attachOutput(ProductionOutput())
+            player.prepare(fixtureSource("playback-color-patches-1s.mp4"))
+
+            val output = assertNotNull(player.snapshot.value.output)
+            assertEquals(DecoderKind.SOFTWARE, output.decoder)
+            assertEquals(DecoderFallbackReason.FAILED, output.decoderFallback)
+            val event = withTimeout(2_000) { fallback.await() }
+            assertEquals(DecoderFallbackReason.FAILED, event.reason)
+            // The source stays in software, and says why, through its seeks.
+            player.seekTo(500.milliseconds)
+            assertEquals(DecoderFallbackReason.FAILED, player.snapshot.value.output?.decoderFallback)
+        } finally {
+            fallback.cancel()
+            player.close()
+        }
+    }
+
+    private fun fixtureSource(name: String): MediaSource {
+        val bytes = checkNotNull(javaClass.getResourceAsStream("/$name")) { "Missing fixture $name" }.use { it.readBytes() }
+        return MediaSource(name, CommandIo { input(name, Buffer().write(bytes)) })
     }
 
     @Test

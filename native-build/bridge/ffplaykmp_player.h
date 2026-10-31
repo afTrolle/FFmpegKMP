@@ -46,6 +46,17 @@ typedef enum ffplaykmp_decoder_kind {
 } ffplaykmp_decoder_kind;
 
 /*
+ * Why a player whose output wanted a hardware decoder decodes in software:
+ * this host has no hardware decoder for the stream, or opening or decoding
+ * with it failed, after which AUTO keeps to software for the source.
+ */
+typedef enum ffplaykmp_decoder_fallback {
+    FFPLAYKMP_DECODER_FALLBACK_NONE = 0,
+    FFPLAYKMP_DECODER_FALLBACK_UNSUPPORTED = 1,
+    FFPLAYKMP_DECODER_FALLBACK_FAILED = 2,
+} ffplaykmp_decoder_fallback;
+
+/*
  * Dynamic-metadata signalling a stream carries, as bits of ffplaykmp_snapshot.hdr_flags. Whether the
  * picture is HDR follows from color_transfer, never from these.
  */
@@ -137,6 +148,8 @@ typedef struct ffplaykmp_snapshot {
     uint32_t max_content_light_level;
     uint32_t max_frame_average_light_level;
     uint64_t dropped_frames;
+    /* Why the open decoder is not the hardware one the output wanted; NONE while it is, or none was wanted. */
+    ffplaykmp_decoder_fallback decoder_fallback;
 } ffplaykmp_snapshot;
 
 /* One reference to a decoded frame (ffmpegkmp_frame.h). */
@@ -145,8 +158,9 @@ struct ffmpegkmp_frame;
 typedef struct ffplaykmp_video_frame {
     uint32_t size;
     /*
-     * The frame as decoded, hardware frames downloaded. Borrowed for the
-     * duration of the callback: ffmpegkmp_frame_ref it to keep it.
+     * The frame as decoded. A desktop hardware frame is downloaded on its
+     * first map or conversion, once, into memory the player reuses. Borrowed
+     * for the duration of the callback: ffmpegkmp_frame_ref it to keep it.
      */
     const struct ffmpegkmp_frame *frame;
     int32_t width;
@@ -279,6 +293,20 @@ FFPLAYKMP_EXPORT void ffplaykmp_player_set_master_clock(
 FFPLAYKMP_EXPORT int ffplaykmp_player_get_snapshot(
         const ffplaykmp_player *player,
         ffplaykmp_snapshot *snapshot);
+
+/* What the players and decoders of the process have done since it started, for tests and benchmarks. */
+typedef struct ffplaykmp_statistics {
+    uint32_t size;
+    /* Video decoders opened, hardware and software, by players and decoders alike. */
+    uint64_t codec_opens;
+    /* Video packets the players read from their inputs. */
+    uint64_t video_packets;
+    /* Hardware frames downloaded into memory. */
+    uint64_t downloads;
+} ffplaykmp_statistics;
+
+FFPLAYKMP_EXPORT void ffplaykmp_statistics_init(ffplaykmp_statistics *statistics);
+FFPLAYKMP_EXPORT void ffplaykmp_get_statistics(ffplaykmp_statistics *statistics);
 
 /*
  * Flat callback facade used by the browser worker. It keeps C structure layout out of

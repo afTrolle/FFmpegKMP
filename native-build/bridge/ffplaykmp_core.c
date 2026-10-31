@@ -5,6 +5,7 @@
 #include <limits.h>
 #include <math.h>
 #include <pthread.h>
+#include <stdatomic.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -19,6 +20,29 @@
 #include <libavutil/imgutils.h>
 #include <libavutil/mastering_display_metadata.h>
 #include <libavutil/pixdesc.h>
+
+static _Atomic uint64_t ffplaykmp_codec_opens;
+static _Atomic uint64_t ffplaykmp_video_packets;
+static _Atomic uint64_t ffplaykmp_downloads;
+
+void ffplaykmp_statistics_init(ffplaykmp_statistics *statistics) {
+    if (!statistics)
+        return;
+    memset(statistics, 0, sizeof(*statistics));
+    statistics->size = sizeof(*statistics);
+}
+
+void ffplaykmp_get_statistics(ffplaykmp_statistics *statistics) {
+    if (!statistics || statistics->size < sizeof(*statistics))
+        return;
+    statistics->codec_opens = atomic_load(&ffplaykmp_codec_opens);
+    statistics->video_packets = atomic_load(&ffplaykmp_video_packets);
+    statistics->downloads = atomic_load(&ffplaykmp_downloads);
+}
+
+void ffplaykmp_count_video_packet(void) {
+    atomic_fetch_add(&ffplaykmp_video_packets, 1);
+}
 
 static int ffplaykmp_pixel_bit_depth(int pixel_format) {
     const AVPixFmtDescriptor *descriptor = av_pix_fmt_desc_get(pixel_format);
@@ -471,6 +495,7 @@ int ffplaykmp_video_codec_open(
 #endif
     memset(codec, 0, sizeof(*codec));
     codec->stream_index = stream_index;
+    atomic_fetch_add(&ffplaykmp_codec_opens, 1);
 #if !defined(__ANDROID__)
     codec->hardware_format = AV_PIX_FMT_NONE;
     (void)android_surface;
@@ -1755,6 +1780,7 @@ int ffplaykmp_rgb_output(AVFrame *output, const AVFrame *source, enum AVPixelFor
 
 int ffplaykmp_download_frame(AVFrame *software, const AVFrame *hardware) {
     int result = av_hwframe_transfer_data(software, hardware, 0);
+    atomic_fetch_add(&ffplaykmp_downloads, 1);
     return result < 0 ? result : av_frame_copy_props(software, hardware);
 }
 

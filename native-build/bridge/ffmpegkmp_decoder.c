@@ -433,7 +433,7 @@ static int ffmpegkmp_as_decoded(ffmpegkmp_video_decoder *decoder, const AVFrame 
                 : FFMPEGKMP_RANGE_LIMITED;
         if ((result = ffmpegkmp_frame_pool_take(decoder->pool, &format, current->width, current->height, frame)) < 0)
             return result;
-        if ((result = ffmpegkmp_frame_convert_with(decoder->converter, *frame, current, 1)) < 0) {
+        if ((result = ffmpegkmp_frame_convert_with(decoder->converter, *frame, current, NULL, 1)) < 0) {
             ffmpegkmp_frame_unref(*frame);
             *frame = NULL;
         }
@@ -444,15 +444,12 @@ static int ffmpegkmp_as_decoded(ffmpegkmp_video_decoder *decoder, const AVFrame 
         *frame = ffmpegkmp_frame_from_av(current);
         return *frame ? 0 : AVERROR(ENOMEM);
     }
+    /* Downloaded at once, so the hardware frame goes back to the decoder; into the ring while it has room. */
     if (!(download = av_frame_alloc()))
         return AVERROR(ENOMEM);
-    result = ffplaykmp_download_frame(download, current);
-    if (result >= 0) {
-        ffmpegkmp_frame_count_allocation(
-                (size_t)av_image_get_buffer_size(download->format, download->width, download->height, 1));
-        if (!(*frame = ffmpegkmp_frame_from_av(download)))
-            result = AVERROR(ENOMEM);
-    }
+    result = ffmpegkmp_download_into_pool(decoder->pool, download, current);
+    if (result >= 0 && !(*frame = ffmpegkmp_frame_from_av(download)))
+        result = AVERROR(ENOMEM);
     av_frame_free(&download);
     return result;
 }
@@ -502,7 +499,7 @@ static int ffmpegkmp_hand_out(ffmpegkmp_video_decoder *decoder) {
                 decoder->width > 0 ? decoder->width : current->width,
                 decoder->height > 0 ? decoder->height : current->height, &presented);
         if (result >= 0)
-            result = ffmpegkmp_frame_convert_with(decoder->converter, presented, current, 0);
+            result = ffmpegkmp_frame_convert_with(decoder->converter, presented, current, decoder->pool, 0);
     } else {
         result = ffmpegkmp_as_decoded(decoder, current, &presented);
     }

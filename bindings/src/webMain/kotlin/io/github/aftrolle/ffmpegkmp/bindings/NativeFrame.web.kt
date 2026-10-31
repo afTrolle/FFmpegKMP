@@ -78,3 +78,7 @@ public actual fun allocateNativeFrame(format: NativeFrameFormat, width: Int, hei
 
 @InternalFFmpegKmpApi
 public actual fun nativeFrameStatistics(): NativeFrameStatistics = NativeFrameStatistics(buffers = 0, bytes = 0)
+
+@InternalFFmpegKmpApi
+public actual fun nativePlayerStatistics(): NativePlayerStatistics =
+    NativePlayerStatistics(codecOpens = 0, videoPackets = 0, downloads = 0)

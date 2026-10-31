@@ -4,8 +4,9 @@
  * through the calls FFplayPlayer makes: prepare, set_output, seeks while
  * paused and while playing, and play after pause. The input is served through
  * bench_io, so every row also says how many times the transition opened the
- * input and how much it read. Frames are converted into one reused RGBA8
- * bitmap at their own size, as a Canvas output's FrameImage does.
+ * input and how much it read, and from ffplaykmp_get_statistics how many
+ * codecs it opened and video packets it demuxed. Frames are converted into one
+ * reused RGBA8 bitmap at their own size, as a Canvas output's FrameImage does.
  * scripts/bench-player.sh builds and runs it.
  *
  *   player_bench <clips> transitions <clip> <AUTO|SOFTWARE>
@@ -130,13 +131,30 @@ static const char *file_name(const char *path) {
     return slash ? slash + 1 : path;
 }
 
+static ffplaykmp_statistics statistics_now(void) {
+    ffplaykmp_statistics statistics;
+    ffplaykmp_statistics_init(&statistics);
+    ffplaykmp_get_statistics(&statistics);
+    return statistics;
+}
+
+/* What the players did since `before`; the bench runs one player at a time in this mode. */
+static ffplaykmp_statistics statistics_since(ffplaykmp_statistics before) {
+    ffplaykmp_statistics now = statistics_now();
+    now.codec_opens -= before.codec_opens;
+    now.video_packets -= before.video_packets;
+    now.downloads -= before.downloads;
+    return now;
+}
+
 /* One row: what `calls` calls of a transition cost on average. */
-static void report(const char *what, double took_ms, int calls, bench_io_counts io, int frames) {
+static void report(const char *what, double took_ms, int calls, bench_io_counts io, ffplaykmp_statistics codec,
+        int frames) {
     if (calls <= 0)
         calls = 1;
-    printf("  %-26s %8.1f ms | %4.1f opens %6.1f reads %7.2f MB | %4.1f frames\n", what, took_ms / calls,
-            (double)io.opens / calls, (double)io.reads / calls, io.bytes / 1048576.0 / calls,
-            (double)frames / calls);
+    printf("  %-26s %8.1f ms | %4.1f opens %6.1f reads %7.2f MB | %4.1f codec opens %6.1f packets | %4.1f frames\n",
+            what, took_ms / calls, (double)io.opens / calls, (double)io.reads / calls, io.bytes / 1048576.0 / calls,
+            (double)codec.codec_opens / calls, (double)codec.video_packets / calls, (double)frames / calls);
 }
 
 /* Seek targets as fractions of the clip, jumping back and forth as a timeline scrub does. */
@@ -152,6 +170,10 @@ static void bench_transitions(const char *path, int preference) {
     bench_player bench;
     ffplaykmp_snapshot snapshot;
     bench_io_counts before;
+    ffplaykmp_statistics counted;
+    ffplaykmp_statistics started;
+    ffmpegkmp_frame_statistics memory;
+    ffmpegkmp_frame_statistics memory_after;
     double start;
     double took;
     double first_frame;
@@ -165,42 +187,50 @@ static void bench_transitions(const char *path, int preference) {
         return;
     }
     printf("%s %s\n", file_name(path), preference == FFPLAYKMP_DECODER_AUTO ? "AUTO" : "SOFTWARE");
+    started = statistics_now();
+    ffmpegkmp_frame_statistics_init(&memory);
+    ffmpegkmp_frame_get_statistics(&memory);
 
     before = bench_io_now(&bench.io);
+    counted = statistics_now();
     start = now_ms();
     if (ffplaykmp_player_prepare(bench.player, BENCH_IO_URL, 0) < 0) {
         printf("  prepare failed (%d)\n", bench_snapshot(&bench).last_error);
         bench_player_close(&bench);
         return;
     }
-    report("prepare, no output", now_ms() - start, 1, bench_io_since(&bench.io, before), 0);
+    report("prepare, no output", now_ms() - start, 1, bench_io_since(&bench.io, before), statistics_since(counted), 0);
     duration_us = bench_snapshot(&bench).duration_us;
 
     before = bench_io_now(&bench.io);
+    counted = statistics_now();
     frames = atomic_load(&bench.frames);
     start = now_ms();
     bench_set_output(&bench);
-    report("set_output (preview)", now_ms() - start, 1, bench_io_since(&bench.io, before),
+    report("set_output (preview)", now_ms() - start, 1, bench_io_since(&bench.io, before), statistics_since(counted),
             atomic_load(&bench.frames) - frames);
 
     before = bench_io_now(&bench.io);
+    counted = statistics_now();
     frames = atomic_load(&bench.frames);
     start = now_ms();
     for (index = 0; index < SEEK_TARGETS; index++)
         ffplaykmp_player_seek(bench.player, (int64_t)(seek_targets[index] * duration_us));
     report("seek while paused", now_ms() - start, SEEK_TARGETS, bench_io_since(&bench.io, before),
-            atomic_load(&bench.frames) - frames);
+            statistics_since(counted), atomic_load(&bench.frames) - frames);
 
     /* Frame steps forward, as arrow-key stepping or a slow scrub makes: 1/30 s apart. */
     before = bench_io_now(&bench.io);
+    counted = statistics_now();
     frames = atomic_load(&bench.frames);
     start = now_ms();
     for (index = 0; index < 10; index++)
         ffplaykmp_player_seek(bench.player, duration_us / 4 + index * 33333);
     report("step forward while paused", now_ms() - start, 10, bench_io_since(&bench.io, before),
-            atomic_load(&bench.frames) - frames);
+            statistics_since(counted), atomic_load(&bench.frames) - frames);
 
     before = bench_io_now(&bench.io);
+    counted = statistics_now();
     first_frame = 0;
     took = 0;
     for (index = 0; index < 5; index++) {
@@ -218,19 +248,21 @@ static void bench_transitions(const char *path, int preference) {
         took += now_ms() - start;
     }
     /* The seeks before each play are counted too; subtract "seek while paused" for play alone. */
-    report("seek, play, pause (calls)", took, 5, bench_io_since(&bench.io, before), 0);
+    report("seek, play, pause (calls)", took, 5, bench_io_since(&bench.io, before), statistics_since(counted), 0);
     printf("  %-26s %8.1f ms\n", "play to first frame", first_frame / 5);
 
     ffplaykmp_player_seek(bench.player, 0);
     ffplaykmp_player_play(bench.player);
     wait_frames(&bench, atomic_load(&bench.frames), 3, 5000);
     before = bench_io_now(&bench.io);
+    counted = statistics_now();
     frames = atomic_load(&bench.frames);
     start = now_ms();
     for (index = 0; index < 5; index++)
         ffplaykmp_player_seek(bench.player, (int64_t)(seek_targets[index] * duration_us));
     took = now_ms() - start;
-    report("seek while playing", took, 5, bench_io_since(&bench.io, before), atomic_load(&bench.frames) - frames);
+    report("seek while playing", took, 5, bench_io_since(&bench.io, before), statistics_since(counted),
+            atomic_load(&bench.frames) - frames);
     ffplaykmp_player_pause(bench.player);
 
     snapshot = bench_snapshot(&bench);
@@ -238,10 +270,20 @@ static void bench_transitions(const char *path, int preference) {
     printf("  decoder %s, %d frames converted at %.2f ms each, %d threads, %d MB footprint\n",
             decoder_name(snapshot.active_decoder), atomic_load(&bench.frames),
             atomic_load(&bench.frames) ? bench.convert_ms / atomic_load(&bench.frames) : 0, threads, footprint_mb);
+    counted = statistics_since(started);
+    ffmpegkmp_frame_statistics_init(&memory_after);
+    ffmpegkmp_frame_get_statistics(&memory_after);
+    printf("  %llu codec opens in all; %.2f downloads and %.2f frame buffers allocated per frame converted\n",
+            (unsigned long long)counted.codec_opens,
+            atomic_load(&bench.frames) ? (double)counted.downloads / atomic_load(&bench.frames) : 0,
+            atomic_load(&bench.frames)
+                    ? (double)(memory_after.buffers - memory.buffers) / atomic_load(&bench.frames)
+                    : 0);
 
     before = bench_io_now(&bench.io);
+    counted = statistics_now();
     ffplaykmp_player_stop(bench.player);
-    report("stop", 0, 1, bench_io_since(&bench.io, before), 0);
+    report("stop", 0, 1, bench_io_since(&bench.io, before), statistics_since(counted), 0);
     bench_player_close(&bench);
 }
 

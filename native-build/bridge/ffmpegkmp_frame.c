@@ -264,7 +264,10 @@ ffmpegkmp_frame *ffmpegkmp_frame_from_av(const AVFrame *source) {
 }
 
 ffmpegkmp_frame *ffmpegkmp_frame_ref(const ffmpegkmp_frame *frame) {
-    return frame ? ffmpegkmp_frame_from_av(frame->frame) : NULL;
+    ffmpegkmp_frame *copy = frame ? ffmpegkmp_frame_from_av(frame->frame) : NULL;
+    if (copy)
+        ffmpegkmp_frame_set_download_pool(copy, frame->download_pool);
+    return copy;
 }
 
 void ffmpegkmp_frame_unref(ffmpegkmp_frame *frame) {
@@ -275,7 +278,9 @@ void ffmpegkmp_frame_unref(ffmpegkmp_frame *frame) {
         CVPixelBufferUnlockBaseAddress((CVPixelBufferRef)frame->frame->data[3], kCVPixelBufferLock_ReadOnly);
 #endif
     av_frame_free(&frame->frame);
+    /* The download first: its buffer may go back to the pool released next. */
     av_frame_free(&frame->download);
+    ffmpegkmp_pool_release(frame->download_pool);
     pthread_mutex_destroy(&frame->lock);
     free(frame);
 }
@@ -332,10 +337,15 @@ static int ffmpegkmp_pixel_buffer_planes(const AVFrame *frame, AVFrame *view, CV
 /*
  * A view of `frame`'s pixels in software memory: the frame itself, its
  * CVPixelBuffer locked for reading (*locked is set; unlock it after), or its
- * download into *download, made once. The view shares the frame's properties
- * and side data and owns nothing.
+ * download into *download, made once, into a buffer of `pool` when it has one
+ * free. The view shares the frame's properties and side data and owns nothing.
  */
-static int ffmpegkmp_source_view(const AVFrame *frame, AVFrame *view, AVFrame **download, int *locked) {
+static int ffmpegkmp_source_view(
+        const AVFrame *frame,
+        AVFrame *view,
+        AVFrame **download,
+        ffmpegkmp_frame_pool *pool,
+        int *locked) {
     int result;
     *locked = 0;
     *view = *frame;
@@ -357,12 +367,10 @@ static int ffmpegkmp_source_view(const AVFrame *frame, AVFrame *view, AVFrame **
     if (!*download) {
         if (!(*download = av_frame_alloc()))
             return AVERROR(ENOMEM);
-        if ((result = ffplaykmp_download_frame(*download, frame)) < 0) {
+        if ((result = ffmpegkmp_download_into_pool(pool, *download, frame)) < 0) {
             av_frame_free(download);
             return result;
         }
-        ffmpegkmp_frame_count_allocation(
-                (size_t)av_image_get_buffer_size((*download)->format, (*download)->width, (*download)->height, 1));
     }
     *view = **download;
     /* The download is the hardware pool's coded size (MediaCodec gives 1920x1088 for 1080p); the picture is the
@@ -412,7 +420,7 @@ int ffmpegkmp_frame_map(ffmpegkmp_frame *frame, ffmpegkmp_frame_planes *planes) 
     if (!frame || !planes || planes->size < sizeof(*planes))
         return FFPLAYKMP_ERROR_INVALID_ARGUMENT;
     pthread_mutex_lock(&frame->lock);
-    result = ffmpegkmp_source_view(frame->frame, &view, &frame->download, &locked);
+    result = ffmpegkmp_source_view(frame->frame, &view, &frame->download, frame->download_pool, &locked);
     if (result >= 0 && !(descriptor = av_pix_fmt_desc_get(view.format)))
         result = AVERROR(ENOSYS);
     if (result < 0) {
@@ -530,8 +538,13 @@ struct ffmpegkmp_frame_pool {
     uint64_t clock;
     /* Frames per layout and size, 0 for no bound. */
     int capacity;
-    /* The owner's, and one for each frame a bounded pool has out: the pool goes with the last. */
+    /*
+     * The owner's, one for each frame a bounded pool has out and one for each
+     * handle whose download it serves: the pool goes with the last.
+     */
     int references;
+    /* Freed by its owner: what still holds it only returns frames. */
+    int closed;
 };
 
 static ffmpegkmp_frame_pool ffmpegkmp_shared_pool = { PTHREAD_MUTEX_INITIALIZER, PTHREAD_COND_INITIALIZER };
@@ -582,6 +595,23 @@ static void ffmpegkmp_pool_returned(ffmpegkmp_frame_pool *pool, uint8_t *data) {
 
 static void ffmpegkmp_release_ring_buffer(void *opaque, uint8_t *data) {
     ffmpegkmp_pool_returned(opaque, data);
+}
+
+static void ffmpegkmp_pool_retain(ffmpegkmp_frame_pool *pool) {
+    pthread_mutex_lock(&pool->lock);
+    pool->references++;
+    pthread_mutex_unlock(&pool->lock);
+}
+
+void ffmpegkmp_pool_release(ffmpegkmp_frame_pool *pool) {
+    int last;
+    if (!pool)
+        return;
+    pthread_mutex_lock(&pool->lock);
+    last = --pool->references == 0;
+    pthread_mutex_unlock(&pool->lock);
+    if (last)
+        ffmpegkmp_pool_destroy(pool);
 }
 
 static void ffmpegkmp_pool_entry_free(ffmpegkmp_pool_entry *entry) {
@@ -820,23 +850,22 @@ static void ffmpegkmp_pool_wait(ffmpegkmp_frame_pool *pool, int64_t until_us) {
 }
 
 /*
- * Gives `frame` pooled memory of `format` at this size; its colour is left to
- * the caller. A full ring fails with AVERROR(EAGAIN), after `grace_us` of
- * waiting for a frame to come back.
+ * Gives `frame` pooled memory of `format` at this size, in a CVPixelBuffer of
+ * `pixel_buffer_format` when that is not 0; its colour is left to the caller.
+ * A full ring fails with AVERROR(EAGAIN), after `grace_us` of waiting for a
+ * frame to come back, and so does a pool its owner has freed.
  */
-static int ffmpegkmp_pool_fill(ffmpegkmp_frame_pool *pool, AVFrame *frame, enum AVPixelFormat format, int width,
-        int height, int full_range, int64_t grace_us) {
+static int ffmpegkmp_pool_fill_as(ffmpegkmp_frame_pool *pool, AVFrame *frame, enum AVPixelFormat format,
+        uint32_t pixel_buffer_format, int width, int height, int64_t grace_us) {
     ffmpegkmp_pool_entry *entry;
-    uint32_t pixel_buffer_format = 0;
     /* The wall clock, which pthread_cond_timedwait measures by default. */
     const int64_t until_us = av_gettime() + grace_us;
     int result;
-#if defined(FFMPEGKMP_PIXEL_BUFFER)
-    pixel_buffer_format = ffmpegkmp_pixel_buffer_type(format, full_range);
-#else
-    (void)full_range;
-#endif
     pthread_mutex_lock(&pool->lock);
+    if (pool->closed) {
+        pthread_mutex_unlock(&pool->lock);
+        return AVERROR(EAGAIN);
+    }
     for (;;) {
         /* Looked up again after each wait, which unlocks the pool. */
         result = ffmpegkmp_pool_find(pool, format, pixel_buffer_format, width, height, &entry);
@@ -850,6 +879,43 @@ static int ffmpegkmp_pool_fill(ffmpegkmp_frame_pool *pool, AVFrame *frame, enum 
     frame->width = width;
     frame->height = height;
     return result;
+}
+
+/* ffmpegkmp_pool_fill_as, in a CVPixelBuffer where the layout has one. */
+static int ffmpegkmp_pool_fill(ffmpegkmp_frame_pool *pool, AVFrame *frame, enum AVPixelFormat format, int width,
+        int height, int full_range, int64_t grace_us) {
+    uint32_t pixel_buffer_format = 0;
+#if defined(FFMPEGKMP_PIXEL_BUFFER)
+    pixel_buffer_format = ffmpegkmp_pixel_buffer_type(format, full_range);
+#else
+    (void)full_range;
+#endif
+    return ffmpegkmp_pool_fill_as(pool, frame, format, pixel_buffer_format, width, height, grace_us);
+}
+
+int ffmpegkmp_download_into_pool(ffmpegkmp_frame_pool *pool, AVFrame *software, const AVFrame *hardware) {
+    const enum AVPixelFormat format = ffmpegkmp_software_format(hardware);
+    int result;
+    /* Memory, never a CVPixelBuffer: the download is read by the CPU. Without a free buffer, a new one. */
+    if (pool && format != AV_PIX_FMT_NONE &&
+            ffmpegkmp_pool_fill_as(pool, software, format, 0, hardware->width, hardware->height, 0) >= 0) {
+        if ((result = ffplaykmp_download_frame(software, hardware)) >= 0)
+            return result;
+        av_frame_unref(software);
+    }
+    if ((result = ffplaykmp_download_frame(software, hardware)) >= 0)
+        ffmpegkmp_frame_count_allocation(
+                (size_t)av_image_get_buffer_size(software->format, software->width, software->height, 1));
+    return result;
+}
+
+void ffmpegkmp_frame_set_download_pool(ffmpegkmp_frame *frame, ffmpegkmp_frame_pool *pool) {
+    if (!frame || frame->download_pool == pool)
+        return;
+    if (pool)
+        ffmpegkmp_pool_retain(pool);
+    ffmpegkmp_pool_release(frame->download_pool);
+    frame->download_pool = pool;
 }
 
 ffmpegkmp_frame_pool *ffmpegkmp_frame_pool_alloc(int32_t capacity) {
@@ -879,6 +945,7 @@ void ffmpegkmp_frame_pool_free(ffmpegkmp_frame_pool *pool) {
     for (index = 0; index < pool->count; index++)
         ffmpegkmp_pool_entry_free(&pool->entries[index]);
     pool->count = 0;
+    pool->closed = 1;
     last = --pool->references == 0;
     pthread_mutex_unlock(&pool->lock);
     if (last)
@@ -966,6 +1033,7 @@ int ffmpegkmp_frame_convert_with(
         ffmpegkmp_converter *converter,
         ffmpegkmp_frame *destination,
         const AVFrame *source,
+        ffmpegkmp_frame_pool *download_pool,
         int keep_colour) {
     AVFrame *real = destination->frame;
     AVFrame *target = real;
@@ -985,7 +1053,7 @@ int ffmpegkmp_frame_convert_with(
     }
     primaries = real->color_primaries;
     transfer = real->color_trc;
-    if ((result = ffmpegkmp_source_view(source, &input, cached, &locked)) < 0)
+    if ((result = ffmpegkmp_source_view(source, &input, cached, download_pool, &locked)) < 0)
         return result;
 #if defined(FFMPEGKMP_PIXEL_BUFFER)
     if (ffmpegkmp_frame_is_pixel_buffer(real)) {
@@ -1068,14 +1136,14 @@ int ffmpegkmp_frame_convert_into(ffmpegkmp_frame *destination, const ffmpegkmp_f
     if (ffplaykmp_is_hardware_frame(input) && !ffmpegkmp_frame_is_pixel_buffer(input)) {
         AVFrame view;
         int locked;
-        result = ffmpegkmp_source_view(input, &view, &handle->download, &locked);
+        result = ffmpegkmp_source_view(input, &view, &handle->download, handle->download_pool, &locked);
         input = result >= 0 ? handle->download : NULL;
     } else {
         result = 0;
     }
     pthread_mutex_unlock(&handle->lock);
     if (result >= 0)
-        result = ffmpegkmp_frame_convert_with(converter, destination, input, 0);
+        result = ffmpegkmp_frame_convert_with(converter, destination, input, NULL, 0);
     ffmpegkmp_return_converter(converter);
     return result;
 }

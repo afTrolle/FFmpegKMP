@@ -1,10 +1,10 @@
 # One open per source in the FFplay player
 
-Status: phases 1, 1b, 2 and 3 are built on `feature/ffplay-reopen`; phase 2's
-web packet reader reuse moved to phase 7. Phase 0's macOS native baselines are
-measured (2b); its Android, JVM and browser measurements are not. Phases 4–8
-are not built. The audio-cleanup and small-cleanups work this plan builds on is
-merged into main as of f9f92c1.
+Status: phases 1, 1b, 2, 3 and 4 are built on `feature/ffplay-reopen`; phase
+2's web packet reader reuse moved to phase 7. Phase 0's macOS native baselines
+are measured (2b); its Android, JVM and browser measurements are not. Phases
+5–8 are not built. The audio-cleanup and small-cleanups work this plan builds
+on is merged into main as of f9f92c1.
 
 `FFplayPlayer` opens and probes its input again on nearly every transition:
 `prepare` opens it twice, a seek while playing opens it twice more, and play
@@ -244,6 +244,109 @@ none, the Android Surface output never calls the player under its lock, the
 Apple outputs dispatch to the main queue asynchronously), and the web callbacks
 only fill the mailbox the page polls. On the web the session thread takes one
 of the 32 pooled pthreads, as the play worker did.
+
+### Phase 4 results
+
+The codec is now opened by the first decode that needs it and kept, on the
+session thread, until its key changes: whether the output wants a hardware
+decoder, the Android Surface it renders to, and the input it decodes. A new
+source, stop, reset and destroy end it with the session thread; `clear_output`
+and `set_android_surface` close a codec that renders to a Surface, on the
+session thread, before they return; a software or desktop codec survives output
+churn. A run goes on from the frame on screen instead of seeking when the
+target is ahead of it and the index has no keyframe between the next frame and
+the target (with no index, at most 2 s ahead), keeping the frame it decoded but
+did not present, the packet the decoder did not take, the frame on screen and,
+after the end of the input, the decoder's remaining frames, for the next run. A
+preview at a target the frame on screen covers presents that frame again, so
+every seek still delivers a frame with the new queue serial; a MediaCodec frame
+cannot be kept, so there the Surface keeps showing it. Under AUTO a hardware
+decoder that will not open, or decodes nothing, gives way to software for the
+rest of the source, and `ffplaykmp_snapshot.decoder_fallback` (NONE,
+UNSUPPORTED, FAILED; phase 6 adds BUDGET as 3) reaches
+`FFplayOutputInfo.decoderFallback` and `FFplayEvent.DecoderFallback.reason`,
+fired whenever the output wanted hardware. A desktop hardware frame goes out as
+decoded and is downloaded once, as it is converted, into one of two buffers of
+a per-player `ffmpegkmp_frame_pool_alloc(2)` ring. `ffplaykmp_get_statistics`
+(Kotlin `nativePlayerStatistics()`) counts codec opens, video packets and
+downloads for the tests and the bench. Failed player calls throw
+`NativePlayerException` with the native `errorCode`.
+
+macOS player bench, phase 3 (1d8aaff, run the same day) against phase 4, per
+call. After prepare, every transition opens 0 codecs (1 before):
+
+| Transition | 1080p SW | 4K H.264 SW | 4K H.264 AUTO | 4K HEVC PQ SW | 4K HEVC PQ AUTO |
+|---|---|---|---|---|---|
+| set_output (preview) | 32 → 24 ms | 105 → 76 ms | 163 → 121 ms | 768 → 515 ms | 434 → 412 ms |
+| seek while paused | 63 → 57 ms | 255 → 266 ms | 397 → 339 ms | 673 → 520 ms | 298 → 229 ms |
+| step forward, paused | 62 → 1.3 ms | 170 → 16 ms | 166 → 16 ms | 418 → 43 ms | 214 → 29 ms |
+| play to first frame | 50 → 3.2 ms | 242 → 17 ms | 457 → 12 ms | 624 → 33 ms | 318 → 26 ms |
+| seek while playing | 57 → 56 ms | 316 → 306 ms | 462 → 424 ms | 656 → 464 ms | 347 → 256 ms |
+
+A step forward reads one frame's packet after the first (whose target is
+0.4 s past the scrub before it: the bench's 2.1 packets a step are those 12
+plus 9 single ones), against the whole GOP before (40 reads at 1080p). Seek,
+play and pause read half the bytes, since play goes on from the seek's frame.
+A seek far into a long GOP still decodes from the keyframe: that is the decode
+itself, not a reopen. Desktop hardware frames take 1.00 download each and 0.02
+frame buffers allocated per frame over a run (the two ring buffers), against a
+fresh buffer per frame before.
+
+Many players (4K H.264, 10 s, the same day):
+
+| Players | AUTO fps each | AUTO paused footprint | SW fps each | SW paused footprint, threads |
+|---|---|---|---|---|
+| 1 | 23.5 → 24.0 | 94 → 93 MB | 23.5 → 24.0 | 314 → 320 MB, 15 → 23 |
+| 4 | 23.6 → 24.0 | 340 → 352 MB | 23.0 → 24.4 | 1259 → 1269 MB, 53 → 86 |
+| 8 | 23.4 → 23.1 | 627 → 693 MB | 22.3 → 24.4 | 2186 → 2532 MB, 45 → 121 |
+| 16 | 0.6 → 2.0 | 1191 → 1384 MB | 16.9 → 23.9 | 3279 → 5044 MB, 65 → 193 |
+
+Kept codecs are the cost: sixteen paused software players hold 16 decoders'
+frame threads and their frames, about 315 MB each. That is design option (a)'s
+footprint, which phase 5's release on pause exists to remove; until it lands a
+paused player holds its codec. VideoToolbox at 16 players stays collapsed
+(phase 6).
+
+Verified: JVM bindings 41, codec 78, ffplay 90; macOS bindings 8, ffplay 80;
+iOS simulator 8 and 80; js and wasm bindings 23 each (worker relinked), ffplay
+54 each; Samsung SM-S938B ffplay device suite with `hdrGpuCheck=true` 94 tests,
+93 pass, `CompositeExportBudgetDeviceTest.measure` gated. New checks: the codec
+is kept across seeks, pause, play and Canvas output churn (JVM, and on the
+device across the lifecycle and one codec per new Surface under MediaCodec,
+none in software); a forward scrub reads at most one packet a step and a seek
+inside the frame on screen presents it again (JVM); one download per desktop
+hardware frame and at most the ring's two buffers (JVM, macOS); FAILED for the
+MPEG-2 stream VideoToolbox advertises and fails, with no hardware retry on its
+seeks (JVM bridge and `FFplayPlayer`); the reason and one event per source over
+a fake bridge, and `NativePlayerException.errorCode` (common); MediaCodec then
+the canvas then MediaCodec on one Surface reports FAILED back at Fit; a Surface
+detached while playing or paused and a new one attached later (device).
+
+Departures from section 4 and decisions it left open:
+- AUTO's fallback is sticky for the source except that a new Android Surface
+  tries hardware again, since a MediaCodec failure can belong to the Surface
+  (one the canvas has drawn on) or to a codec reclaimed meanwhile.
+- `clear_output` and `set_android_surface` release only a codec that renders
+  to a Surface; a change of the hardware/software decision at `set_output` is
+  found by the key at the next run, on the session thread.
+- A replacing prepare ends the session thread, which closes the old source's
+  codec, rather than only stopping playback; the key also carries the input's
+  generation, so a codec never outlives its input.
+- The session keeps a reference to the frame on screen (not for MediaCodec), so
+  a covered preview and a new output's preview present it without decoding:
+  one more decoder frame held per player.
+- `VideoDecoder`'s as-decoded hardware frames are still downloaded at once, so
+  the hardware surface goes back to the decoder (VAAPI and D3D11 pools are
+  fixed), but into the decoder's ring while it has room; its formatted output's
+  temporary download takes a ring buffer too. Section 4g's "already uses the
+  lazy handle download" held only for handles converted later.
+- "No `av_frame_alloc` per frame" holds for pixel memory: each frame handle
+  still allocates its `AVFrame` header, as software frames' do.
+- The reason enum has NONE, UNSUPPORTED and FAILED; BUDGET (3) comes with phase
+  6. The browser's snapshot JSON does not carry it: the wasm player decodes in
+  software only.
+- `requireNative` is public (internal API) so that `FFplayEngine` can use it;
+  `NativePlayerException` lives in `bindings` with the other call exceptions.
 
 ## 3. Design options (behaviour at 1 / 4 / 16 concurrent sources)
 
