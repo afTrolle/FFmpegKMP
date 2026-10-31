@@ -584,6 +584,14 @@ class CommandRuntimeTest {
     }
 
     @Test
+    fun aStagedOutputFailsAsItIsMountedWhereStagingIsUnsupported() {
+        if (stagingSupportedOnThisPlatform) return
+        assertFailsWith<IllegalArgumentException> {
+            CommandIo { output("staged.mp4", Buffer(), staged = true) }
+        }
+    }
+
+    @Test
     fun lanesRunCommandsAtOnceAndStartThemInOrder() = runTest {
         val names = listOf("one", "two", "three", "four")
         val startedCommands = names.associateWith { CompletableDeferred<Unit>() }

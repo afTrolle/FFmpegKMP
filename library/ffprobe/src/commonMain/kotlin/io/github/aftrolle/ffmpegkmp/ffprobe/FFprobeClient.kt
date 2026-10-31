@@ -3,10 +3,8 @@
 
 package io.github.aftrolle.ffmpegkmp.ffprobe
 
+import io.github.aftrolle.ffmpegkmp.core.CommandClient
 import io.github.aftrolle.ffmpegkmp.core.CommandIo
-import io.github.aftrolle.ffmpegkmp.core.CommandKind
-import io.github.aftrolle.ffmpegkmp.core.CommandLineTokenizer
-import io.github.aftrolle.ffmpegkmp.core.CommandRuntimeClient
 import io.github.aftrolle.ffmpegkmp.core.CommandRuntimeLimits
 import io.github.aftrolle.ffmpegkmp.core.ExecutionResult
 import io.github.aftrolle.ffmpegkmp.core.ExecutionSession
@@ -28,30 +26,8 @@ public class FFprobeClient(
         isLenient = true
         explicitNulls = false
     },
-    private val runtimeLimits: CommandRuntimeLimits = CommandRuntimeLimits.Default,
-) : AutoCloseable {
-    private val runtime = lazy { CommandRuntimeClient(CommandKind.FFPROBE, runtimeLimits) }
-
-    public suspend fun execute(
-        arguments: List<String>,
-        io: CommandIo = CommandIo.Empty,
-    ): FFprobeResult = runtime.value.execute(arguments, io)
-
-    public suspend fun execute(
-        command: String,
-        io: CommandIo = CommandIo.Empty,
-    ): FFprobeResult = execute(CommandLineTokenizer.tokenize(command, "ffprobe"), io)
-
-    public fun enqueue(
-        arguments: List<String>,
-        io: CommandIo = CommandIo.Empty,
-    ): FFprobeSession = runtime.value.enqueue(arguments, io)
-
-    public fun enqueue(
-        command: String,
-        io: CommandIo = CommandIo.Empty,
-    ): FFprobeSession = enqueue(CommandLineTokenizer.tokenize(command, "ffprobe"), io)
-
+    runtimeLimits: CommandRuntimeLimits = CommandRuntimeLimits.Default,
+) : CommandClient("ffprobe", runtimeLimits) {
     public suspend fun inspect(
         input: String,
         query: ProbeQuery = ProbeQuery.Default,
@@ -78,9 +54,5 @@ public class FFprobeClient(
         throw FFprobeParseException("FFprobe returned malformed JSON", failure)
     } catch (failure: IllegalArgumentException) {
         throw FFprobeParseException("FFprobe returned malformed JSON", failure)
-    }
-
-    override fun close() {
-        if (runtime.isInitialized()) runtime.value.close()
     }
 }

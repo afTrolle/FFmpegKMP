@@ -61,7 +61,7 @@ FFmpegClient().use { ffmpeg ->
 Okio `Source` and `Sink` mounts are non-seekable streams on every platform.
 Formats that seek to patch their own header (regular, non-fragmented MP4 chief
 among them) need a seekable destination: mount a `FileHandle` directly, or
-opt into `output(path, sink, Staging())` to have FFmpeg write to a real
+opt into `output(path, sink, staged = true)` to have FFmpeg write to a real
 temporary file that gets copied to the sink once the command succeeds. Staging
 is a caller choice, not implicit bridge behavior, so streaming-friendly
 formats (`-f mpegts`, or MP4 with `-movflags frag_keyframe+empty_moov`) can

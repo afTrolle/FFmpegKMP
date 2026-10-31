@@ -62,16 +62,16 @@ zero-copy options first:
   `Sink` mount.
 
 Only when neither applies — the destination is a stream but the format must
-seek — reach for `output(path, sink, Staging())`. This is an explicit,
+seek — reach for `output(path, sink, staged = true)`. This is an explicit,
 caller-visible opt-in rather than automatic bridge behavior: it writes to a
 real temporary file — implemented once in common code, so it works the same
 way on every target that has a synchronous filesystem — and copies the
 finished bytes to the sink after a successful command, deleting the temporary
 file afterward. A command that reports success without ever writing the
 staged mount fails loudly instead of silently handing back an empty sink.
-`Staging` throws on Kotlin/JS and Kotlin/Wasm browser targets, which have no
-synchronous filesystem; the two zero-copy options above remain available
-there.
+A staged mount fails as it is added on Kotlin/JS and Kotlin/Wasm browser
+targets, which have no synchronous filesystem; the two zero-copy options above
+remain available there.
 
 Android runtime source preparation adds P010 byte-buffer input to FFmpeg's
 MediaCodec encoder without modifying the pinned FFmpeg submodule. This enables

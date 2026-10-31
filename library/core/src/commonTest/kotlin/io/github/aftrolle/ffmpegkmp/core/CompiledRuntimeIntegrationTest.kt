@@ -1,5 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
-@file:OptIn(io.github.aftrolle.ffmpegkmp.core.InternalFFmpegKmpApi::class)
+@file:OptIn(
+    io.github.aftrolle.ffmpegkmp.bindings.InternalFFmpegKmpApi::class,
+    io.github.aftrolle.ffmpegkmp.core.InternalFFmpegKmpApi::class,
+)
 
 package io.github.aftrolle.ffmpegkmp.core
 
@@ -173,7 +176,7 @@ class CompiledRuntimeIntegrationTest {
                 ),
                 io = CommandIo {
                     input(RAW_INPUT_PATH, pixels)
-                    output(MP4_OUTPUT_PATH, rendered, Staging())
+                    output(MP4_OUTPUT_PATH, rendered, staged = true)
                 },
             )
 
@@ -239,7 +242,7 @@ class CompiledRuntimeIntegrationTest {
                         readWrite(OUTPUT_PATH, media, truncate = true)
                         // Mounted with staging but never referenced in the arguments above:
                         // ffmpeg returns 0 without ever writing to it.
-                        output(UNUSED_PATH, neverWritten, Staging())
+                        output(UNUSED_PATH, neverWritten, staged = true)
                     },
                 )
             }
@@ -279,9 +282,9 @@ class CompiledRuntimeIntegrationTest {
                     ),
                     io = CommandIo {
                         input(RAW_INPUT_PATH, pixels)
-                        output(MP4_OUTPUT_PATH, rendered, Staging())
+                        output(MP4_OUTPUT_PATH, rendered, staged = true)
                         // Mounted with staging but never referenced in the arguments above.
-                        output(UNUSED_PATH, neverWritten, Staging())
+                        output(UNUSED_PATH, neverWritten, staged = true)
                     },
                 )
             }

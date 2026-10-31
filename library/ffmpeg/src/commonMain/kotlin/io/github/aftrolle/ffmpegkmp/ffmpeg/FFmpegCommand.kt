@@ -2,6 +2,7 @@
 package io.github.aftrolle.ffmpegkmp.ffmpeg
 
 import io.github.aftrolle.ffmpegkmp.core.AudioLevel
+import io.github.aftrolle.ffmpegkmp.core.InternalFFmpegKmpApi
 
 public class FFmpegCommand private constructor(
     public val arguments: List<String>,
@@ -135,13 +136,14 @@ public class FFmpegCommand private constructor(
     public companion object {
         public operator fun invoke(block: Builder.() -> Unit): FFmpegCommand =
             Builder().apply(block).build()
-
-        public fun arguments(arguments: List<String>): FFmpegCommand = FFmpegCommand(arguments.toList())
     }
 }
 
 /** The FFmpeg `volume` filter that applies this level; muted levels render as `volume=0`. */
+@OptIn(InternalFFmpegKmpApi::class)
 public fun AudioLevel.toFilter(): String = "volume=${effectiveVolume.ffmpegNumber()}"
 
-private fun Double.ffmpegNumber(): String =
+/** Renders a filter option value: whole numbers without a fraction, others as Kotlin prints them. */
+@InternalFFmpegKmpApi
+public fun Double.ffmpegNumber(): String =
     if (this % 1.0 == 0.0) toLong().toString() else toString()

@@ -1,136 +1,40 @@
 // SPDX-License-Identifier: Apache-2.0
+@file:OptIn(InternalFFmpegKmpApi::class)
+
 package io.github.aftrolle.ffmpegkmp.filters
 
 import io.github.aftrolle.ffmpegkmp.core.AudioLevel
+import io.github.aftrolle.ffmpegkmp.core.InternalFFmpegKmpApi
 import io.github.aftrolle.ffmpegkmp.ffmpeg.FFmpegCommand
+import io.github.aftrolle.ffmpegkmp.ffmpeg.ffmpegNumber
+import io.github.aftrolle.ffmpegkmp.ffmpeg.toFilter
 
 public class FilterPad internal constructor(internal val expression: String) {
     override fun toString(): String = expression
 }
 
-public sealed interface FilterOperation {
-    public fun render(): String
-
-    public data class Trim(val startSeconds: Double?, val endSeconds: Double?) : FilterOperation {
-        override fun render(): String = options("trim", "start" to startSeconds, "end" to endSeconds)
-    }
-
-    public data class AudioTrim(val startSeconds: Double?, val endSeconds: Double?) : FilterOperation {
-        override fun render(): String = options("atrim", "start" to startSeconds, "end" to endSeconds)
-    }
-
-    public data class Crop(val width: Int, val height: Int, val x: Int, val y: Int) : FilterOperation {
-        override fun render(): String = "crop=$width:$height:$x:$y"
-    }
-
-    public data class Scale(val width: Int, val height: Int) : FilterOperation {
-        override fun render(): String = "scale=$width:$height"
-    }
-
-    public data class Pad(
-        val width: Int,
-        val height: Int,
-        val x: Int,
-        val y: Int,
-        val color: String,
-    ) : FilterOperation {
-        override fun render(): String = "pad=$width:$height:$x:$y:$color"
-    }
-
-    public data class Rotate(val radiansExpression: String) : FilterOperation {
-        override fun render(): String = "rotate=$radiansExpression"
-    }
-
-    public data class Transpose(val direction: Direction) : FilterOperation {
-        public enum class Direction(internal val value: Int) {
-            COUNTER_CLOCKWISE_AND_FLIP(0),
-            CLOCKWISE(1),
-            COUNTER_CLOCKWISE(2),
-            CLOCKWISE_AND_FLIP(3),
-        }
-
-        override fun render(): String = "transpose=${direction.value}"
-    }
-
-    public data class FrameRate(val framesPerSecond: Double) : FilterOperation {
-        override fun render(): String = "fps=${framesPerSecond.ffmpegNumber()}"
-    }
-
-    public data class VideoSpeed(val factor: Double) : FilterOperation {
-        override fun render(): String = "setpts=PTS/${factor.ffmpegNumber()}"
-    }
-
-    public data class Volume(val factor: Double) : FilterOperation {
-        override fun render(): String = "volume=${factor.ffmpegNumber()}"
-    }
-
-    /**
-     * Sums several audio inputs into one (`amix`). [normalize] is off by default so each input
-     * keeps exactly the level it was given — the same sum the player produces live. Enable it
-     * to have FFmpeg scale inputs down by their count instead.
-     */
-    public data class AudioMix(
-        val inputCount: Int,
-        val duration: Duration = Duration.LONGEST,
-        val normalize: Boolean = false,
-    ) : FilterOperation {
-        public enum class Duration(internal val value: String) {
-            LONGEST("longest"),
-            SHORTEST("shortest"),
-            FIRST("first"),
-        }
-
-        override fun render(): String =
-            "amix=inputs=$inputCount:duration=${duration.value}:normalize=${if (normalize) 1 else 0}"
-    }
-
-    public data class Fade(
-        val type: Type,
-        val startSeconds: Double,
-        val durationSeconds: Double,
-    ) : FilterOperation {
-        public enum class Type(internal val value: String) { IN("in"), OUT("out") }
-        override fun render(): String =
-            "afade=t=${type.value}:st=${startSeconds.ffmpegNumber()}:d=${durationSeconds.ffmpegNumber()}"
-    }
-
-    public data class Tempo(val factor: Double) : FilterOperation {
-        override fun render(): String = "atempo=${factor.ffmpegNumber()}"
-    }
-
-    public data class Opacity(val alpha: Double) : FilterOperation {
-        override fun render(): String = "format=rgba,colorchannelmixer=aa=${alpha.ffmpegNumber()}"
-    }
-
-    public data class Overlay(val x: String, val y: String) : FilterOperation {
-        override fun render(): String = "overlay=x=$x:y=$y"
-    }
-
-    public data object AlphaMask : FilterOperation {
-        override fun render(): String = "alphamerge"
-    }
-
-    public data object LumaMask : FilterOperation {
-        override fun render(): String = "maskedmerge"
-    }
-
-    public data class Raw(val expression: String) : FilterOperation {
-        override fun render(): String = expression
-    }
+/** The direction of a `transpose` filter. */
+public enum class TransposeDirection(internal val value: Int) {
+    COUNTER_CLOCKWISE_AND_FLIP(0),
+    CLOCKWISE(1),
+    COUNTER_CLOCKWISE(2),
+    CLOCKWISE_AND_FLIP(3),
 }
 
-public data class FilterNode(
-    val inputs: List<FilterPad>,
-    val operation: FilterOperation,
-    val output: FilterPad,
-)
+/** Which input's length an `amix` output takes. */
+public enum class AudioMixDuration(internal val value: String) {
+    LONGEST("longest"),
+    SHORTEST("shortest"),
+    FIRST("first"),
+}
+
+/** Whether an `afade` fades in or out. */
+public enum class FadeType(internal val value: String) { IN("in"), OUT("out") }
 
 public class FilterGraph private constructor(
-    public val nodes: List<FilterNode>,
+    private val nodes: List<String>,
 ) {
-    public fun compile(): String = nodes.joinToString(";") { node ->
-        node.inputs.joinToString("") { it.expression } + node.operation.render() + node.output.expression
-    }
+    public fun compile(): String = nodes.joinToString(";")
 
     public companion object {
         public operator fun invoke(block: Builder.() -> Unit): FilterGraph =
@@ -138,7 +42,7 @@ public class FilterGraph private constructor(
     }
 
     public class Builder {
-        private val nodes = mutableListOf<FilterNode>()
+        private val nodes = mutableListOf<String>()
         private val labels = mutableSetOf<String>()
         private var nextLabel = 0
 
@@ -155,19 +59,19 @@ public class FilterGraph private constructor(
         }
 
         public fun trim(input: FilterPad, startSeconds: Double? = null, endSeconds: Double? = null, label: String? = null): FilterPad =
-            node(listOf(input), FilterOperation.Trim(startSeconds, endSeconds), label)
+            node(listOf(input), options("trim", "start" to startSeconds, "end" to endSeconds), label)
 
         public fun audioTrim(input: FilterPad, startSeconds: Double? = null, endSeconds: Double? = null, label: String? = null): FilterPad =
-            node(listOf(input), FilterOperation.AudioTrim(startSeconds, endSeconds), label)
+            node(listOf(input), options("atrim", "start" to startSeconds, "end" to endSeconds), label)
 
         public fun crop(input: FilterPad, width: Int, height: Int, x: Int = 0, y: Int = 0, label: String? = null): FilterPad {
             require(width > 0 && height > 0) { "Crop dimensions must be positive" }
-            return node(listOf(input), FilterOperation.Crop(width, height, x, y), label)
+            return node(listOf(input), "crop=$width:$height:$x:$y", label)
         }
 
         public fun scale(input: FilterPad, width: Int, height: Int, label: String? = null): FilterPad {
             require(width != 0 && height != 0) { "Scale dimensions must not be zero" }
-            return node(listOf(input), FilterOperation.Scale(width, height), label)
+            return node(listOf(input), "scale=$width:$height", label)
         }
 
         public fun pad(
@@ -178,36 +82,39 @@ public class FilterGraph private constructor(
             y: Int = 0,
             color: String = "black",
             label: String? = null,
-        ): FilterPad = node(listOf(input), FilterOperation.Pad(width, height, x, y, color), label)
+        ): FilterPad = node(listOf(input), "pad=$width:$height:$x:$y:$color", label)
 
         public fun rotate(input: FilterPad, radiansExpression: String, label: String? = null): FilterPad =
-            node(listOf(input), FilterOperation.Rotate(radiansExpression), label)
+            node(listOf(input), "rotate=$radiansExpression", label)
 
-        public fun transpose(input: FilterPad, direction: FilterOperation.Transpose.Direction, label: String? = null): FilterPad =
-            node(listOf(input), FilterOperation.Transpose(direction), label)
+        public fun transpose(input: FilterPad, direction: TransposeDirection, label: String? = null): FilterPad =
+            node(listOf(input), "transpose=${direction.value}", label)
 
         public fun frameRate(input: FilterPad, framesPerSecond: Double, label: String? = null): FilterPad =
-            node(listOf(input), FilterOperation.FrameRate(framesPerSecond), label)
+            node(listOf(input), "fps=${framesPerSecond.ffmpegNumber()}", label)
 
         public fun videoSpeed(input: FilterPad, factor: Double, label: String? = null): FilterPad {
             require(factor > 0.0) { "Video speed must be positive" }
-            return node(listOf(input), FilterOperation.VideoSpeed(factor), label)
+            return node(listOf(input), "setpts=PTS/${factor.ffmpegNumber()}", label)
         }
 
         public fun volume(input: FilterPad, factor: Double, label: String? = null): FilterPad =
-            node(listOf(input), FilterOperation.Volume(factor), label)
+            volume(input, AudioLevel(factor), label)
 
         /** Applies [level]; a muted level renders `volume=0` so the track keeps its timing. */
         public fun volume(input: FilterPad, level: AudioLevel, label: String? = null): FilterPad =
-            node(listOf(input), FilterOperation.Volume(level.effectiveVolume), label)
+            node(listOf(input), level.toFilter(), label)
 
         /**
-         * Mixes several audio tracks into one, each at its own [AudioLevel]. Unchanged levels
-         * skip the extra `volume` node; a single track becomes just its `volume` node.
+         * Mixes several audio tracks into one (`amix`), each at its own [AudioLevel]. Unchanged
+         * levels skip the extra `volume` node; a single track becomes just its `volume` node.
+         * [normalize] is off by default so each input keeps exactly the level it was given, the
+         * same sum the player produces live. Enable it to have FFmpeg scale inputs down by their
+         * count instead.
          */
         public fun mixAudio(
             tracks: List<Pair<FilterPad, AudioLevel>>,
-            duration: FilterOperation.AudioMix.Duration = FilterOperation.AudioMix.Duration.LONGEST,
+            duration: AudioMixDuration = AudioMixDuration.LONGEST,
             normalize: Boolean = false,
             label: String? = null,
         ): FilterPad {
@@ -216,20 +123,25 @@ public class FilterGraph private constructor(
             val leveled = tracks.map { (pad, level) ->
                 if (level == AudioLevel.Unchanged) pad else volume(pad, level, null)
             }
-            return node(leveled, FilterOperation.AudioMix(leveled.size, duration, normalize), label)
+            val mix = "amix=inputs=${leveled.size}:duration=${duration.value}:normalize=${if (normalize) 1 else 0}"
+            return node(leveled, mix, label)
         }
 
         public fun fade(
             input: FilterPad,
-            type: FilterOperation.Fade.Type,
+            type: FadeType,
             startSeconds: Double,
             durationSeconds: Double,
             label: String? = null,
-        ): FilterPad = node(listOf(input), FilterOperation.Fade(type, startSeconds, durationSeconds), label)
+        ): FilterPad = node(
+            listOf(input),
+            "afade=t=${type.value}:st=${startSeconds.ffmpegNumber()}:d=${durationSeconds.ffmpegNumber()}",
+            label,
+        )
 
         public fun tempo(input: FilterPad, factor: Double, label: String? = null): FilterPad {
             require(factor in 0.5..2.0) { "A single FFmpeg atempo node supports factors from 0.5 through 2.0" }
-            return node(listOf(input), FilterOperation.Tempo(factor), label)
+            return node(listOf(input), "atempo=${factor.ffmpegNumber()}", label)
         }
 
         public fun overlay(
@@ -242,31 +154,31 @@ public class FilterGraph private constructor(
         ): FilterPad {
             require(opacity in 0.0..1.0) { "Overlay opacity must be between 0 and 1" }
             val preparedOverlay = if (opacity == 1.0) overlay else {
-                node(listOf(overlay), FilterOperation.Opacity(opacity), null)
+                node(listOf(overlay), "format=rgba,colorchannelmixer=aa=${opacity.ffmpegNumber()}", null)
             }
-            return node(listOf(main, preparedOverlay), FilterOperation.Overlay(x, y), label)
+            return node(listOf(main, preparedOverlay), "overlay=x=$x:y=$y", label)
         }
 
         public fun alphaMask(content: FilterPad, alpha: FilterPad, label: String? = null): FilterPad =
-            node(listOf(content, alpha), FilterOperation.AlphaMask, label)
+            node(listOf(content, alpha), "alphamerge", label)
 
         public fun lumaMask(base: FilterPad, overlay: FilterPad, mask: FilterPad, label: String? = null): FilterPad =
-            node(listOf(base, overlay, mask), FilterOperation.LumaMask, label)
+            node(listOf(base, overlay, mask), "maskedmerge", label)
 
         public fun raw(inputs: List<FilterPad>, expression: String, label: String? = null): FilterPad {
             require(expression.isNotBlank()) { "Raw filter expression must not be blank" }
-            return node(inputs, FilterOperation.Raw(expression), label)
+            return node(inputs, expression, label)
         }
 
         internal fun build(): FilterGraph = FilterGraph(nodes.toList())
 
-        private fun node(inputs: List<FilterPad>, operation: FilterOperation, requestedLabel: String?): FilterPad {
+        private fun node(inputs: List<FilterPad>, filter: String, requestedLabel: String?): FilterPad {
             require(inputs.isNotEmpty()) { "A filter node requires at least one input" }
             val label = requestedLabel ?: "ffk${nextLabel++}"
             require(label.matches(Regex("[A-Za-z0-9_]+"))) { "Invalid filter label: $label" }
             require(labels.add(label)) { "Duplicate filter label: $label" }
             val output = FilterPad("[$label]")
-            nodes += FilterNode(inputs, operation, output)
+            nodes += inputs.joinToString("") { it.expression } + filter + output.expression
             return output
         }
     }
@@ -280,6 +192,3 @@ private fun options(name: String, vararg values: Pair<String, Double?>): String 
     val rendered = values.mapNotNull { (key, value) -> value?.let { "$key=${it.ffmpegNumber()}" } }
     return if (rendered.isEmpty()) name else "$name=${rendered.joinToString(":")}"
 }
-
-private fun Double.ffmpegNumber(): String =
-    if (this % 1.0 == 0.0) toLong().toString() else toString()

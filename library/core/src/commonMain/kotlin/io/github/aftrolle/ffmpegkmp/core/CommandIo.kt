@@ -16,7 +16,7 @@ import okio.Source
 public class CommandIo private constructor(
     internal val mounts: List<Mount>,
 ) {
-    internal data class Mount(val path: String, val resource: NativeIoResource, val staging: Boolean = false)
+    internal data class Mount(val path: String, val resource: NativeIoResource, val staged: Boolean = false)
 
     public class Builder {
         private val mounts = mutableListOf<Mount>()
@@ -26,16 +26,28 @@ public class CommandIo private constructor(
             add(path, NativeSourceResource(source))
         }
 
-        public fun output(path: String, sink: Sink) {
-            add(path, NativeSinkResource(sink))
-        }
-
         /**
-         * Mounts a [Sink] output backed by a real temporary file instead of `Sink`'s default
-         * forward-only write capability. See [Staging] for when this is (and isn't) needed.
+         * Mounts a forward-only [Sink] output. With [staged], FFmpeg writes to a real temporary
+         * file instead, which supports seeking like a [FileHandle] mount, and the finished bytes
+         * are copied to the sink once the command succeeds; the temporary file is always deleted
+         * afterward.
+         *
+         * Muxers that patch header fields after writing need [staged], the default,
+         * non-fragmented MP4/MOV writer chief among them. Formats that mux forward-only
+         * (`-f mpegts`, or MP4 with `-movflags frag_keyframe+empty_moov`) do not, and avoid the
+         * extra temporary-file write without it. When the final destination is itself a seekable
+         * file, mounting a real [FileHandle] output directly is more efficient than staging.
+         *
+         * Staging is not supported where there is no synchronous filesystem (the browser
+         * Kotlin/Wasm and Kotlin/JS targets); requesting it there throws.
          */
-        public fun output(path: String, sink: Sink, staging: Staging) {
-            add(path, NativeSinkResource(sink), staging = true)
+        public fun output(path: String, sink: Sink, staged: Boolean = false) {
+            require(!staged || stagingSupportedOnThisPlatform) {
+                "Staged output is not supported in the browser (no synchronous filesystem). Mount a " +
+                    "plain Sink with a streaming-friendly format (e.g. \"-movflags frag_keyframe+empty_moov\") " +
+                    "instead."
+            }
+            add(path, NativeSinkResource(sink), staged)
         }
 
         /** Mounts an Okio file handle for seekable, random-access input. */
@@ -55,10 +67,10 @@ public class CommandIo private constructor(
             add(path, NativeFileResource(fileHandle, NativeIoAccess.READ_WRITE, truncate))
         }
 
-        private fun add(path: String, resource: NativeIoResource, staging: Boolean = false) {
+        private fun add(path: String, resource: NativeIoResource, staged: Boolean = false) {
             requirePath(path)
             require(paths.add(path)) { "I/O path is already mounted: $path" }
-            mounts += Mount(path, resource, staging)
+            mounts += Mount(path, resource, staged)
         }
 
         internal fun build(): CommandIo = CommandIo(mounts.toList())
