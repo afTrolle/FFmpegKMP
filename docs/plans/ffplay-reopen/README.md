@@ -1,7 +1,8 @@
 # One open per source in the FFplay player
 
 Status: phase 0's macOS native baselines are measured (2b); its Android, JVM
-and browser measurements are not. Nothing after phase 0 is built. The audio-cleanup and small-cleanups work this plan
+and browser measurements are not. Phase 1b is built on its own branch
+(54fb779, not merged). Phases 1 and 2–8 are not built. The audio-cleanup and small-cleanups work this plan
 builds on is merged into main as of f9f92c1.
 
 `FFplayPlayer` opens and probes its input again on nearly every transition:
@@ -169,6 +170,43 @@ software).
   lever there.
 - Not yet measured: Android (`PlayerReopenBudgetDeviceTest`), the JVM and
   browser players, and reads with added latency.
+
+### Phase 1b results (54fb779, branch `claude/sad-haibt-07d9b9`)
+
+Bitmap memory per Canvas player, three RGBA8 bitmaps:
+
+| Drawn at | From 1080p | From 4K |
+|---|---|---|
+| Source size (before) | 24.9 MB | 99.5 MB |
+| 1920×1080 | 24.9 MB | 24.9 MB |
+| 960×540 tile | 6.2 MB | 6.2 MB |
+| 256×144 thumbnail | 0.88 MB (360×203) | 1.56 MB (480×270) |
+
+Sixteen paused 4K players drawn as tiles go from about 1.6 GB to about 100 MB.
+A thumbnail is larger than 4h's table says because one ladder step of 4K is
+240×135, so a 256-wide thumbnail gets two steps; question 12's 64 px rounding
+would close that.
+
+Converter time per frame, full size against 960×540 (three noisy runs):
+
+| Route | Full size | 960×540 |
+|---|---|---|
+| 4K HEVC PQ tone map to RGBA8 | 40–64 ms | 3.4–7.8 ms |
+| 4K PQ to linear F16 | 31 ms | 2.2–5.0 ms |
+| 1080p SDR YUV→RGBA8 | 0.10–0.17 ms | 0.40–0.61 ms |
+| 4K SDR YUV→RGBA8 | 0.30–1.10 ms | 0.87–1.58 ms |
+
+The HDR routes get 6–10× faster. SDR conversion gets *slower* when it scales:
+the same-size conversion takes swscale's unscaled fast path and the scaled one
+does not. It stays under 2 ms, and the saving there is memory and a 16× smaller
+GPU upload (question 15).
+
+Two departures from 4h: `drawFrameImage` stores the canvas size and the
+`ContentScale` instead of the placed size, and `updateIfOpen` places each frame
+itself, so a paused player's first preview frame (often its only one) is
+already converted at the drawn size. An RGBA F16 frame keeps its own size,
+decided from its pixel layout, instead of a retry after `ENOSYS`. The two new
+Android device tests have not run.
 
 ## 3. Design options (behaviour at 1 / 4 / 16 concurrent sources)
 
@@ -469,3 +507,7 @@ Defaults in bold are what the phases assume until decided otherwise.
     allocate only the visible crop.
 14. **Make `FrameImage.targetSize` public now**, or keep it internal until an
     export user asks.
+15. Scaled SDR conversion is slower than same-size (swscale's unscaled fast
+    path): **accept it** (under 2 ms, and the bitmaps and upload shrink), or
+    convert at the source size and scale in a second, cheaper pass when the
+    drawn size is close to it.
