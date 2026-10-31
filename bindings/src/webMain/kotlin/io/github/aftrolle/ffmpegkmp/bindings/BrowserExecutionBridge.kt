@@ -12,7 +12,6 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
-import okio.Buffer
 
 internal interface BrowserWorker {
     fun terminate()
@@ -28,12 +27,6 @@ internal interface BrowserWorkerListener {
     fun onComplete(returnCode: Int, outputs: List<BrowserWorkerOutput>)
     fun onFailure(message: String)
 }
-
-internal expect fun startBrowserWorker(
-    requestJson: String,
-    mountBytes: Array<ByteArray>,
-    listener: BrowserWorkerListener,
-): BrowserWorker
 
 internal fun createBrowserExecutionBridge(): NativeExecutionBridge = BrowserWorkerExecutionBridge()
 
@@ -148,25 +141,7 @@ internal fun NativeExecutionRequest.toWorkerJson(): JsonObject = buildJsonObject
 }
 
 internal fun NativeExecutionRequest.readMountBytes(): Array<ByteArray> =
-    mounts.map { mount ->
-        when (val resource = mount.resource) {
-            is NativeFileResource -> if (resource.access != NativeIoAccess.WRITE || !resource.truncate) {
-                val buffer = Buffer()
-                resource.fileHandle.read(0L, buffer, resource.fileHandle.size())
-                buffer.readByteArray()
-            } else {
-                ByteArray(0)
-            }
-            is NativeSourceResource -> {
-                val buffer = Buffer()
-                while (resource.source.read(buffer, 8_192L) != -1L) {
-                    // Drain into one temporary array whose backing buffer is transferred to the worker.
-                }
-                buffer.readByteArray()
-            }
-            is NativeSinkResource -> ByteArray(0)
-        }
-    }.toTypedArray()
+    mounts.map(NativeMountedIo::readBytesForBrowser).toTypedArray()
 
 private fun Int.toNativeEvent(level: Int, text: String): NativeExecutionEvent =
     when (this) {
@@ -177,21 +152,7 @@ private fun Int.toNativeEvent(level: Int, text: String): NativeExecutionEvent =
 
 private fun List<BrowserWorkerOutput>.writeTo(mounts: List<NativeMountedIo>) {
     val outputsByPath = associateBy(BrowserWorkerOutput::path)
-    mounts.forEach { mount ->
-        outputsByPath[mount.path]?.bytes?.let { bytes ->
-            when (val resource = mount.resource) {
-                is NativeFileResource -> {
-                    resource.fileHandle.resize(bytes.size.toLong())
-                    resource.fileHandle.write(0L, bytes, 0, bytes.size)
-                }
-                is NativeSinkResource -> {
-                    val buffer = Buffer().write(bytes)
-                    resource.sink.write(buffer, buffer.size)
-                }
-                is NativeSourceResource -> Unit
-            }
-        }
-    }
+    mounts.forEach { mount -> outputsByPath[mount.path]?.let { mount.resource.writeBrowserOutput(it.bytes) } }
 }
 
 private fun NativeIoResource.accessName(): String = when (this) {

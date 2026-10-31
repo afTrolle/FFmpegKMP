@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: LGPL-2.1-or-later
-@file:OptIn(io.github.aftrolle.ffmpegkmp.bindings.InternalFFmpegKmpApi::class)
+@file:OptIn(ExperimentalWasmJsInterop::class, io.github.aftrolle.ffmpegkmp.bindings.InternalFFmpegKmpApi::class)
 
 package io.github.aftrolle.ffmpegkmp.bindings
 
+import kotlin.js.ExperimentalWasmJsInterop
 import kotlin.js.JsAny
 
 @InternalFFmpegKmpApi
@@ -17,34 +18,34 @@ public actual fun createPlatformPlayerBridge(
     platformFrame: (NativePlatformVideoFrame) -> Boolean,
 ): NativePlayerBridge = createBrowserPlayerBridge(configuration, update, frame, platformFrame)
 
-internal actual fun startBrowserPlayerWorker(
+internal fun startBrowserPlayerWorker(
     configuration: NativePlayerConfiguration,
     listener: BrowserPlayerWorkerListener,
 ): BrowserPlayerWorker {
     val onSnapshot: (String) -> Unit = listener::onSnapshot
-    val onFrame: (dynamic) -> Unit = { data ->
+    val onFrame: (JsAny) -> Unit = { data ->
         listener.onFrame(
-            bytes = playerFrameBytes(data),
-            width = data.width as Int,
-            height = data.height as Int,
-            stride = data.stride as Int,
-            presentationTimeUs = (data.presentationTimeUs as Number).toLong(),
-            queueSerial = (data.queueSerial as Number).toInt().toUInt(),
+            bytes = int8ArrayToByteArray(playerFrameBytes(data)),
+            width = frameWidth(data),
+            height = frameHeight(data),
+            stride = frameStride(data),
+            presentationTimeUs = framePresentationTime(data).toLong(),
+            queueSerial = frameQueueSerial(data).toUInt(),
         )
     }
     val onFailure: (String) -> Unit = listener::onFailure
     val onAudio: (String, String) -> Unit = listener::onAudioEvent
-    val onPlatformFrame: (dynamic) -> Boolean = { data ->
-        val frameId = registerPlayerVideoFrame(data.frame)
+    val onPlatformFrame: (JsAny) -> Boolean = { data ->
+        val frameId = registerPlayerVideoFrame(playerPlatformFrame(data))
         listener.onPlatformFrame(
             frameId = frameId,
-            width = data.width as Int,
-            height = data.height as Int,
-            presentationTimeUs = (data.presentationTimeUs as Number).toLong(),
-            queueSerial = (data.queueSerial as Number).toInt().toUInt(),
+            width = frameWidth(data),
+            height = frameHeight(data),
+            presentationTimeUs = framePresentationTime(data).toLong(),
+            queueSerial = frameQueueSerial(data).toUInt(),
         ).also { accepted -> if (!accepted) releasePlayerVideoFrame(frameId) }
     }
-    return JsBrowserPlayerWorker(
+    return WebBrowserPlayerWorker(
         startPlayerWorker(
             configuration.decoderPreference.ordinal,
             configuration.decoderThreads,
@@ -57,15 +58,13 @@ internal actual fun startBrowserPlayerWorker(
     )
 }
 
-private class JsBrowserPlayerWorker(private val controller: dynamic) : BrowserPlayerWorker {
+private class WebBrowserPlayerWorker(private val controller: JsAny) : BrowserPlayerWorker {
     override fun prepare(source: NativePlayerSource, mountBytes: Array<ByteArray>) {
-        postPlayerPrepare(
-            controller,
-            source.input,
-            source.requireSecurePath,
-            source.mounts.map(NativeMountedIo::path).toTypedArray(),
-            mountBytes,
-        )
+        val mounts = emptyJsArray()
+        source.mounts.forEachIndexed { index, mount ->
+            pushMount(mounts, mount.path, transferToJsUint8Array(mountBytes[index]))
+        }
+        postPlayerPrepare(controller, source.input, source.requireSecurePath, mounts)
     }
 
     override fun setOutput(flags: Int) = postPlayerCommand(controller, "player-set-output", flags, 0L)
@@ -74,22 +73,51 @@ private class JsBrowserPlayerWorker(private val controller: dynamic) : BrowserPl
     override fun pause() = postPlayerCommand(controller, "player-pause", 0, 0L)
     override fun seek(positionUs: Long) = postPlayerCommand(controller, "player-seek", 0, positionUs)
     override fun stop() = postPlayerCommand(controller, "player-stop", 0, 0L)
-    override fun cancel() = terminatePlayerWorker(controller)
+    override fun cancel() = terminateWorker(controller)
     override fun post(message: JsAny, transfers: JsAny) = postPlayerMessage(controller, message, transfers)
 }
 
-private fun postPlayerMessage(controller: dynamic, message: JsAny, transfers: JsAny): Unit =
-    js("controller.post(message, transfers)")
+internal fun startBrowserWorker(
+    requestJson: String,
+    mountBytes: Array<ByteArray>,
+    listener: BrowserWorkerListener,
+): BrowserWorker {
+    val onEvent: (Int, Int, String) -> Unit = listener::onEvent
+    val onComplete: (Int, JsAny) -> Unit = { returnCode, outputs ->
+        listener.onComplete(returnCode, outputs.toBrowserWorkerOutputs())
+    }
+    val onFailure: (String) -> Unit = listener::onFailure
+    val transferred = emptyJsArray()
+    mountBytes.forEach { bytes -> push(transferred, transferToJsUint8Array(bytes)) }
+    val worker = startWorker(requestJson, transferred, onEvent, onComplete, onFailure)
+    return object : BrowserWorker {
+        override fun terminate() = terminateWorker(worker)
+    }
+}
+
+private fun JsAny.toBrowserWorkerOutputs(): List<BrowserWorkerOutput> =
+    List(outputCount(this)) { index ->
+        BrowserWorkerOutput(
+            path = outputPath(this, index),
+            bytes = int8ArrayToByteArray(outputBytes(this, index)),
+        )
+    }
+
+private fun emptyJsArray(): JsAny = js("[]")
+
+private fun push(array: JsAny, value: JsAny): Unit = js("array.push(value)")
+
+private fun pushMount(mounts: JsAny, path: String, bytes: JsAny): Unit = js("mounts.push({ path, bytes })")
 
 private fun startPlayerWorker(
     decoderPreference: Int,
     decoderThreads: Int,
     onSnapshot: (String) -> Unit,
-    onFrame: (dynamic) -> Unit,
-    onPlatformFrame: (dynamic) -> Boolean,
+    onFrame: (JsAny) -> Unit,
+    onPlatformFrame: (JsAny) -> Boolean,
     onFailure: (String) -> Unit,
     onAudio: (String, String) -> Unit,
-): dynamic = js(
+): JsAny = js(
     """
     (() => {
       const workerUrl = globalThis.FFMPEGKMP_WORKER_URL || 'ffmpegkmp-worker.mjs';
@@ -137,7 +165,37 @@ private fun startPlayerWorker(
     """,
 )
 
-private fun registerPlayerVideoFrame(frame: dynamic): Int = js(
+private fun postPlayerMessage(controller: JsAny, message: JsAny, transfers: JsAny): Unit =
+    js("controller.post(message, transfers)")
+
+private fun postPlayerPrepare(controller: JsAny, input: String, requireSecurePath: Boolean, mounts: JsAny): Unit = js(
+    "controller.post({ type: 'player-prepare', input, requireSecurePath, mounts }, mounts.map(mount => mount.bytes.buffer))",
+)
+
+// A Long reaches JavaScript as a string on both targets: Kotlin/JS has no BigInt Long by default.
+private fun postPlayerCommand(controller: JsAny, type: String, flags: Int, positionUs: Long): Unit =
+    postPlayerCommand(controller, type, flags, positionUs.toString())
+
+private fun postPlayerCommand(controller: JsAny, type: String, flags: Int, positionUs: String): Unit =
+    js("controller.post({ type, flags, positionUs })")
+
+private fun terminateWorker(controller: JsAny): Unit = js("controller.terminate()")
+
+private fun playerFrameBytes(data: JsAny): JsAny =
+    js("new Int8Array(data.bytes.buffer, data.bytes.byteOffset, data.bytes.byteLength)")
+
+private fun frameWidth(data: JsAny): Int = js("data.width")
+private fun frameHeight(data: JsAny): Int = js("data.height")
+private fun frameStride(data: JsAny): Int = js("data.stride")
+private fun framePresentationTime(data: JsAny): Double = js("data.presentationTimeUs")
+
+// A queue serial is unsigned 32-bit; `| 0` hands it over as the Int with the same bits.
+private fun frameQueueSerial(data: JsAny): Int = js("data.queueSerial | 0")
+
+private fun playerPlatformFrame(data: JsAny): JsAny = js("data.frame")
+
+/** Keeps a WebCodecs `VideoFrame` for the page's renderer to draw by id, in a registry it shares. */
+private fun registerPlayerVideoFrame(frame: JsAny): Int = js(
     """
     (() => {
       const registry = globalThis.__ffmpegkmpVideoFrames ||
@@ -161,89 +219,14 @@ private fun releasePlayerVideoFrame(frameId: Int): Unit = js(
     """,
 )
 
-private fun postPlayerPrepare(
-    controller: dynamic,
-    input: String,
-    requireSecurePath: Boolean,
-    mountPaths: Array<String>,
-    mountBytes: Array<ByteArray>,
-): Unit = js(
-    """
-    {
-      const mounts = mountPaths.map((path, index) => {
-        const mount = {};
-        mount.path = path;
-        mount.bytes = mountBytes[index];
-        return mount;
-      });
-      controller.post(
-        { type: 'player-prepare', input, requireSecurePath, mounts },
-        mounts.map(mount => mount.bytes.buffer),
-      );
-    }
-    """,
-)
-
-private fun postPlayerCommand(
-    controller: dynamic,
-    type: String,
-    flags: Int,
-    positionUs: Long,
-): Unit = js(
-    "controller.post({ type, flags, positionUs: positionUs.toString() })",
-)
-
-private fun terminatePlayerWorker(controller: dynamic): Unit = js("controller.terminate()")
-
-private fun playerFrameBytes(data: dynamic): ByteArray = js(
-    "new Int8Array(data.bytes.buffer, data.bytes.byteOffset, data.bytes.byteLength)",
-)
-
-internal actual fun startBrowserWorker(
-    requestJson: String,
-    mountBytes: Array<ByteArray>,
-    listener: BrowserWorkerListener,
-): BrowserWorker {
-    val onEvent: (Int, Int, String) -> Unit = listener::onEvent
-    val onComplete: (Int, dynamic) -> Unit = { returnCode, outputs ->
-        listener.onComplete(returnCode, outputsToBrowserWorkerOutputs(outputs))
-    }
-    val onFailure: (String) -> Unit = listener::onFailure
-    return JsBrowserWorker(
-        startWorker(requestJson, mountBytes, onEvent, onComplete, onFailure),
-    )
-}
-
-private class JsBrowserWorker(private val worker: dynamic) : BrowserWorker {
-    override fun terminate() {
-        worker.terminate()
-    }
-}
-
 private fun startWorker(
     requestJson: String,
-    mountBytes: Array<ByteArray>,
+    mountBytes: JsAny,
     onEvent: (Int, Int, String) -> Unit,
-    onComplete: (Int, dynamic) -> Unit,
+    onComplete: (Int, JsAny) -> Unit,
     onFailure: (String) -> Unit,
-): dynamic = js(
-    WORKER_BOOTSTRAP,
-)
-
-private fun outputsToBrowserWorkerOutputs(outputs: dynamic): List<BrowserWorkerOutput> =
-    List(outputs.length as Int) { index ->
-        val output = outputs[index]
-        BrowserWorkerOutput(
-            path = output.path as String,
-            bytes = outputBytes(output),
-        )
-    }
-
-private fun outputBytes(output: dynamic): ByteArray = js(
-    "new Int8Array(output.bytes.buffer, output.bytes.byteOffset, output.size)",
-)
-
-private const val WORKER_BOOTSTRAP: String = """
+): JsAny = js(
+    """
     {
       const request = JSON.parse(requestJson);
       const workerUrl = globalThis.FFMPEGKMP_WORKER_URL || 'ffmpegkmp-worker.mjs';
@@ -268,13 +251,13 @@ private const val WORKER_BOOTSTRAP: String = """
         onFailure('Could not decode a message from ' + workerUrl + '; module URL: ' + moduleUrl);
         worker.terminate();
       };
+      // Kotlin/JS re-emits this code and drops the parentheses an arrow returning an object literal needs.
       request.mounts = request.mounts.map((mount, index) => {
-        const source = mountBytes[index];
         const converted = {};
         converted.path = mount.path;
         converted.access = mount.access;
         converted.truncate = mount.truncate;
-        converted.bytes = source;
+        converted.bytes = mountBytes[index];
         return converted;
       });
       worker.postMessage(
@@ -283,23 +266,10 @@ private const val WORKER_BOOTSTRAP: String = """
       );
       return worker;
     }
-"""
+    """,
+)
 
-internal actual fun copyToJsUint8Array(bytes: ByteArray): JsAny = uint8Copy(bytes)
-
-internal actual fun copyToJsUint8Array(bytes: ByteArray, offset: Int, size: Int): JsAny = uint8RangeCopy(bytes, offset, size)
-
-internal actual fun copyToJsFloat32Array(samples: FloatArray, offset: Int, size: Int): JsAny = float32RangeCopy(samples, offset, size)
-
-private fun float32RangeCopy(samples: dynamic, offset: Int, size: Int): JsAny =
-    js("new Float32Array(samples.buffer, samples.byteOffset + offset * 4, size).slice()")
-
-// A Kotlin/JS ByteArray is an Int8Array.
-internal actual fun jsBufferToByteArray(buffer: JsAny): ByteArray = int8View(buffer)
-
-private fun uint8RangeCopy(bytes: dynamic, offset: Int, size: Int): JsAny =
-    js("new Uint8Array(bytes.buffer, bytes.byteOffset + offset, size).slice()")
-
-private fun int8View(buffer: JsAny): ByteArray = js("new Int8Array(buffer)")
-
-private fun uint8Copy(bytes: dynamic): JsAny = js("new Uint8Array(bytes.buffer, bytes.byteOffset, bytes.byteLength).slice()")
+private fun outputCount(outputs: JsAny): Int = js("outputs.length")
+private fun outputPath(outputs: JsAny, index: Int): String = js("outputs[index].path")
+private fun outputBytes(outputs: JsAny, index: Int): JsAny =
+    js("new Int8Array(outputs[index].bytes.buffer, outputs[index].bytes.byteOffset, outputs[index].size)")

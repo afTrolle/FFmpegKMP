@@ -119,7 +119,8 @@ internal class ReplayableSource(private val source: Source) {
         while (!exhausted) {
             if (source.read(cache, CHUNK) <= 0L) exhausted = true
         }
-        return cache.snapshot().toByteArray()
+        // A copy of the cache that shares its segments, read out once.
+        return cache.copy().readByteArray()
     }
 
     private companion object {

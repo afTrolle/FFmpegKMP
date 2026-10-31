@@ -12,7 +12,6 @@ import kotlinx.serialization.json.double
 import kotlinx.serialization.json.int
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.long
-import okio.Buffer
 
 /** A player running in its own Web Worker; [cancel] terminates the worker. */
 internal interface BrowserPlayerWorker {
@@ -51,11 +50,6 @@ internal interface BrowserPlayerWorkerListener {
     /** `opened` with the audio's tracks as JSON, or `failure` with a message. */
     fun onAudioEvent(event: String, payload: String)
 }
-
-internal expect fun startBrowserPlayerWorker(
-    configuration: NativePlayerConfiguration,
-    listener: BrowserPlayerWorkerListener,
-): BrowserPlayerWorker
 
 internal fun createBrowserPlayerBridge(
     configuration: NativePlayerConfiguration,
@@ -111,7 +105,7 @@ private class BrowserNativePlayerBridge(
             errorCode = 0,
         )
         update(current)
-        activeWorker.prepare(source, source.mounts.readBytesForBrowserPlayer())
+        activeWorker.prepare(source, source.mounts.map(NativeMountedIo::readBytesForBrowser).toTypedArray())
         output?.let { activeWorker.setOutput(it.toNativeFlags()) }
         return 0
     }
@@ -319,20 +313,6 @@ private class PendingBrowserPreparation(
     val generation: Int,
     val completion: CompletableDeferred<Int>,
 )
-
-private fun List<NativeMountedIo>.readBytesForBrowserPlayer(): Array<ByteArray> = map { it.readBytesForBrowser() }.toTypedArray()
-
-/** The whole input a mount serves, which the browser's worker takes as bytes; nothing for an output. */
-internal fun NativeMountedIo.readBytesForBrowser(): ByteArray = when (val resource = resource) {
-    is NativeFileResource -> {
-        val buffer = Buffer()
-        resource.fileHandle.read(0L, buffer, resource.fileHandle.size())
-        buffer.readByteArray()
-    }
-    // Through the replay cache, so preparing the same source again still has its bytes.
-    is NativeSourceResource -> resource.replay.readAll()
-    is NativeSinkResource -> ByteArray(0)
-}
 
 internal fun String.toBrowserNativePlayerSnapshot(): NativePlayerSnapshot {
     val value = Json.parseToJsonElement(this) as JsonObject
