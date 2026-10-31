@@ -365,10 +365,34 @@ static int ffplaykmp_present_decoded_frame(
     return 0;
 }
 
+/* How long a drain waits for a decoder that is not ready for the end of the input, as FFmpeg's MediaCodec drain does. */
+#define FFPLAYKMP_DRAIN_TIMEOUT_US 1000000
+
 /*
- * Presents every frame the decoder has ready. Returns 1 once a preview frame
- * (non-continuous) was shown, 0 when the decoder needs more input, or a
- * negative error. Undecodable data is skipped, as ffplay does.
+ * Receives the decoder's next frame. While draining, FFmpeg's MediaCodec
+ * decoder answers EAGAIN when the codec had no input buffer free for the end of
+ * the stream yet, where other decoders wait; that answer is asked again until
+ * the decoder reports its end, a frame comes, the run is aborted or
+ * FFPLAYKMP_DRAIN_TIMEOUT_US passes.
+ */
+static int ffplaykmp_receive_frame(
+        ffplaykmp_player *player,
+        AVCodecContext *decoder,
+        AVFrame *frame,
+        int draining) {
+    const int64_t deadline_us = draining ? av_gettime_relative() + FFPLAYKMP_DRAIN_TIMEOUT_US : 0;
+    int result;
+    while ((result = avcodec_receive_frame(decoder, frame)) == AVERROR(EAGAIN) && draining &&
+            !ffplaykmp_is_aborted(player) && av_gettime_relative() < deadline_us)
+        av_usleep(1000);
+    return result;
+}
+
+/*
+ * Presents every frame the decoder has ready, or (draining) every frame it has
+ * left. Returns 1 once a preview frame (non-continuous) was shown, 0 when the
+ * decoder needs more input or is drained, or a negative error. Undecodable
+ * data is skipped, as ffplay does.
  *
  * Frames before `start_position_us` are decoded from the keyframe a seek
  * lands on. Of those, `held` keeps the latest: it is the frame on screen at the
@@ -386,10 +410,11 @@ static int ffplaykmp_present_ready_frames(
         int64_t start_position_us,
         int continuous,
         int require_hardware,
+        int draining,
         int *decoded_frames,
         int64_t *clock_origin_us) {
     int result;
-    while ((result = avcodec_receive_frame(decoder, frame)) >= 0) {
+    while ((result = ffplaykmp_receive_frame(player, decoder, frame, draining)) >= 0) {
         int frame_is_hardware = ffplaykmp_is_hardware_frame(frame);
         int64_t presentation_time_us;
         (*decoded_frames)++;
@@ -583,7 +608,7 @@ static int ffplaykmp_session_decode(
                 /* The decoder wants its ready frames taken first; then it accepts the packet. */
                 result = ffplaykmp_present_ready_frames(
                         player, decoder, session->frame, session->held, session->stream, session->media_start_us,
-                        start_position_us, continuous, require_hardware, decoded_frames, &clock_origin_us);
+                        start_position_us, continuous, require_hardware, 0, decoded_frames, &clock_origin_us);
                 if (result != 0) {
                     av_packet_unref(packet);
                     goto finish;
@@ -594,7 +619,7 @@ static int ffplaykmp_session_decode(
             if (sent >= 0) {
                 result = ffplaykmp_present_ready_frames(
                         player, decoder, session->frame, session->held, session->stream, session->media_start_us,
-                        start_position_us, continuous, require_hardware, decoded_frames, &clock_origin_us);
+                        start_position_us, continuous, require_hardware, 0, decoded_frames, &clock_origin_us);
                 if (result != 0) {
                     av_packet_unref(packet);
                     goto finish;
@@ -609,7 +634,7 @@ static int ffplaykmp_session_decode(
         avcodec_send_packet(decoder, NULL);
         result = ffplaykmp_present_ready_frames(
                 player, decoder, session->frame, session->held, session->stream, session->media_start_us,
-                start_position_us, continuous, require_hardware, decoded_frames, &clock_origin_us);
+                start_position_us, continuous, require_hardware, 1, decoded_frames, &clock_origin_us);
         if (result == 0)
             result = ffplaykmp_present_held_frame(
                     player, session->held, session->stream, start_position_us, continuous, &clock_origin_us);
@@ -617,8 +642,9 @@ static int ffplaykmp_session_decode(
 finish:
     if (result > 0)
         return 0;  /* The preview frame was presented. */
+    /* An abort can also end the drain early, before anything decoded. */
     if (result >= 0 && *decoded_frames == 0)
-        return AVERROR_INVALIDDATA;
+        return ffplaykmp_is_aborted(player) ? AVERROR_EXIT : AVERROR_INVALIDDATA;
     return result;
 }
 

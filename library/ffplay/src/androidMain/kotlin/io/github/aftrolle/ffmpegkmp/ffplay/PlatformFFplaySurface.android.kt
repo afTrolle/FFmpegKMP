@@ -57,7 +57,8 @@ internal actual fun PlatformFFplaySurface(
     LaunchedEffect(output, video, contentScale) {
         // Re-negotiate once stream display metadata is known, and when the scale decides whether
         // direct presentation is possible. Transformed streams deliberately use the software path
-        // because a raw MediaCodec Surface cannot apply FFmpeg's matrix.
+        // because a raw MediaCodec Surface cannot apply FFmpeg's matrix; until the stream is known
+        // the output offers MediaCodec the Surface (see AndroidSurfaceOutput.capabilities).
         player.attachOutput(output)
     }
 
@@ -117,10 +118,21 @@ internal class AndroidSurfaceOutput(
         get() = synchronized(lock) { bitmap?.let { IntSize(it.width, it.height) } }
 
     override val kind: FFplayRendererKind = FFplayRendererKind.NATIVE_SURFACE
+
+    /**
+     * Before the stream is known, its frames are offered to MediaCodec as if they needed no transform. The
+     * order matters because of how the Surface is connected: `lockCanvas` connects it as a CPU producer that
+     * stays connected for the Surface's life, so MediaCodec can no longer configure on it, while a codec's
+     * connection ends when the codec closes. A transformed stream therefore still falls back to the canvas
+     * once it is known (its first preview may reach the Surface untransformed until then), but a canvas
+     * preview drawn first would keep every later stream from MediaCodec. Once the canvas has drawn, for a
+     * transformed stream, a scale other than Fit or a failed hardware open, the Surface stays the canvas's,
+     * and AUTO decodes in software on it from then on.
+     */
     override val capabilities: FFplayOutputCapabilities
         get() = synchronized(lock) {
             val directSurfacePresentation = contentScale == ContentScale.Fit &&
-                videoInfo.hasIdentityDisplayTransform()
+                videoInfo.mayHaveIdentityDisplayTransform()
             FFplayOutputCapabilities(
                 hardwareFrameImport = directSurfacePresentation,
                 softwareFrameUpload = true,
@@ -222,6 +234,7 @@ internal class AndroidSurfaceOutput(
     override fun discard() = Unit
 }
 
-private fun VideoInfo?.hasIdentityDisplayTransform(): Boolean =
-    this != null && rotationDegrees.normalizedRotation() == 0f &&
+/** False only for a known stream that is rotated or has non-square pixels. */
+private fun VideoInfo?.mayHaveIdentityDisplayTransform(): Boolean =
+    this == null || rotationDegrees.normalizedRotation() == 0f &&
         kotlin.math.abs(sampleAspectRatioValue() - 1.0) < 0.000_001

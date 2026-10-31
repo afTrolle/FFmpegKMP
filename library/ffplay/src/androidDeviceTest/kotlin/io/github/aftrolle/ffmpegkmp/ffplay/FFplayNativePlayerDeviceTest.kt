@@ -34,7 +34,6 @@ import java.util.concurrent.FutureTask
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.TimeoutException
 import kotlin.math.floor
-import kotlin.test.Ignore
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
@@ -67,9 +66,7 @@ import okio.Buffer
  * hang fails the test, naming where the call was stuck.
  */
 class FFplayNativePlayerDeviceTest {
-    private val clip: ByteArray by lazy {
-        checkNotNull(javaClass.getResourceAsStream("/video-decoder/$CLIP")) { "Missing fixture $CLIP" }.use { it.readBytes() }
-    }
+    private val clip: ByteArray by lazy { fixture(CLIP) }
 
     private companion object {
         /** 128x128 H.264 at 30 fps, five seconds: the frame code over cfr-30.mp4, large enough for hardware decoders. */
@@ -77,6 +74,10 @@ class FFplayNativePlayerDeviceTest {
         const val SIZE = 128
         const val FPS = 30
         const val TAG = "FFplayNativePlayerTest"
+        const val AVERROR_INVALIDDATA = -0x41444e49
+
+        /** 96x64 MPEG-4 Part 2 at 30 fps, one second, shown turned a quarter: a transform a MediaCodec Surface cannot apply. */
+        const val ROTATED_CLIP = "rotated-90.mp4"
     }
 
     @Test
@@ -85,17 +86,81 @@ class FFplayNativePlayerDeviceTest {
     }
 
     /**
-     * The composable's order under AUTO: the Surface is attached before the stream is known, so the preview is drawn
-     * through [AndroidSurfaceOutput]'s canvas, and MediaCodec is configured on the same Surface once it is known.
-     *
-     * Fails today: `lockCanvas` connects the Surface as a CPU producer and nothing disconnects it, so MediaCodec's
-     * connect fails (`BufferQueueProducer: connect: already connected (cur=2 req=3)`, configure returns -22) and the
-     * player falls back to software decoding for as long as that Surface lives.
+     * The composable's order under AUTO: the Surface is attached before the stream is known, and again once it is.
+     * The preview must not be drawn through [AndroidSurfaceOutput]'s canvas then: `lockCanvas` connects the Surface as
+     * a CPU producer for good, after which MediaCodec cannot connect to it (`BufferQueueProducer: connect: already
+     * connected (cur=2 req=3)`, configure returns -22) and the player would decode in software for the Surface's life.
      */
-    @Ignore("A Surface drawn through a canvas cannot be connected to MediaCodec afterwards")
     @Test
-    fun autoDecodesInHardwareOnASurfaceThatShowedACanvasPreview() = runBlocking {
+    fun autoDecodesInHardwareOnASurfaceAttachedBeforeTheStreamIsKnown() = runBlocking {
         playThroughTheLifecycle(CodecPreference.AUTO, attachFirst = true)
+    }
+
+    /**
+     * A stream the Surface cannot show as decoded, attached before it is known: whatever showed its preview, its
+     * frames are drawn through the canvas on the same Surface once it is known, MediaCodec having let go of it.
+     */
+    @Test
+    fun autoDrawsARotatedStreamThroughTheCanvasOnceItIsKnown() = runBlocking {
+        Playing(CodecPreference.AUTO, ROTATED_CLIP).use { playing ->
+            val player = playing.player
+            playing.show()
+            withTimeout(15.seconds) { player.prepare(playing.source()) }
+            val rotation = player.snapshot.value.video?.rotationDegrees
+            assertTrue(rotation != null && rotation.normalizedRotation() != 0f, "the stream turns by $rotation")
+            playing.surface.await("the preview") { it.count >= 1 }
+            log("rotated preview on ${player.snapshot.value.output?.decoder}")
+            val previews = playing.surface.frames.value.count
+            playing.show()
+            playing.surface.await("the preview after renegotiation") { it.count > previews }
+            assertEquals(DecoderKind.SOFTWARE, player.snapshot.value.output?.decoder)
+            assertEquals(false, player.snapshot.value.output?.zeroCopy)
+
+            val beforePlay = playing.surface.frames.value.count
+            within("play") { player.play() }
+            player.await("playback past 0.5 s") { it.position >= 0.5.seconds }
+            within("pause") { player.pause() }
+            assertTrue(playing.surface.settled().count - beforePlay >= 10, "frames drawn while playing")
+            assertEquals(DecoderKind.SOFTWARE, player.snapshot.value.output?.decoder)
+            playing.check()
+        }
+    }
+
+    /**
+     * MediaCodec, then the canvas, on one Surface: a scale MediaCodec cannot apply moves the stream to the canvas,
+     * which can draw on the Surface because MediaCodec let go of it when its codec closed. The other way round the
+     * Surface stays the canvas's, so back at Fit the stream is still shown, decoded where MediaCodec allows.
+     */
+    @Test
+    fun autoMovesToTheCanvasOnTheSameSurfaceForAScaleMediaCodecCannotApply() = runBlocking {
+        Playing(CodecPreference.AUTO).use { playing ->
+            val player = playing.player
+            playing.prepareAndShow()
+            within("play") { player.play() }
+            player.await("playback") { it.position >= 0.5.seconds }
+            within("pause") { player.pause() }
+            val paused = player.snapshot.value.position
+            val held = playing.surface.settled()
+
+            playing.output.updatePresentation(ContentScale.Crop, 0)
+            playing.show()
+            playing.surface.await("the paused frame through the canvas") { it.count > held.count }
+            assertEquals(DecoderKind.SOFTWARE, player.snapshot.value.output?.decoder)
+            val redrawn = playing.surface.frames.value.number
+            assertTrue(redrawn in held.number - 1..held.number + 1, "showing $redrawn, paused on ${held.number}")
+            within("play on the canvas") { player.play() }
+            val later = paused + 0.5.seconds
+            player.await("playback past $later") { it.position >= later }
+            playing.surface.await("frames past ${frameAt(later)}") { it.number >= frameAt(later) }
+            within("pause on the canvas") { player.pause() }
+
+            playing.output.updatePresentation(ContentScale.Fit, 0)
+            val beforeFit = playing.surface.settled()
+            playing.show()
+            playing.surface.await("the paused frame at Fit") { it.count > beforeFit.count }
+            log("back at Fit on ${player.snapshot.value.output?.decoder}, ${playing.surface.frames.value}")
+            playing.check()
+        }
     }
 
     @Test
@@ -181,6 +246,9 @@ class FFplayNativePlayerDeviceTest {
                     }
                     assertEquals(FFplayState.CLOSED, playing.player.snapshot.value.state)
                     log("close during a seek ($preference, attempt $attempt): the seek ${result.exceptionOrNull() ?: "returned"}")
+                    // An interrupted drain at the end of the clip is an abort too, not undecodable input.
+                    val message = result.exceptionOrNull()?.message.orEmpty()
+                    assertTrue("error $AVERROR_INVALIDDATA" !in message, "the seek to $target ($preference, attempt $attempt): $message")
                 }
             }
         }
@@ -232,16 +300,16 @@ class FFplayNativePlayerDeviceTest {
         Playing(preference).use { playing ->
             val player = playing.player
             if (attachFirst) {
-                // Before prepare the stream is unknown, so the output offers software frames only.
+                // Before prepare the stream is unknown; the output offers MediaCodec the Surface all the same.
                 playing.show()
-                withTimeout(15.seconds) { player.prepare(source()) }
+                withTimeout(15.seconds) { player.prepare(playing.source()) }
                 assertEquals(FFplayState.READY, player.snapshot.value.state)
                 assertEquals(SIZE, player.snapshot.value.video?.width)
-                // Drawn through the output's canvas.
                 playing.surface.await("the preview") { it.number == 0 }
                 log("$preference preview on ${player.snapshot.value.output?.decoder}, ${playing.surface.frames.value}")
+                assertExpectedDecoder(preference, player.snapshot.value.output?.decoder)
                 val previews = playing.surface.frames.value.count
-                // Now that it is known, MediaCodec may render straight to the Surface.
+                // Now that it is known to need no transform, MediaCodec renders straight to the Surface still.
                 playing.show()
                 player.await("the output after renegotiation") { it.state == FFplayState.READY && it.output != null }
                 playing.surface.await("the preview after renegotiation") { it.count > previews && it.number == 0 }
@@ -251,6 +319,7 @@ class FFplayNativePlayerDeviceTest {
             val decoder = player.snapshot.value.output?.decoder
             log("$preference prepared on $decoder; zero copy ${player.snapshot.value.output?.zeroCopy}")
             assertExpectedDecoder(preference, decoder)
+            playing.assertNoDecoderFallback()
 
             val target = 1.55.seconds
             within("seek while paused") { player.seekTo(target) }
@@ -293,6 +362,8 @@ class FFplayNativePlayerDeviceTest {
             player.await("the seek to the end") { it.state == FFplayState.PAUSED }
             assertEquals(player.snapshot.value.duration, player.snapshot.value.position)
             playing.surface.await("the last frame") { it.number == 5 * FPS - 1 }
+            // Drained from MediaCodec, which may not take the end of the input at once.
+            assertExpectedDecoder(preference, player.snapshot.value.output?.decoder)
 
             within("stop") { player.stop() }
             assertEquals(FFplayState.STOPPED, player.snapshot.value.state)
@@ -300,6 +371,7 @@ class FFplayNativePlayerDeviceTest {
             delay(200)
             assertEquals(stopped, playing.surface.frames.value, "no frame after stop")
             playing.check()
+            playing.assertNoDecoderFallback()
         }
         log("$preference lifecycle took ${(System.nanoTime() - started) / 1_000_000} ms")
     }
@@ -374,10 +446,16 @@ class FFplayNativePlayerDeviceTest {
                 info.getCapabilitiesForType("video/avc").videoCapabilities?.isSizeSupported(SIZE, SIZE) == true
         }
 
-    private fun source() = MediaSource(CLIP, CommandIo { input(CLIP, Buffer().write(clip)) })
+    private fun fixture(name: String): ByteArray =
+        checkNotNull(javaClass.getResourceAsStream("/video-decoder/$name")) { "Missing fixture $name" }.use { it.readBytes() }
+
+    private fun source(name: String = CLIP): MediaSource {
+        val bytes = if (name == CLIP) clip else fixture(name)
+        return MediaSource(name, CommandIo { input(name, Buffer().write(bytes)) })
+    }
 
     /** One player and the Surface it shows on, wired as `PlatformFFplaySurface` wires them. */
-    private inner class Playing(val preference: CodecPreference) : AutoCloseable {
+    private inner class Playing(val preference: CodecPreference, val clipName: String = CLIP) : AutoCloseable {
         val player = FFplayPlayer(FFplayConfiguration(decoderPreference = preference, audio = false))
         val output = AndroidSurfaceOutput(ContentScale.Fit, 0)
         var surface = SurfaceReader()
@@ -387,6 +465,8 @@ class FFplayNativePlayerDeviceTest {
         private val collecting: Job = CoroutineScope(Dispatchers.Default).launch {
             player.events.collect { event -> synchronized(events) { events += event } }
         }
+
+        fun source() = source(clipName)
 
         /** The composable's `onSurface`, and its `LaunchedEffect` once the stream is known. */
         fun show() = within("attach the output") {
@@ -416,6 +496,13 @@ class FFplayNativePlayerDeviceTest {
             surface = SurfaceReader()
             show()
             return surface
+        }
+
+        /** Under AUTO, where the device has a hardware decoder for the clip, it was used throughout. */
+        fun assertNoDecoderFallback() {
+            if (preference != CodecPreference.AUTO || !hardwareAvcDecoder()) return
+            val fallbacks = synchronized(events) { events.filterIsInstance<FFplayEvent.DecoderFallback>() }
+            assertEquals(emptyList(), fallbacks, "decoder fallbacks")
         }
 
         /** Fails on a fatal event or a failure reading the Surfaces. */
