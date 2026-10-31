@@ -20,6 +20,23 @@
 #include <libavutil/pixdesc.h>
 #include <libavutil/time.h>
 
+/*
+ * What decoding the player's input holds. Each run still opens and closes the
+ * input and the codec; the packet and frames are the player's, allocated once
+ * with it. A run holds session_mutex throughout, so one runs at a time.
+ */
+typedef struct ffplaykmp_session {
+    ffplaykmp_input input;
+    int video_stream;
+    const AVStream *stream;
+    int64_t media_start_us;
+    ffplaykmp_video_codec codec;
+    AVPacket *packet;
+    AVFrame *frame;
+    /* The latest frame before the target, as ffplaykmp_present_ready_frames keeps it. */
+    AVFrame *held;
+} ffplaykmp_session;
+
 struct ffplaykmp_player {
     ffplaykmp_configuration configuration;
     ffplaykmp_state_callback callback;
@@ -34,6 +51,8 @@ struct ffplaykmp_player {
     uint32_t source_flags;
     ffplaykmp_snapshot snapshot;
     pthread_mutex_t mutex;
+    pthread_mutex_t session_mutex;
+    ffplaykmp_session session;
     pthread_t worker;
     atomic_bool cancelled;
     atomic_bool worker_abort;
@@ -390,51 +409,40 @@ static int ffplaykmp_present_held_frame(
     return result;
 }
 
-/*
- * Opens `url` and decodes its video: one preview frame at `start_position_us`,
- * or (continuous) every frame on the playback clock. A hardware attempt under
- * AUTO that fails before decoding anything is retried once in software.
- */
-static int ffplaykmp_decode_frames(
-        ffplaykmp_player *player,
-        const char *url,
-        int64_t start_position_us,
-        int continuous,
-        ffplaykmp_decoder_preference preference) {
-    ffplaykmp_input input = { 0 };
-    ffplaykmp_video_codec video_codec = { 0 };
-    AVCodecContext *decoder = NULL;
-    const AVCodec *codec;
-    const AVStream *stream;
-    AVPacket *packet = NULL;
-    AVFrame *frame = NULL;
-    AVFrame *held = NULL;
-    int video_stream;
-    int result;
-    int decoded_frames = 0;
-    int64_t clock_origin_us = AV_NOPTS_VALUE;
-    int64_t media_start_us;
-    int hardware_active = 0;
-    const int require_hardware = preference == FFPLAYKMP_DECODER_REQUIRE_HARDWARE;
-    void *android_surface = NULL;
-    if ((result = ffplaykmp_player_open_input(player, url, &input)) < 0)
-        goto cleanup;
-    video_stream = ffplaykmp_find_video_stream(input.format, &codec);
-    if (video_stream < 0) {
-        result = video_stream;
-        goto cleanup;
-    }
-    stream = input.format->streams[video_stream];
-    media_start_us = ffplaykmp_media_start_us(input.format);
+/* Opens `url` into the session and finds its video stream. */
+static int ffplaykmp_session_open_input(ffplaykmp_player *player, const char *url) {
+    ffplaykmp_session *session = &player->session;
+    int result = ffplaykmp_player_open_input(player, url, &session->input);
+    if (result < 0)
+        return result;
+    session->video_stream = ffplaykmp_find_video_stream(session->input.format, NULL);
+    if (session->video_stream < 0)
+        return session->video_stream;
+    session->stream = session->input.format->streams[session->video_stream];
+    session->media_start_us = ffplaykmp_media_start_us(session->input.format);
+    return 0;
+}
 
+/*
+ * Opens the session's video codec, in hardware when `preference` allows it and
+ * the output takes hardware frames, and publishes what a preview learns from it.
+ */
+static int ffplaykmp_session_open_codec(
+        ffplaykmp_player *player,
+        ffplaykmp_decoder_preference preference,
+        int continuous) {
+    ffplaykmp_session *session = &player->session;
+    int hardware_wanted = 0;
+    void *android_surface = NULL;
+    int result;
     if (preference != FFPLAYKMP_DECODER_SOFTWARE) {
         pthread_mutex_lock(&player->mutex);
 #if defined(__ANDROID__)
         android_surface = player->android_surface;
-        hardware_active = player->has_output && android_surface &&
+        hardware_wanted = player->has_output && android_surface &&
                 (player->snapshot.output_flags & FFPLAYKMP_OUTPUT_HARDWARE_FRAME_IMPORT);
 #else
-        hardware_active = player->has_output &&
+        hardware_wanted = player->has_output &&
                 (player->snapshot.output_flags & (FFPLAYKMP_OUTPUT_SOFTWARE_FRAME_UPLOAD
 #if defined(__APPLE__)
                         | FFPLAYKMP_OUTPUT_HARDWARE_FRAME_IMPORT
@@ -444,48 +452,65 @@ static int ffplaykmp_decode_frames(
         pthread_mutex_unlock(&player->mutex);
     }
     result = ffplaykmp_video_codec_open(
-            &video_codec, input.format, video_stream, hardware_active, require_hardware,
-            player->configuration.decoder_threads, FF_THREAD_FRAME | FF_THREAD_SLICE, android_surface, NULL);
-    hardware_active = video_codec.hardware;
-    decoder = video_codec.decoder;
+            &session->codec, session->input.format, session->video_stream, hardware_wanted,
+            preference == FFPLAYKMP_DECODER_REQUIRE_HARDWARE, player->configuration.decoder_threads,
+            FF_THREAD_FRAME | FF_THREAD_SLICE, android_surface, NULL);
     if (result < 0)
-        goto cleanup;
-
+        return result;
     pthread_mutex_lock(&player->mutex);
     /* A configured device is not proof of hardware decoding: the first frame decides. */
     player->snapshot.active_decoder = FFPLAYKMP_DECODER_UNKNOWN;
     if (!continuous) {
-        player->snapshot.video_width = decoder->width;
-        player->snapshot.video_height = decoder->height;
-        player->snapshot.duration_us = input.format->duration == AV_NOPTS_VALUE
+        player->snapshot.video_width = session->codec.decoder->width;
+        player->snapshot.video_height = session->codec.decoder->height;
+        player->snapshot.duration_us = session->input.format->duration == AV_NOPTS_VALUE
                 ? -1
-                : input.format->duration;
+                : session->input.format->duration;
     }
     pthread_mutex_unlock(&player->mutex);
-    packet = av_packet_alloc();
-    frame = av_frame_alloc();
-    held = av_frame_alloc();
-    if (!packet || !frame || !held) {
-        result = AVERROR(ENOMEM);
-        goto cleanup;
-    }
-    if (start_position_us > 0) {
-        int64_t target = av_rescale_q(
-                media_start_us + start_position_us, AV_TIME_BASE_Q, stream->time_base);
-        result = avformat_seek_file(
-                input.format, video_stream, INT64_MIN, target, INT64_MAX, AVSEEK_FLAG_BACKWARD);
-        if (result < 0)
-            goto cleanup;
-        avcodec_flush_buffers(decoder);
-    }
-    while (!ffplaykmp_is_aborted(player) && (result = av_read_frame(input.format, packet)) >= 0) {
-        if (packet->stream_index == video_stream) {
+    return 0;
+}
+
+/* Seeks to the keyframe at or before `start_position_us`; an input just opened is already at the start. */
+static int ffplaykmp_session_seek(ffplaykmp_session *session, int64_t start_position_us) {
+    int64_t target;
+    int result;
+    if (start_position_us <= 0)
+        return 0;
+    target = av_rescale_q(session->media_start_us + start_position_us, AV_TIME_BASE_Q, session->stream->time_base);
+    result = avformat_seek_file(
+            session->input.format, session->video_stream, INT64_MIN, target, INT64_MAX, AVSEEK_FLAG_BACKWARD);
+    if (result < 0)
+        return result;
+    avcodec_flush_buffers(session->codec.decoder);
+    return 0;
+}
+
+/*
+ * Decodes from where the session's input is: one preview frame at
+ * `start_position_us`, or (continuous) every frame on the playback clock,
+ * counting them in `decoded_frames`. Returns 0 once done, AVERROR_INVALIDDATA
+ * when nothing decoded, or another negative error.
+ */
+static int ffplaykmp_session_decode(
+        ffplaykmp_player *player,
+        int64_t start_position_us,
+        int continuous,
+        int require_hardware,
+        int *decoded_frames) {
+    ffplaykmp_session *session = &player->session;
+    AVCodecContext *decoder = session->codec.decoder;
+    AVPacket *packet = session->packet;
+    int64_t clock_origin_us = AV_NOPTS_VALUE;
+    int result = 0;
+    while (!ffplaykmp_is_aborted(player) && (result = av_read_frame(session->input.format, packet)) >= 0) {
+        if (packet->stream_index == session->video_stream) {
             int sent = avcodec_send_packet(decoder, packet);
             if (sent == AVERROR(EAGAIN)) {
                 /* The decoder wants its ready frames taken first; then it accepts the packet. */
                 result = ffplaykmp_present_ready_frames(
-                        player, decoder, frame, held, stream, media_start_us, start_position_us,
-                        continuous, require_hardware, &decoded_frames, &clock_origin_us);
+                        player, decoder, session->frame, session->held, session->stream, session->media_start_us,
+                        start_position_us, continuous, require_hardware, decoded_frames, &clock_origin_us);
                 if (result != 0) {
                     av_packet_unref(packet);
                     goto finish;
@@ -495,8 +520,8 @@ static int ffplaykmp_decode_frames(
             /* Like ffplay, a damaged packet is dropped; later packets may recover. */
             if (sent >= 0) {
                 result = ffplaykmp_present_ready_frames(
-                        player, decoder, frame, held, stream, media_start_us, start_position_us,
-                        continuous, require_hardware, &decoded_frames, &clock_origin_us);
+                        player, decoder, session->frame, session->held, session->stream, session->media_start_us,
+                        start_position_us, continuous, require_hardware, decoded_frames, &clock_origin_us);
                 if (result != 0) {
                     av_packet_unref(packet);
                     goto finish;
@@ -505,34 +530,76 @@ static int ffplaykmp_decode_frames(
         }
         av_packet_unref(packet);
     }
-    if (ffplaykmp_is_aborted(player)) {
-        result = AVERROR_EXIT;
-        goto cleanup;
-    }
+    if (ffplaykmp_is_aborted(player))
+        return AVERROR_EXIT;
     if (result == AVERROR_EOF) {
         avcodec_send_packet(decoder, NULL);
         result = ffplaykmp_present_ready_frames(
-                player, decoder, frame, held, stream, media_start_us, start_position_us,
-                continuous, require_hardware, &decoded_frames, &clock_origin_us);
+                player, decoder, session->frame, session->held, session->stream, session->media_start_us,
+                start_position_us, continuous, require_hardware, decoded_frames, &clock_origin_us);
         if (result == 0)
             result = ffplaykmp_present_held_frame(
-                    player, held, stream, start_position_us, continuous, &clock_origin_us);
+                    player, session->held, session->stream, start_position_us, continuous, &clock_origin_us);
     }
 finish:
     if (result > 0)
-        result = 0;  /* The preview frame was presented. */
-    else if (result >= 0 && decoded_frames == 0)
-        result = AVERROR_INVALIDDATA;
-cleanup:
-    av_packet_free(&packet);
-    av_frame_free(&frame);
-    av_frame_free(&held);
-    ffplaykmp_video_codec_close(&video_codec);
-    ffplaykmp_close_input(&input);
-    if (result < 0 && hardware_active && decoded_frames == 0 &&
-            preference == FFPLAYKMP_DECODER_AUTO && !ffplaykmp_is_aborted(player))
-        return ffplaykmp_decode_frames(player, url, start_position_us, continuous,
-                FFPLAYKMP_DECODER_SOFTWARE);
+        return 0;  /* The preview frame was presented. */
+    if (result >= 0 && *decoded_frames == 0)
+        return AVERROR_INVALIDDATA;
+    return result;
+}
+
+/*
+ * Closes what a run opened, frames first, since a MediaCodec frame holds one of
+ * the codec's buffers, and keeps the packet and frames for the next run.
+ */
+static void ffplaykmp_session_close(ffplaykmp_session *session) {
+    av_packet_unref(session->packet);
+    av_frame_unref(session->frame);
+    av_frame_unref(session->held);
+    ffplaykmp_video_codec_close(&session->codec);
+    ffplaykmp_close_input(&session->input);
+    memset(&session->codec, 0, sizeof(session->codec));
+    memset(&session->input, 0, sizeof(session->input));
+    session->video_stream = -1;
+    session->stream = NULL;
+    session->media_start_us = 0;
+}
+
+/*
+ * Opens `url` and decodes its video: one preview frame at `start_position_us`,
+ * or (continuous) every frame on the playback clock. A hardware attempt under
+ * AUTO that fails before decoding anything is retried once in software. Runs
+ * one at a time, holding session_mutex.
+ */
+static int ffplaykmp_decode_frames(
+        ffplaykmp_player *player,
+        const char *url,
+        int64_t start_position_us,
+        int continuous,
+        ffplaykmp_decoder_preference preference) {
+    ffplaykmp_session *session = &player->session;
+    int result;
+    int retry;
+    pthread_mutex_lock(&player->session_mutex);
+    do {
+        int decoded_frames = 0;
+        int hardware;
+        result = ffplaykmp_session_open_input(player, url);
+        if (result >= 0)
+            result = ffplaykmp_session_open_codec(player, preference, continuous);
+        hardware = session->codec.hardware;
+        if (result >= 0)
+            result = ffplaykmp_session_seek(session, start_position_us);
+        if (result >= 0)
+            result = ffplaykmp_session_decode(player, start_position_us, continuous,
+                    preference == FFPLAYKMP_DECODER_REQUIRE_HARDWARE, &decoded_frames);
+        ffplaykmp_session_close(session);
+        retry = result < 0 && hardware && decoded_frames == 0 &&
+                preference == FFPLAYKMP_DECODER_AUTO && !ffplaykmp_is_aborted(player);
+        preference = FFPLAYKMP_DECODER_SOFTWARE;
+    } while (retry);
+    pthread_mutex_unlock(&player->session_mutex);
     return result;
 }
 
@@ -738,19 +805,30 @@ ffplaykmp_player *ffplaykmp_player_create(
     ffplaykmp_player *player = calloc(1, sizeof(*player));
     if (!player)
         return NULL;
+    if (configuration && (configuration->size < sizeof(*configuration) || configuration->decoder_threads < 0)) {
+        free(player);
+        return NULL;
+    }
     if (pthread_mutex_init(&player->mutex, NULL) != 0) {
         free(player);
         return NULL;
     }
-    ffplaykmp_configuration_default(&player->configuration);
-    if (configuration) {
-        if (configuration->size < sizeof(*configuration) || configuration->decoder_threads < 0) {
-            pthread_mutex_destroy(&player->mutex);
-            free(player);
-            return NULL;
-        }
-        player->configuration = *configuration;
+    if (pthread_mutex_init(&player->session_mutex, NULL) != 0) {
+        pthread_mutex_destroy(&player->mutex);
+        free(player);
+        return NULL;
     }
+    player->session.video_stream = -1;
+    player->session.packet = av_packet_alloc();
+    player->session.frame = av_frame_alloc();
+    player->session.held = av_frame_alloc();
+    if (!player->session.packet || !player->session.frame || !player->session.held) {
+        ffplaykmp_player_destroy(player);
+        return NULL;
+    }
+    ffplaykmp_configuration_default(&player->configuration);
+    if (configuration)
+        player->configuration = *configuration;
     player->callback = callback;
     player->opaque = opaque;
     ffplaykmp_snapshot_init(&player->snapshot);
@@ -840,6 +918,13 @@ void ffplaykmp_player_destroy(ffplaykmp_player *player) {
     ffplaykmp_release_android_surface(player);
 #endif
     free(player->input);
+    /* Waits for a run on another thread, which the cancel ends, before freeing what it uses. */
+    pthread_mutex_lock(&player->session_mutex);
+    av_packet_free(&player->session.packet);
+    av_frame_free(&player->session.frame);
+    av_frame_free(&player->session.held);
+    pthread_mutex_unlock(&player->session_mutex);
+    pthread_mutex_destroy(&player->session_mutex);
     pthread_mutex_destroy(&player->mutex);
     free(player);
 }
