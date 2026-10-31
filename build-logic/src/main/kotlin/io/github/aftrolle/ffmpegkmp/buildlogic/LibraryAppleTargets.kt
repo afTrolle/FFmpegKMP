@@ -69,6 +69,9 @@ fun Project.configureLibraryAppleTargets(includeTvosAndWatchos: Boolean) {
                         ":native-build:apple:buildFfmpeg${nativeProfileTaskSuffix}" +
                             appleTarget.name.replaceFirstChar(Char::titlecase),
                     )
+                    // The linker options name the libraries but are not file inputs: without these, a
+                    // change to the bridge alone rebuilds them and leaves the test binary linked to the old.
+                    inputs.files(appleRuntimeLibraries.map { library -> install.file("lib/lib$library.a") })
                 }
             }
         }
