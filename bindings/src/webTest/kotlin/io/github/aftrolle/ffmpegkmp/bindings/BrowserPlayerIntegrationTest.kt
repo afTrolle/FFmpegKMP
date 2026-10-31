@@ -97,6 +97,58 @@ class BrowserPlayerIntegrationTest {
     }
 
     @Test
+    fun aPausedSeekShowsTheFrameOnScreenAtTheTarget() = runTest {
+        configureBrowserPlayerTestRuntime()
+        val bytes = loadBrowserPlayerTestResource("/base/kotlin/hardware-h264.mp4")
+        var shown = CompletableDeferred<Long>()
+        val bridge = createPlatformPlayerBridge(
+            configuration = NativePlayerConfiguration(NativePlayerDecoderPreference.AUTO),
+            update = {},
+            frame = { frame ->
+                shown.complete(frame.presentationTimeUs)
+                frame.frame.close()
+            },
+            platformFrame = { frame ->
+                shown.complete(frame.presentationTimeUs)
+                false
+            },
+        )
+        try {
+            assertEquals(
+                0,
+                bridge.setOutput(NativePlayerOutputCapabilities(hardwareFrameImport = true, softwareFrameUpload = true)),
+            )
+            assertEquals(
+                0,
+                bridge.prepare(
+                    NativePlayerSource(
+                        input = "hardware-h264.mp4",
+                        mounts = listOf(
+                            NativeMountedIo(
+                                path = "hardware-h264.mp4",
+                                resource = NativeSourceResource(Buffer().write(bytes)),
+                            ),
+                        ),
+                    ),
+                ),
+            )
+            assertEquals(0, bridge.awaitPreparation())
+            assertEquals(0, bridge.play())
+            shown.await()
+            assertEquals(0, bridge.pause())
+            // 25 fps with keyframes at 0, 0.48 and 0.96 s: inside the 0.28 s frame, and inside the
+            // last frame, which only the end of the input shows to be the one there.
+            for (target in listOf(300_000L, 990_000L)) {
+                shown = CompletableDeferred()
+                assertEquals(0, bridge.seek(target))
+                assertEquals(target, shown.await(), "the frame shown after seeking to ${target}us")
+            }
+        } finally {
+            bridge.close()
+        }
+    }
+
+    @Test
     fun theWasmSoftwareDecoderDecodesWithTheConfiguredThreads() = runTest {
         configureBrowserPlayerTestRuntime()
         val bytes = loadBrowserPlayerTestResource("/base/kotlin/hardware-h264.mp4")

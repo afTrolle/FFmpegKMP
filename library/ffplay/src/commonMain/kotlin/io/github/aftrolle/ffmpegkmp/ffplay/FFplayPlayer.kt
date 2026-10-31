@@ -140,6 +140,10 @@ public class FFplayPlayer internal constructor(
 
     public fun pause(): Unit = command(needsSource = true) { engine.pause() }
 
+    /**
+     * Seeks to [position]. The frame shown is the one on screen there, as `VideoDecoder.frameAt`
+     * picks it, also while paused, and the audio resumes at the same sample.
+     */
     public fun seekTo(position: Duration) {
         require(!position.isNegative()) { "Seek position must not be negative" }
         command(needsSource = true) { engine.seekTo(position) }
