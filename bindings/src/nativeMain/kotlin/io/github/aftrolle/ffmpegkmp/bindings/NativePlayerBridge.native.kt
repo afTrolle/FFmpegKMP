@@ -11,6 +11,9 @@ import io.github.aftrolle.ffmpegkmp.bindings.cinterop.ffmpegkmp_frame_ref
 import io.github.aftrolle.ffmpegkmp.bindings.cinterop.FFPLAYKMP_SOURCE_REQUIRE_SECURE_PATH
 import io.github.aftrolle.ffmpegkmp.bindings.cinterop.ffplaykmp_configuration
 import io.github.aftrolle.ffmpegkmp.bindings.cinterop.ffplaykmp_configuration_default
+import io.github.aftrolle.ffmpegkmp.bindings.cinterop.ffplaykmp_input_hint
+import io.github.aftrolle.ffmpegkmp.bindings.cinterop.ffplaykmp_input_hint_init
+import io.github.aftrolle.ffmpegkmp.bindings.cinterop.ffplaykmp_player_get_input_hint
 import io.github.aftrolle.ffmpegkmp.bindings.cinterop.ffplaykmp_pixel_format_name
 import io.github.aftrolle.ffmpegkmp.bindings.cinterop.ffplaykmp_output_capabilities
 import io.github.aftrolle.ffmpegkmp.bindings.cinterop.ffplaykmp_output_capabilities_init
@@ -139,6 +142,18 @@ private class NativeCInteropPlayerEngine(
         val result = ffplaykmp_player_get_snapshot(player, nativeSnapshot.ptr)
         check(result == 0) { "Native player snapshot failed with error $result" }
         nativeSnapshot.toNativeSnapshot()
+    }
+
+    override fun inputHint(): NativeInputHint? = memScoped {
+        val hint = alloc<ffplaykmp_input_hint>()
+        ffplaykmp_input_hint_init(hint.ptr)
+        if (ffplaykmp_player_get_input_hint(player, hint.ptr) != 0) return@memScoped null
+        NativeInputHint(
+            formatName = hint.format_name.toKString(),
+            startUs = hint.start_us,
+            durationUs = hint.duration_us,
+            audioStreams = hint.audio_streams,
+        )
     }
 
     override fun release() {
@@ -284,6 +299,8 @@ public actual fun nativePlayerStatistics(): NativePlayerStatistics = memScoped {
         videoPackets = statistics.video_packets.toLong(),
         downloads = statistics.downloads.toLong(),
         codecCloses = statistics.codec_closes.toLong(),
+        inputOpens = statistics.input_opens.toLong(),
+        inputProbes = statistics.input_probes.toLong(),
     )
 }
 

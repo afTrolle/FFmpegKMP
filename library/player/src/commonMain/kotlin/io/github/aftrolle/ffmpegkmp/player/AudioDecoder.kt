@@ -11,6 +11,7 @@ import io.github.aftrolle.ffmpegkmp.bindings.DecoderThread
 import io.github.aftrolle.ffmpegkmp.bindings.NativeAudioDecoder
 import io.github.aftrolle.ffmpegkmp.bindings.NativeAudioDecoderException
 import io.github.aftrolle.ffmpegkmp.bindings.NativeBridgeUnavailableException
+import io.github.aftrolle.ffmpegkmp.bindings.NativeInputHint
 import io.github.aftrolle.ffmpegkmp.bindings.NativePlayerSource
 import io.github.aftrolle.ffmpegkmp.bindings.openPlatformAudioDecoder
 import io.github.aftrolle.ffmpegkmp.core.AudioLevel
@@ -158,9 +159,16 @@ public class AudioDecoder internal constructor(
          * Probing cannot be interrupted, so it runs to completion; if the caller was cancelled
          * meanwhile, the decoder it opened is closed instead of leaked.
          */
-        public suspend fun open(source: MediaSource, format: PcmFormat = PcmFormat.Default): AudioDecoder {
+        public suspend fun open(source: MediaSource, format: PcmFormat = PcmFormat.Default): AudioDecoder =
+            open(source, format, hint = null)
+
+        /**
+         * Opens [source] as [open] does; with [hint], what a player's prepare of the same input
+         * found, the input is not probed again when its header declares its audio.
+         */
+        internal suspend fun open(source: MediaSource, format: PcmFormat, hint: NativeInputHint?): AudioDecoder {
             val native = NativePlayerSource(source.input, source.io.toNativeMounts())
-            return open("open '${source.input}'") { openPlatformAudioDecoder(native, format.sampleRate, format.channels) }
+            return open("open '${source.input}'") { openPlatformAudioDecoder(native, format.sampleRate, format.channels, hint) }
         }
 
         private suspend fun open(action: String, create: () -> NativeAudioDecoder): AudioDecoder {

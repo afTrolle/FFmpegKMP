@@ -10,11 +10,15 @@
  * reused RGBA8 bitmap at their own size, as a Canvas output's FrameImage does.
  * The hardware decoder budget is the platform's default, or
  * FFMPEGKMP_BENCH_HARDWARE_DECODERS (0 for no limit).
- * scripts/bench-player.sh builds and runs it.
+ * scripts/bench-player.sh builds and runs it. The audio mode prepares a
+ * player and then opens the audio engine (ffmpegkmp_player.c) on the same
+ * input, as FFplayPlayer does, with and without the player's input hint.
  *
  *   player_bench <clips> transitions <clip> <AUTO|SOFTWARE>
  *   player_bench <clips> parallel <clip> <AUTO|SOFTWARE> <players>
+ *   player_bench <clips> audio <clip> <AUTO|SOFTWARE>
  */
+#include "ffmpegkmp_bridge.h"
 #include "ffplaykmp_player.h"
 #include "ffplaykmp_core.h"
 #include "ffmpegkmp_frame.h"
@@ -148,6 +152,8 @@ static ffplaykmp_statistics statistics_since(ffplaykmp_statistics before) {
     now.codec_closes -= before.codec_closes;
     now.video_packets -= before.video_packets;
     now.downloads -= before.downloads;
+    now.input_opens -= before.input_opens;
+    now.input_probes -= before.input_probes;
     return now;
 }
 
@@ -411,11 +417,92 @@ static void bench_parallel(const char *path, int preference, int count) {
         bench_player_close(&jobs[index].bench);
 }
 
+/*
+ * Opens the audio engine on the player's input, hinted or not, counting what
+ * the open alone read into `opened`, and decodes its first half second.
+ */
+static double bench_audio_open(bench_player *bench, int hinted, int *frames, bench_io_counts *opened) {
+    float pcm[4800 * 2];
+    bench_io_counts before = bench_io_now(&bench->io);
+    double start = now_ms();
+    int error = 0;
+    ffmpegkmp_player *audio = hinted
+            ? ffmpegkmp_player_open_prepared(bench->player, BENCH_IO_URL, bench_io_callback, &bench->io, 48000, 2, &error)
+            : ffmpegkmp_player_open(BENCH_IO_URL, bench_io_callback, &bench->io, 48000, 2, &error);
+    double took = now_ms() - start;
+    int read = 0;
+    int result;
+    *opened = bench_io_since(&bench->io, before);
+    *frames = 0;
+    if (!audio) {
+        fprintf(stderr, "audio open failed: %d\n", error);
+        return -1;
+    }
+    while (read < 24000 && (result = ffmpegkmp_player_read(audio, pcm, 4800)) > 0)
+        read += result;
+    ffmpegkmp_player_close(audio);
+    *frames = read;
+    return took;
+}
+
+/*
+ * What a prepare with audio costs: the player's prepare, which probes the
+ * input, then the audio engine's open of the same input with a probe of its
+ * own (before phase 8) and with the player's hint (FFplayPlayer since).
+ */
+static void bench_audio(const char *path, int preference) {
+    enum { RUNS = 5 };
+    const char *rows[] = { "prepare (video probe)", "audio open, own probe", "audio open, hinted" };
+    double took[3] = { 0 };
+    bench_io_counts io[3] = { { 0 } };
+    long long probes[3] = { 0 };
+    int frames[3] = { 0 };
+    for (int run = 0; run < RUNS; run++) {
+        bench_player bench;
+        if (bench_player_open(&bench, path, preference) < 0) {
+            fprintf(stderr, "cannot open %s\n", path);
+            return;
+        }
+        for (int row = 0; row < 3; row++) {
+            bench_io_counts before = bench_io_now(&bench.io);
+            ffplaykmp_statistics counted = statistics_now();
+            bench_io_counts delta;
+            double start = now_ms();
+            int decoded = 0;
+            if (row == 0) {
+                if (ffplaykmp_player_prepare(bench.player, BENCH_IO_URL, 0) < 0) {
+                    fprintf(stderr, "prepare failed\n");
+                    bench_player_close(&bench);
+                    return;
+                }
+                took[row] += now_ms() - start;
+                delta = bench_io_since(&bench.io, before);
+            } else {
+                took[row] += bench_audio_open(&bench, row == 2, &decoded, &delta);
+            }
+            io[row].opens += delta.opens;
+            io[row].reads += delta.reads;
+            io[row].bytes += delta.bytes;
+            probes[row] += (long long)statistics_since(counted).input_probes;
+            frames[row] += decoded;
+        }
+        bench_player_close(&bench);
+    }
+    printf("%s %s\n", file_name(path), preference == FFPLAYKMP_DECODER_AUTO ? "AUTO" : "SOFTWARE");
+    for (int row = 0; row < 3; row++) {
+        /* The audio rows count the open alone; each then decodes its first 0.5 s, to show it plays. */
+        printf("  %-24s %8.1f ms | %4.1f opens %4.1f probes %6.1f reads %7.2f MB%s\n",
+                rows[row], took[row] / RUNS, (double)io[row].opens / RUNS, (double)probes[row] / RUNS,
+                (double)io[row].reads / RUNS, io[row].bytes / 1048576.0 / RUNS,
+                row > 0 && frames[row] < 24000 * RUNS ? " (short read)" : "");
+    }
+}
+
 int main(int argc, char **argv) {
     char path[1024];
     int preference;
     if (argc < 5) {
-        fprintf(stderr, "usage: %s <clips> transitions|parallel <clip> AUTO|SOFTWARE [players]\n", argv[0]);
+        fprintf(stderr, "usage: %s <clips> transitions|parallel|audio <clip> AUTO|SOFTWARE [players]\n", argv[0]);
         return 2;
     }
     if (getenv("FFMPEGKMP_BENCH_HARDWARE_DECODERS"))
@@ -424,6 +511,8 @@ int main(int argc, char **argv) {
     preference = !strcmp(argv[4], "AUTO") ? FFPLAYKMP_DECODER_AUTO : FFPLAYKMP_DECODER_SOFTWARE;
     if (!strcmp(argv[2], "transitions"))
         bench_transitions(path, preference);
+    else if (!strcmp(argv[2], "audio"))
+        bench_audio(path, preference);
     else if (!strcmp(argv[2], "parallel") && argc > 5 && atoi(argv[5]) >= 1 && atoi(argv[5]) <= 32)
         bench_parallel(path, preference, atoi(argv[5]));
     return 0;

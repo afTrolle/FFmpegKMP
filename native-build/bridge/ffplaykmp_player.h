@@ -309,6 +309,34 @@ FFPLAYKMP_EXPORT int ffplaykmp_player_get_snapshot(
         const ffplaykmp_player *player,
         ffplaykmp_snapshot *snapshot);
 
+/*
+ * What prepare's probe of the player's input found, for the audio engine to
+ * open the same input without probing it again
+ * (ffmpegkmp_player_open_hinted): its demuxer, where its media time starts
+ * and how long it is, as the player measures them, and how many audio
+ * streams it has.
+ */
+typedef struct ffplaykmp_input_hint {
+    uint32_t size;
+    /* AVInputFormat.name, such as "mov,mp4,m4a,3gp,3g2,mj2". */
+    char format_name[64];
+    /* The container's start, from which both engines measure media time. */
+    int64_t start_us;
+    /* Negative when the container does not say. */
+    int64_t duration_us;
+    int32_t audio_streams;
+} ffplaykmp_input_hint;
+
+FFPLAYKMP_EXPORT void ffplaykmp_input_hint_init(ffplaykmp_input_hint *hint);
+/*
+ * Fills `hint` from the source the last prepare probed, or returns
+ * FFPLAYKMP_ERROR_INVALID_STATE when none is prepared (before prepare, after
+ * stop, or after a failed prepare).
+ */
+FFPLAYKMP_EXPORT int ffplaykmp_player_get_input_hint(
+        const ffplaykmp_player *player,
+        ffplaykmp_input_hint *hint);
+
 /* What the players and decoders of the process have done since it started, for tests and benchmarks. */
 typedef struct ffplaykmp_statistics {
     uint32_t size;
@@ -320,6 +348,10 @@ typedef struct ffplaykmp_statistics {
     uint64_t video_packets;
     /* Hardware frames downloaded into memory. */
     uint64_t downloads;
+    /* Demuxers opened, by players, decoders and the audio engine alike. */
+    uint64_t input_opens;
+    /* Of those, the ones probed (avformat_find_stream_info): all but an audio open a player's probe let skip its own. */
+    uint64_t input_probes;
 } ffplaykmp_statistics;
 
 FFPLAYKMP_EXPORT void ffplaykmp_statistics_init(ffplaykmp_statistics *statistics);
@@ -427,6 +459,8 @@ FFPLAYKMP_EXPORT void ffplaykmp_web_player_poll(ffplaykmp_player *player);
 FFPLAYKMP_EXPORT void ffplaykmp_web_player_set_frame_size(ffplaykmp_player *player, int32_t width, int32_t height);
 /* How often the player opened its input: once a prepare, the packet reader's included. */
 FFPLAYKMP_EXPORT uint32_t ffplaykmp_web_player_input_opens(ffplaykmp_player *player);
+/* ffplaykmp_statistics.input_probes, for the worker: the inputs its players, decoders and audio probed. */
+FFPLAYKMP_EXPORT uint32_t ffplaykmp_web_input_probes(void);
 /**
  * Reads the prepared input as a packet stream for WebCodecs: the input
  * prepare opened, from the start of its video stream, with no second open

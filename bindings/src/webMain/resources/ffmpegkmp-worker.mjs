@@ -166,7 +166,9 @@ function openAudio(module, data) {
   let handle;
   let error;
   try {
-    handle = module._ffmpegkmp_player_open(
+    // With what the player's prepare found, so the audio does not probe the input again.
+    handle = module._ffmpegkmp_player_open_prepared(
+      playerHandle,
       inputPointer,
       audio.ioCallback,
       0,
@@ -1687,7 +1689,7 @@ function serveResource(module, resources, resourceId, operation, offset, bytes, 
 }
 
 self.onmessage = async ({ data }) => {
-  // Instrumentation for the page's tests: the heap's size, the copies out of it, and the inputs opened.
+  // Instrumentation for the page's tests: the heap's size, the copies out of it, the inputs opened and the inputs probed.
   if (data.type === 'statistics') {
     // After the commands that came before it.
     await Promise.all([playerMessageTail, videoMessageTail]);
@@ -1703,6 +1705,7 @@ self.onmessage = async ({ data }) => {
       chunksFromHeap,
       webCodecsDecoders: webCodecsDecodersOpen,
       inputOpens: module && handle ? module._ffplaykmp_web_player_input_opens(handle) : 0,
+      inputProbes: module ? module._ffplaykmp_web_input_probes() : 0,
     });
     return;
   }

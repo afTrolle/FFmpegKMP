@@ -33,7 +33,7 @@ import kotlinx.coroutines.withContext
  * Controls never wait for a [prepare] that is opening its input: calls made meanwhile are applied
  * in order once it returns, and playback calls are dropped if it fails.
  */
-@OptIn(ExperimentalAtomicApi::class)
+@OptIn(ExperimentalAtomicApi::class, io.github.aftrolle.ffmpegkmp.bindings.InternalFFmpegKmpApi::class)
 public class FFplayPlayer internal constructor(
     public val configuration: FFplayConfiguration = FFplayConfiguration(),
     engineFactory: FFplayEngineFactory,
@@ -67,7 +67,7 @@ public class FFplayPlayer internal constructor(
     private val audioPlayback = FFplayAudio(
         audioScope,
         ::warnAudio,
-        audioOpener ?: { source -> engine.openAudio(::warnAudio) ?: openAudioPlayer(source) },
+        audioOpener ?: { source -> engine.openAudio(::warnAudio) ?: openAudioPlayer(source, engine.inputHint()) },
     )
 
     /** Bumped by every prepare, stop and close; audio that finishes opening afterwards is stale. */

@@ -171,7 +171,9 @@ public class NativePlayerException(message: String, errorCode: Int) : NativeCall
 /**
  * What the native players and decoders of the process have done since it started, mirroring
  * `ffplaykmp_statistics`, for tests and benchmarks: the video decoders opened and closed, the video
- * packets the players read, and the hardware frames downloaded into memory. Always zero in the browser.
+ * packets the players read, the hardware frames downloaded into memory, and the inputs the players,
+ * decoders and audio engines opened and, of those, probed. Always zero in the browser, whose worker
+ * reports its own.
  */
 @InternalFFmpegKmpApi
 public data class NativePlayerStatistics(
@@ -179,6 +181,22 @@ public data class NativePlayerStatistics(
     val videoPackets: Long,
     val downloads: Long,
     val codecCloses: Long,
+    val inputOpens: Long = 0,
+    val inputProbes: Long = 0,
+)
+
+/**
+ * What a player's prepare found when it probed its input, mirroring `ffplaykmp_input_hint`, for the
+ * audio engine to open the same input without probing it again ([openPlatformAudioDecoder]): its
+ * demuxer ([formatName], FFmpeg's), where its media time starts, its duration (negative when the
+ * container does not say), and how many audio streams it has.
+ */
+@InternalFFmpegKmpApi
+public data class NativeInputHint(
+    val formatName: String,
+    val startUs: Long,
+    val durationUs: Long,
+    val audioStreams: Int,
 )
 
 @InternalFFmpegKmpApi
@@ -239,6 +257,13 @@ public interface NativePlayerBridge : AutoCloseable {
      * audio engine plays it instead. Close it before the next [prepare] or [stop].
      */
     public suspend fun openAudio(): NativePlayerAudio? = null
+
+    /**
+     * What the last prepare found when it probed the source, for the platform audio engine to open
+     * it without a probe of its own; null while nothing is prepared, after [close], and for bridges
+     * whose audio, if any, opens itself.
+     */
+    public fun inputHint(): NativeInputHint? = null
     public fun stop(): Int
     public fun cancel()
     public fun snapshot(): NativePlayerSnapshot
@@ -477,6 +502,9 @@ internal interface PlayerEngineCalls {
     fun setMasterClock(mediaTimeUs: Long)
     fun snapshot(): NativePlayerSnapshot
 
+    /** `ffplaykmp_player_get_input_hint`: null while nothing is prepared. */
+    fun inputHint(): NativeInputHint?
+
     /** Frees the player and anything the binding keeps alive for it. */
     fun release()
 }
@@ -514,6 +542,7 @@ internal class GuardedPlayerBridge(
     /** Cross-thread calls: after [close] they do nothing. */
     override fun setMasterClock(mediaTimeUs: Long) = guard.use({}) { engine.setMasterClock(mediaTimeUs) }
     override fun cancel() = guard.use({}) { engine.cancel() }
+    override fun inputHint(): NativeInputHint? = guard.use({ null }) { engine.inputHint() }
 
     // The player keeps its input open until it is released, so its IO_CLOSE must still find the mounts.
     override fun close() = guard.close {

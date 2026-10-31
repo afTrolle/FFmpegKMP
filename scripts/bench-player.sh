@@ -9,7 +9,10 @@
 # with scripts/bench-video-decoder.sh. FFMPEGKMP_BENCH_IO_LATENCY_US adds that many microseconds to every read, and
 # FFMPEGKMP_BENCH_HARDWARE_DECODERS sets the hardware decoder budget (0 for no limit; the platform's default otherwise).
 #
-#   scripts/bench-player.sh [transitions|parallel|all]
+# The audio mode adds an AAC track to the clips and opens the audio engine (native-build/bridge/ffmpegkmp_player.c) after
+# each prepare, with and without the player's input hint.
+#
+#   scripts/bench-player.sh [transitions|parallel|audio|all]
 set -euo pipefail
 
 root="$(cd "$(dirname "$0")/.." && pwd)"
@@ -35,10 +38,18 @@ clip hevc-2160p-pq-10s.mp4 -f lavfi -i "testsrc2=s=3840x2160:r=24,noise=alls=8:a
   -x265-params "log-level=error:colorprim=bt2020:transfer=smpte2084:colormatrix=bt2020nc" \
   -pix_fmt yuv420p10le -color_primaries bt2020 -color_trc smpte2084 -colorspace bt2020nc -tag:v hvc1
 
+# The same pictures with an AAC track, in MP4 and in MPEG-TS (a container that declares no stream parameters up front).
+for base in h264-1080p h264-2160p-10s hevc-2160p-pq-10s; do
+  for container in mp4 ts; do
+    clip "$base-aac.$container" -i "$clips/$base.mp4" -f lavfi -i "sine=frequency=440:sample_rate=48000" \
+      -map 0:v -map 1:a -c:v copy -c:a aac -shortest
+  done
+done
+
 clang -O2 -std=c11 -w \
   -I"$bridge" -I"$ffmpeg_out/include" \
   "$root/native-build/bench/player_bench.c" "$bridge/ffplaykmp_player.c" "$bridge/ffplaykmp_core.c" \
-  "$bridge/ffmpegkmp_frame.c" "${ffmpeg_link[@]}" -o "$work/player_bench"
+  "$bridge/ffmpegkmp_frame.c" "$bridge/ffmpegkmp_player.c" "${ffmpeg_link[@]}" -o "$work/player_bench"
 
 echo "$(sysctl -n machdep.cpu.brand_string), $(sysctl -n hw.ncpu) cores, FFmpeg from ${ffmpeg_out#"$root"/}"
 run() { "$work/player_bench" "$clips" "$@"; }
@@ -47,6 +58,11 @@ if [[ "$mode" == transitions || "$mode" == all ]]; then
     for preference in SOFTWARE AUTO; do
       run transitions "$clip" "$preference"
     done
+  done
+fi
+if [[ "$mode" == audio || "$mode" == all ]]; then
+  for clip in h264-1080p-aac.mp4 h264-2160p-10s-aac.mp4 hevc-2160p-pq-10s-aac.mp4 h264-2160p-10s-aac.ts; do
+    run audio "$clip" SOFTWARE
   done
 fi
 if [[ "$mode" == parallel || "$mode" == all ]]; then

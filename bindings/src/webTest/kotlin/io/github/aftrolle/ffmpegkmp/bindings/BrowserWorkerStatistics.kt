@@ -12,7 +12,8 @@ import kotlinx.coroutines.await
  * What a worker reports to a `statistics` message: the size of its Wasm heap
  * (`WebAssembly.Memory.buffer.byteLength`), its copies out of the heap (`HEAPU8.slice`), the software frames it
  * posted and the packets it gave WebCodecs, whether it gives them straight from the heap, the player's WebCodecs
- * decoders not yet closed, and how often its player opened its input.
+ * decoders not yet closed, how often its player opened its input, and how many inputs the worker probed (its
+ * player's, decoder's and audio's alike).
  */
 internal data class BrowserWorkerStatistics(
     val heapBytes: Double,
@@ -22,6 +23,7 @@ internal data class BrowserWorkerStatistics(
     val chunksFromHeap: Boolean,
     val webCodecsDecoders: Int,
     val inputOpens: Int,
+    val inputProbes: Int,
 )
 
 /** Records each Worker the page starts from now on, so that a test can ask it for its statistics. */
@@ -56,6 +58,7 @@ internal suspend fun browserWorkerStatistics(index: Int): BrowserWorkerStatistic
         chunksFromHeap = statisticBoolean(reply, "chunksFromHeap"),
         webCodecsDecoders = statisticDouble(reply, "webCodecsDecoders").toInt(),
         inputOpens = statisticDouble(reply, "inputOpens").toInt(),
+        inputProbes = statisticDouble(reply, "inputProbes").toInt(),
     )
 }
 

@@ -65,10 +65,17 @@ public class NativeAudioDecoderException(
 /**
  * Opens [source] for audio decoding: a path or any URL this build's FFmpeg protocols accept, or a
  * mount, read on demand (a Source through a replay cache, so it can seek). The decoder does not
- * close the mounts.
+ * close the mounts. With [hint], what a player's prepare of the same input found
+ * ([NativePlayerBridge.inputHint]), the input is not probed again when its header declares its
+ * audio (`ffmpegkmp_player_open_hinted`).
  */
 @InternalFFmpegKmpApi
-public expect fun openPlatformAudioDecoder(source: NativePlayerSource, sampleRate: Int, channels: Int): NativeAudioDecoder
+public expect fun openPlatformAudioDecoder(
+    source: NativePlayerSource,
+    sampleRate: Int,
+    channels: Int,
+    hint: NativeInputHint? = null,
+): NativeAudioDecoder
 
 /**
  * Raw `ffmpegkmp_player_*` calls for one open player, implemented per platform binding. Results

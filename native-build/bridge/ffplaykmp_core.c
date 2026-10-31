@@ -28,6 +28,8 @@ static _Atomic uint64_t ffplaykmp_codec_opens;
 static _Atomic uint64_t ffplaykmp_codec_closes;
 static _Atomic uint64_t ffplaykmp_video_packets;
 static _Atomic uint64_t ffplaykmp_downloads;
+static _Atomic uint64_t ffplaykmp_input_opens;
+static _Atomic uint64_t ffplaykmp_input_probes;
 
 void ffplaykmp_statistics_init(ffplaykmp_statistics *statistics) {
     if (!statistics)
@@ -43,6 +45,8 @@ void ffplaykmp_get_statistics(ffplaykmp_statistics *statistics) {
     statistics->codec_closes = atomic_load(&ffplaykmp_codec_closes);
     statistics->video_packets = atomic_load(&ffplaykmp_video_packets);
     statistics->downloads = atomic_load(&ffplaykmp_downloads);
+    statistics->input_opens = atomic_load(&ffplaykmp_input_opens);
+    statistics->input_probes = atomic_load(&ffplaykmp_input_probes);
 }
 
 void ffplaykmp_count_video_packet(void) {
@@ -359,11 +363,16 @@ void ffplaykmp_close_input(ffplaykmp_input *input) {
     av_freep(&input->io);
 }
 
-int ffplaykmp_open_input(const ffplaykmp_io_host *host, const char *url, ffplaykmp_input *input) {
+int ffplaykmp_open_input_unprobed(
+        const ffplaykmp_io_host *host,
+        const char *url,
+        const AVInputFormat *format,
+        ffplaykmp_input *input) {
     int mounted = ffplaykmp_parse_resource_id(url, &input->resource_id);
     int result;
     if (mounted < 0)
         return mounted;
+    atomic_fetch_add(&ffplaykmp_input_opens, 1);
     input->host = *host;
     input->format = avformat_alloc_context();
     if (!input->format)
@@ -395,11 +404,21 @@ int ffplaykmp_open_input(const ffplaykmp_io_host *host, const char *url, ffplayk
         }
         input->format->pb = input->avio;
         input->format->flags |= AVFMT_FLAG_CUSTOM_IO;
-        result = avformat_open_input(&input->format, NULL, NULL, NULL);
+        result = avformat_open_input(&input->format, NULL, format, NULL);
     } else {
-        result = avformat_open_input(&input->format, url, NULL, NULL);
+        result = avformat_open_input(&input->format, url, format, NULL);
     }
-    return result < 0 ? result : avformat_find_stream_info(input->format, NULL);
+    return result;
+}
+
+int ffplaykmp_probe_input(ffplaykmp_input *input) {
+    atomic_fetch_add(&ffplaykmp_input_probes, 1);
+    return avformat_find_stream_info(input->format, NULL);
+}
+
+int ffplaykmp_open_input(const ffplaykmp_io_host *host, const char *url, ffplaykmp_input *input) {
+    int result = ffplaykmp_open_input_unprobed(host, url, NULL, input);
+    return result < 0 ? result : ffplaykmp_probe_input(input);
 }
 
 int ffplaykmp_find_video_stream(AVFormatContext *format, const AVCodec **codec) {

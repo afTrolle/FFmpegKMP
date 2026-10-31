@@ -91,7 +91,10 @@ rule that CDM-decoded pixels may be unavailable to Canvas APIs.
 
 FFplay plays the source's audio in sync with its video. Audio is decoded and mixed by the `player`
 module's engine (`ffmpegkmp_player.c`) from the same input: a path or URL, or a mounted `FileHandle`
-or `Source`, whose bytes the video and the audio share through one replay cache. The audible position
+or `Source`, whose bytes the video and the audio share through one replay cache. The audio opens it
+with what the video's prepare found when it probed it, its demuxer, start and duration, so an input
+whose header declares its audio (MP4, MOV, Matroska, WebM, NUT) is probed once per prepare; one that
+does not, such as MPEG-TS, is probed by each, as before. The audible position
 is reported to the video worker through `ffplaykmp_player_set_master_clock`, so audio is the master
 clock: frames are scheduled against what the listener hears, and late frames are dropped. When the
 audio ends before the video, scheduling continues on the wall clock from that point.

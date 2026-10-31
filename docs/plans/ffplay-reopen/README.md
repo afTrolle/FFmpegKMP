@@ -1,12 +1,12 @@
 # One open per source in the FFplay player
 
-Status: phases 1, 1b, 2, 3, 4, 5, 6 and 7 are built on `feature/ffplay-reopen`;
-phase 7 also did phase 2's web packet reader reuse. Phase 0's macOS native
-baselines are measured (2b); its Android, JVM and browser measurements are not,
-except the Android hardware decoder counts phase 6 measured and the browser
-heap, open and copy counts phase 7 measured.
-Phase 8 is not built. The audio-cleanup and small-cleanups work this plan builds
-on is merged into main as of f9f92c1.
+Status: all phases are built on `feature/ffplay-reopen`: 1, 1b and 2 to 8;
+phase 7 also did phase 2's web packet reader reuse, and phase 8 built the cheap
+audio hint, not the shared demuxer of 3(d). Phase 0's macOS native baselines
+are measured (2b); its Android, JVM and browser measurements are not, except
+the Android hardware decoder counts phase 6 measured and the browser heap, open
+and copy counts phase 7 measured. The audio-cleanup and small-cleanups work
+this plan builds on is merged into main as of f9f92c1.
 
 `FFplayPlayer` opens and probes its input again on nearly every transition:
 `prepare` opens it twice, a seek while playing opens it twice more, and play
@@ -675,6 +675,120 @@ Decisions the plan left open:
 - `ffplaykmp_rgb_output` takes a size (0 × 0 for the source's); its other
   callers, the benches, pass 0 × 0.
 
+### Phase 8 results
+
+A player with audio probes its input once per prepare, not twice: the audio
+engine opens the input with what the video's probe found and skips its own.
+This is 3(d)'s cheap intermediate; the shared demuxer is not built.
+
+- **Why the hint and not a shared demux.** One demuxer for both would need a
+  demux thread with per-stream packet queues and seeks kept in step between the
+  session thread and the audio engine's pull on its own thread
+  (`ffmpegkmp_player_read`), whose seek also flushes per-track resamplers and
+  FIFOs; that is the audio engine's rewrite 3(d) describes, with nothing in the
+  measurements that needs it. A separate `AVFormatContext` per engine keeps
+  their seeks independent and costs an open and a header read (2 reads,
+  0.04 MB below), not a probe.
+- **Why no probe rather than a small one.** A `probesize`/`analyzeduration`
+  hint still runs `avformat_find_stream_info`, which opens a decoder for every
+  stream, the video's included, and decodes their first packets for pixel and
+  sample formats and decoder delay: on 4K H.264 that is most of the audio's
+  open time. The audio engine needs only each audio stream's codec, sample
+  rate and channels, which a header-declared container has before any packet;
+  the sample format comes from the first decoded frame, and the resampler is
+  configured from frames already. What the probe adds beyond that is the
+  container's start and duration, and those the hint carries, so both engines
+  measure media time from exactly the same start.
+- **C.** `ffplaykmp_open_input` is split into `ffplaykmp_open_input_unprobed`
+  (a demuxer, given or detected, and its header) and `ffplaykmp_probe_input`.
+  The player's inspect records an `ffplaykmp_input_hint` (the demuxer's
+  `AVInputFormat.name`, the media start the player uses, the duration and the
+  number of audio streams) under `mutex`, read by
+  `ffplaykmp_player_get_input_hint` and forgotten when the input closes (stop,
+  reset, destroy, a failed or replacing prepare).
+  `ffmpegkmp_player_open_hinted` opens with `av_find_input_format(name)` and
+  skips the probe when the header declares every audio stream with its codec,
+  sample rate and channels, as many as the hint counted, and the container is
+  not `AVFMTCTX_NOHEADER`; then start and duration come from the hint
+  (`ffmpegkmp_player_duration_us` reads a field now, not the context). Otherwise
+  it probes the context it opened, and when the hinted demuxer will not open the
+  input at all, it closes it and opens it as without a hint (an abort meanwhile
+  ends the open). `ffmpegkmp_player_open_prepared` takes the hint from a player
+  handle, for the browser worker, which holds both. `ffplaykmp_statistics`
+  counts `input_opens` and `input_probes` (`NativePlayerStatistics.inputOpens`,
+  `inputProbes`); the worker reports `inputProbes` through
+  `ffplaykmp_web_input_probes`.
+- **Kotlin.** `NativePlayerBridge.inputHint()` (`NativeInputHint`, null when
+  nothing is prepared or after close), `openPlatformAudioDecoder(…, hint)`, an
+  internal `AudioDecoder.open(source, format, hint)` and an
+  `@InternalFFmpegKmpApi` `AudioPlayer.open(source, hint, format)`;
+  `FFplayPlayer`'s default audio opener passes `engine.inputHint()`, read under
+  `prepareMutex` right after the prepare it describes. The browser worker
+  opens its audio with `ffmpegkmp_player_open_prepared(playerHandle, …)`.
+- **Headerless containers.** MPEG-TS, and the containers that find their
+  streams as they read (FLV, MPEG-PS), declare no sample rate or channels
+  before their packets, so the audio probes them as before: two probes a
+  prepare there. The check also counts the audio streams against the hint, so
+  a hint that does not describe this header (another input's, say) never
+  replaces the probe.
+
+Measured with the player bench's new `audio` mode (`scripts/bench-player.sh
+audio`; the bench clips with an AAC track added by stream copy, in MP4 and
+MPEG-TS), macOS M4 Pro, software, five runs each, the open alone counted:
+
+| Clip | prepare (video probe) | audio open, own probe | audio open, hinted |
+|---|---|---|---|
+| 1080p H.264 + AAC, MP4 | 23.2 ms, 5 reads, 0.48 MB | 22.6 ms, 1 probe, 5 reads, 0.48 MB | 0.2 ms, 0 probes, 2 reads, 0.04 MB |
+| 4K H.264 + AAC, MP4 | 66.6 ms, 1.34 MB | 65.6 ms, 1 probe, 1.34 MB | 0.2 ms, 0 probes, 0.04 MB |
+| 4K HEVC PQ + AAC, MP4 | 0.4 ms, 1.35 MB | 0.3 ms, 1 probe, 1.35 MB | 0.1 ms, 0 probes, 0.04 MB |
+| 4K H.264 + AAC, MPEG-TS | 68.9 ms, 175 reads, 5.36 MB | 68.1 ms, 1 probe, 5.36 MB | 69.9 ms, 1 probe (fallback), 5.36 MB |
+
+With 2 ms added to every read (`FFMPEGKMP_BENCH_IO_LATENCY_US=2000`) the MP4
+audio opens take 5.3–5.7 ms hinted against 14–80 ms probed; the MPEG-TS one
+takes 538 ms either way. Probes per prepare with audio: 2 → 1 for MP4 and
+Matroska (so MOV and WebM, the same demuxers) and NUT; 2 for MPEG-TS.
+
+Tests: `FFplayAudioJvmTest.aPrepareWithAudioProbesTheInputOnce` (a real
+`FFplayPlayer` with audio on, NUT/PCM and MP4/AAC: two opens, one probe a
+prepare); `NativePlayerBridgeJvmTest.theInputIsProbedOncePerPrepare` now also
+counts probes and checks the hint and that stop forgets it; the player module's
+`HintedAudioOpenIntegrationTest` (JVM and macOS) decodes MP4, Matroska and NUT
+fixtures whose audio starts 0.5 s after the video with and without the hint and
+gets the same tracks, duration and PCM, bit for bit, from the start and after a
+seek, with no probe hinted; an MPEG-TS fixture probes despite the hint and
+decodes the same; a hint naming another demuxer, an unknown one, or two audio
+streams falls back to one probe and decodes the same;
+`BrowserPlayerAudioTest` asserts one probe in the worker for a prepare and the
+audio's open. The player bench's transitions match phase 7 within noise (play
+after the grace 80/295/600/832/455 ms for 1080p SW, 4K H.264 SW and AUTO, 4K
+HEVC PQ SW and AUTO; phase 7: 80/294/647/823/516).
+
+Verified: JVM bindings 48, codec 81, ffplay 103, player 22; macOS bindings 8,
+ffplay 88, player 22; iOS simulator 8 and 88; js and wasm bindings 27 each
+(worker relinked), ffplay 61 each; Samsung SM-S938B ffplay device suite with
+`hdrGpuCheck=true` 103 tests, 102 pass, `CompositeExportBudgetDeviceTest.measure`
+gated.
+
+Not verified or not done: the browser saves no JS copy (the worker still keeps
+the input's JS bytes for the audio's I/O callback, besides the heap copy the
+player owns; the audio could read the player's heap bytes instead, a separate
+change); HE-AAC with implicit SBR reports the core sample rate in the track
+info when not probed (playback is unaffected: the resampler follows the
+frames); Android runs the same C and JavaCPP path as the JVM, with no audio
+test of its own on the device.
+
+Decisions the plan left open:
+- The hint over the shared demuxer (open question 16), and no probe over a
+  small `probesize` for header-declared containers.
+- The hint is taken right after the prepare, under `prepareMutex`, from the
+  player itself rather than carried in the snapshot; it is a copy, so the audio
+  open never touches the video's `AVFormatContext`.
+- A hint that does not fit falls back rather than failing: a demuxer that will
+  not open means a full reopen, an incomplete header a probe in place.
+- The hinted audio takes start and duration from the hint, not from its own
+  context, so a header that disagrees with the probe cannot shift the audio
+  clock against the video's.
+
 ## 3. Design options (behaviour at 1 / 4 / 16 concurrent sources)
 
 **(a) Keep-open per player** (demuxer + codec from prepare to stop). 1: ideal, seek = flush + seek + decode-to-target; 4: fine on desktop; 16: software 4K ≈ 3 GB of frame-thread frames, 16 × 8 decoder threads, 16 hardware instances (over any Android cap; paused players still hold them). Simple, but the user's concern is exactly the resource held open. Not recommended alone.
@@ -942,43 +1056,60 @@ workers seeking and memory sampled.
 
 ## 7. Open questions
 
-Defaults in bold are what the phases assume until decided otherwise.
+Defaults in bold are what the phases assumed; every question now says what the
+phases decided, or that it stays open past this plan.
 
 1. Default `hardwareDecoders` per platform. Phase 6 set **8 on macOS and other
    desktops, 4 on Android and iOS** from its measurements (iOS and non-Apple
    desktops unmeasured).
-2. Seek previews: **blocking, as today**, or asynchronous through C-side
+2. Seek previews: **blocking, as before**, or asynchronous through C-side
    coalescing behind `FFplayConfiguration(previewSeeks = ASYNC)`, observed as
-   `snapshot` going SEEKING → PAUSED or PLAYING.
+   `snapshot` going SEEKING → PAUSED or PLAYING. Decided: blocking. Phase 3
+   moved the preview onto the session thread with the caller waiting on it,
+   and phases 2 and 4 took the open, probe and codec open out of it; the
+   asynchronous preview stays a later, opt-in change.
 3. Release-on-pause grace (**2 s**), and whether a VISIBLE paused player may be
-   evicted.
+   evicted. Decided in phase 5: 2 s, every idle player releases, visible or not;
+   nothing evicts a holder (phase 6 added no priority).
 4. MediaCodec thread affinity is asserted by the project's docs, not verified;
-   phase 3 comes before phase 4 on that assumption. If a device test shows
-   cross-thread use is fine, phase 3 can be simplified.
+   phase 3 came before phase 4 on that assumption. Still not verified, and no
+   longer a decision: phase 3's session thread is built, every MediaCodec call
+   is made on it, and the Android device suite runs against it.
 5. VideoToolbox limits are inferred; Apple numbers from phase 0 decide whether
    the budget applies there by default. Phase 6: **it does** (macOS collapses
    between 14 and 16 4K players); iOS is not measured.
 6. Kept software codecs keep their frame-thread frames; release on pause is the
-   only lever. Confirm that is acceptable against the reopen cost on
-   software-only platforms.
+   only lever. Decided in phase 5: accepted, with the 2 s grace (sixteen paused
+   4K software players go from 5036 MB to 2527 MB once it passes).
 7. Budget waiting: **ship without it** (phase 6 did), or add `HardwareDecoding.WAIT` inside
    the already-suspend `VideoDecoder.open` and `FFplayPlayer.prepare`, bounded by
    the native deadline.
 8. Run the native prepare on `Dispatchers.IO` instead of `Dispatchers.Default`;
-   **decide from phase 0's numbers.**
-9. Shared-buffer `EncodedVideoChunk` data: confirm on the target browsers;
-   the fallback is one `slice`.
-10. The Kotlin/Wasm frame copy into linear memory: **accept it for now**, or
-    schedule a `BrowserFrame` over a JS buffer with Skiko-web `installPixels`.
+   **decide from phase 0's numbers.** Not decided by a measurement (phase 0
+   measured no JVM prepare): it stays on `Dispatchers.Default`. Since phases 2
+   and 8 a prepare blocks for one open and one probe, and the audio's open no
+   longer probes, so the case for IO is weaker than when this was asked.
+9. Shared-buffer `EncodedVideoChunk` data: confirmed in Chrome in phase 7;
+   a browser that refuses a view of the shared heap gets one `slice` a packet.
+   Safari and Firefox are not checked.
+10. The Kotlin/Wasm frame copy into linear memory: **accept it for now** (phase
+    7 did), or schedule a `BrowserFrame` over a JS buffer with Skiko-web
+    `installPixels`.
 11. A paused player whose drawn size grows: **show the small bitmap scaled up
-    until the next frame**, or offer `FrameImage.keepLastFrame` to re-convert.
-12. Size ladder: **16 steps of the source size** (exact aspect), or rounding
-    each dimension to 64 px.
-13. `ContentScale.Crop`: **keep the whole picture, capped at the source**, or
-    allocate only the visible crop.
-14. **Make `FrameImage.targetSize` public now**, or keep it internal until an
-    export user asks.
+    until the next frame** (phases 1b and 7 do), or offer
+    `FrameImage.keepLastFrame` to re-convert.
+12. Size ladder: **16 steps of the source size** (exact aspect; built in phase
+    1b), or rounding each dimension to 64 px, which would bring a 256-wide
+    thumbnail of 4K from 480×270 to one step.
+13. `ContentScale.Crop`: **keep the whole picture, capped at the source**
+    (built in phase 1b), or allocate only the visible crop.
+14. **Make `FrameImage.targetSize` public now**: done in phase 1b.
 15. Scaled SDR conversion is slower than same-size (swscale's unscaled fast
-    path): **accept it** (under 2 ms, and the bitmaps and upload shrink), or
-    convert at the source size and scale in a second, cheaper pass when the
-    drawn size is close to it.
+    path): **accept it** (phase 1b did: under 2 ms, and the bitmaps and upload
+    shrink), or convert at the source size and scale in a second, cheaper pass
+    when the drawn size is close to it.
+16. Audio: a demuxer shared by video and audio (3(d)), or the cheap hint.
+    Decided in phase 8: the hint. The audio keeps its own demuxer and seeks
+    on its own; a shared demux, which would also save the second open and its
+    header read, waits for a reason to rewrite the audio engine. Headerless
+    containers (MPEG-TS and the like) are still probed twice.

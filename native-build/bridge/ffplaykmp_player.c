@@ -160,6 +160,9 @@ struct ffplaykmp_player {
     int master_clock_valid;
     int64_t master_clock_media_us;
     int64_t master_clock_stamp_us;
+    /* What prepare's probe found, while the source it probed is prepared. Guarded by mutex. */
+    ffplaykmp_input_hint input_hint;
+    int input_hint_valid;
 #if defined(__ANDROID__)
     JavaVM *android_vm;
     jobject android_surface;
@@ -602,6 +605,9 @@ static void ffplaykmp_end_session_thread(ffplaykmp_player *player);
  * thread.
  */
 static void ffplaykmp_player_close_input(ffplaykmp_player *player) {
+    pthread_mutex_lock(&player->mutex);
+    player->input_hint_valid = 0;
+    pthread_mutex_unlock(&player->mutex);
     ffplaykmp_end_session_thread(player);
     pthread_mutex_lock(&player->session_mutex);
     ffplaykmp_session_close_input(&player->session);
@@ -987,17 +993,28 @@ static int ffplaykmp_inspect_source(ffplaykmp_player *player, const char *url) {
     ffplaykmp_session *session = &player->session;
     int result;
     pthread_mutex_lock(&player->session_mutex);
+    pthread_mutex_lock(&player->mutex);
+    player->input_hint_valid = 0;
+    pthread_mutex_unlock(&player->mutex);
     ffplaykmp_session_close_input(session);
     session->hardware_failed = 0;
     result = ffplaykmp_session_open_input(player, url);
     if (result >= 0) {
+        const AVFormatContext *format = session->input.format;
         pthread_mutex_lock(&player->mutex);
         player->snapshot.video_width = session->stream->codecpar->width;
         player->snapshot.video_height = session->stream->codecpar->height;
         ffplaykmp_read_stream_metadata(&player->snapshot, session->stream);
-        player->snapshot.duration_us = session->input.format->duration == AV_NOPTS_VALUE
-                ? -1
-                : session->input.format->duration;
+        player->snapshot.duration_us = format->duration == AV_NOPTS_VALUE ? -1 : format->duration;
+        ffplaykmp_input_hint_init(&player->input_hint);
+        snprintf(player->input_hint.format_name, sizeof(player->input_hint.format_name), "%s", format->iformat->name);
+        player->input_hint.start_us = session->media_start_us;
+        player->input_hint.duration_us = player->snapshot.duration_us;
+        for (unsigned i = 0; i < format->nb_streams; i++) {
+            if (format->streams[i]->codecpar->codec_type == AVMEDIA_TYPE_AUDIO)
+                player->input_hint.audio_streams++;
+        }
+        player->input_hint_valid = 1;
         pthread_mutex_unlock(&player->mutex);
     }
     pthread_mutex_unlock(&player->session_mutex);
@@ -1788,6 +1805,27 @@ int ffplaykmp_player_get_snapshot(
     return 0;
 }
 
+void ffplaykmp_input_hint_init(ffplaykmp_input_hint *hint) {
+    if (!hint)
+        return;
+    memset(hint, 0, sizeof(*hint));
+    hint->size = sizeof(*hint);
+    hint->duration_us = -1;
+}
+
+int ffplaykmp_player_get_input_hint(const ffplaykmp_player *player, ffplaykmp_input_hint *hint) {
+    int result = FFPLAYKMP_ERROR_INVALID_STATE;
+    if (!player || !hint || hint->size < sizeof(*hint))
+        return FFPLAYKMP_ERROR_INVALID_ARGUMENT;
+    pthread_mutex_lock((pthread_mutex_t *)&player->mutex);
+    if (player->input_hint_valid) {
+        *hint = player->input_hint;
+        result = 0;
+    }
+    pthread_mutex_unlock((pthread_mutex_t *)&player->mutex);
+    return result;
+}
+
 typedef struct ffplaykmp_web_callbacks {
     ffplaykmp_web_state_callback state;
     ffplaykmp_web_video_frame_callback frame;
@@ -2213,6 +2251,13 @@ void ffplaykmp_web_player_set_frame_size(ffplaykmp_player *player, int32_t width
     callbacks->frame_width = width > 0 && height > 0 ? width : 0;
     callbacks->frame_height = width > 0 && height > 0 ? height : 0;
     pthread_mutex_unlock(&callbacks->mutex);
+}
+
+uint32_t ffplaykmp_web_input_probes(void) {
+    ffplaykmp_statistics statistics;
+    ffplaykmp_statistics_init(&statistics);
+    ffplaykmp_get_statistics(&statistics);
+    return (uint32_t)statistics.input_probes;
 }
 
 uint32_t ffplaykmp_web_player_input_opens(ffplaykmp_player *player) {

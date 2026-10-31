@@ -5,6 +5,7 @@
 )
 package io.github.aftrolle.ffmpegkmp.ffplay
 
+import io.github.aftrolle.ffmpegkmp.bindings.NativeInputHint
 import io.github.aftrolle.ffmpegkmp.bindings.NativePlayerError
 import io.github.aftrolle.ffmpegkmp.bindings.NativePlayerBridge
 import io.github.aftrolle.ffmpegkmp.bindings.NativePlayerConfiguration
@@ -90,6 +91,9 @@ internal interface FFplayEngine : AutoCloseable {
 
     /** The prepared source's audio when the engine plays it itself (the browser), else null. */
     suspend fun openAudio(warn: (String) -> Unit): FFplayAudioOutput? = null
+
+    /** What preparing the source found when it probed it, for the audio to open it without a probe; null if unknown. */
+    fun inputHint(): NativeInputHint? = null
     fun stop()
     fun attachOutput(output: FFplayVideoOutput)
     fun detachOutput(output: FFplayVideoOutput)
@@ -228,6 +232,8 @@ private class FFplayBridgeEngine(
 
     override suspend fun openAudio(warn: (String) -> Unit): FFplayAudioOutput? =
         if (closed) null else bridge.openAudio()?.let { BridgeAudioOutput(it, warn) }
+
+    override fun inputHint(): NativeInputHint? = if (closed) null else bridge.inputHint()
 
     override fun stop() {
         checkOpen()

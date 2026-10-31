@@ -58,6 +58,21 @@ int ffplaykmp_parse_resource_id(const char *input, int64_t *resource_id);
 
 /* Opens and probes `url`; on failure the caller still closes `input`. */
 int ffplaykmp_open_input(const ffplaykmp_io_host *host, const char *url, ffplaykmp_input *input);
+/*
+ * Opens `url` with the demuxer `format`, or the one its first bytes suggest
+ * when NULL, and reads its header without probing its streams: what the
+ * header leaves out (a pixel or sample format, or a stream a headerless
+ * container has not shown yet) and the container's start and duration stay
+ * unknown until ffplaykmp_probe_input. On failure the caller still closes
+ * `input`.
+ */
+int ffplaykmp_open_input_unprobed(
+        const ffplaykmp_io_host *host,
+        const char *url,
+        const AVInputFormat *format,
+        ffplaykmp_input *input);
+/* Probes the streams of an input opened unprobed (avformat_find_stream_info), reading and decoding their start. */
+int ffplaykmp_probe_input(ffplaykmp_input *input);
 void ffplaykmp_close_input(ffplaykmp_input *input);
 
 /*

@@ -11,6 +11,7 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertNotEquals
+import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 import okio.Buffer
 import okio.FileHandle
@@ -353,10 +354,15 @@ class NativePlayerBridgeJvmTest {
                 played.countDown()
             },
         ).use { bridge ->
+            val before = nativePlayerStatistics()
             assertEquals(0, bridge.prepare(source))
             // The mov demuxer asks for the input's size once as it opens it, and never to seek.
             val probes = input.sizeRequests.get()
             assertTrue(probes > 0, "prepare did not open the input")
+            assertEquals(1, nativePlayerStatistics().inputProbes - before.inputProbes, "probes by a prepare")
+            val hint = assertNotNull(bridge.inputHint(), "a prepared player's hint")
+            assertEquals(NativeInputHint("mov,mp4,m4a,3gp,3g2,mj2", startUs = 0, durationUs = hint.durationUs, audioStreams = 0), hint)
+            assertTrue(hint.durationUs in 900_000L..1_100_000L, "duration ${hint.durationUs}")
 
             assertEquals(0, bridge.setOutput(NativePlayerOutputCapabilities()))
             listOf(900_000L, 100_000L, 500_000L, 0L).forEach { assertEquals(0, bridge.seek(it)) }
@@ -367,10 +373,13 @@ class NativePlayerBridgeJvmTest {
             assertEquals(0, bridge.play())
             assertEquals(0, bridge.pause())
             assertEquals(probes, input.sizeRequests.get(), "a preview, seek or play opened the input again")
+            assertEquals(1, nativePlayerStatistics().inputProbes - before.inputProbes, "a preview, seek or play probed")
 
             assertEquals(0, bridge.stop())
+            assertEquals(null, bridge.inputHint(), "a stopped player has no hint")
             assertEquals(0, bridge.prepare(source))
             assertEquals(2 * probes, input.sizeRequests.get(), "a new prepare probes the input again")
+            assertEquals(2, nativePlayerStatistics().inputProbes - before.inputProbes, "probes by two prepares")
         }
     }
 

@@ -9,6 +9,7 @@ package io.github.aftrolle.ffmpegkmp.ffplay
 
 import io.github.aftrolle.ffmpegkmp.bindings.NativeAudioMixer
 import io.github.aftrolle.ffmpegkmp.bindings.NativeAudioTrackInfo
+import io.github.aftrolle.ffmpegkmp.bindings.NativeInputHint
 import io.github.aftrolle.ffmpegkmp.core.AudioLevel
 import io.github.aftrolle.ffmpegkmp.core.MediaSource
 import io.github.aftrolle.ffmpegkmp.core.applyLatest
@@ -169,9 +170,12 @@ internal class FFplayAudio(
     }
 }
 
-/** Plays [source]'s audio with the `player` engine, which reads the same input as the video. */
-internal suspend fun openAudioPlayer(source: MediaSource): FFplayAudioOutput {
-    val player = AudioPlayer.open(source)
+/**
+ * Plays [source]'s audio with the `player` engine, which reads the same input as the video: with
+ * [hint], what the video's prepare found, without probing it again.
+ */
+internal suspend fun openAudioPlayer(source: MediaSource, hint: NativeInputHint? = null): FFplayAudioOutput {
+    val player = AudioPlayer.open(source, hint)
     return object : FFplayAudioOutput, AudioMixControls by player, AutoCloseable by player {
         override val state get() = player.state
         override val position get() = player.position
