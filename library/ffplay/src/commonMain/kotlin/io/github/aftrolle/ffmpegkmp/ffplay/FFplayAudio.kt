@@ -10,6 +10,7 @@ package io.github.aftrolle.ffmpegkmp.ffplay
 import io.github.aftrolle.ffmpegkmp.bindings.NativeFileResource
 import io.github.aftrolle.ffmpegkmp.codec.MediaSource
 import io.github.aftrolle.ffmpegkmp.core.AudioLevel
+import io.github.aftrolle.ffmpegkmp.core.applyLatest
 import io.github.aftrolle.ffmpegkmp.core.toNativeMounts
 import io.github.aftrolle.ffmpegkmp.player.AudioPlayer
 import io.github.aftrolle.ffmpegkmp.player.AudioTrackInfo
@@ -27,7 +28,6 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.update
-import kotlinx.coroutines.flow.updateAndGet
 import kotlinx.coroutines.launch
 
 /** Audio of the prepared source: its tracks and the levels the listener chose. */
@@ -102,7 +102,7 @@ internal class FFplayAudio(
     fun attach(audio: FFplayAudioOutput, snapshot: FFplaySnapshot, reportClock: (Duration) -> Unit) {
         close()
         current.store(audio)
-        audio.setLevel(mutableState.value.level)
+        applyLatest({ mutableState.value.level }, audio::setLevel)
         mutableState.value = FFplayAudioState(
             available = true,
             tracks = audio.tracks,
@@ -151,16 +151,22 @@ internal class FFplayAudio(
         return position.inWholeMicroseconds
     }
 
-    /** Atomic, so a volume and a mute change from different threads never lose one another. */
+    /**
+     * Atomic, so a volume and a mute change from different threads never lose one another.
+     * [transform] may run more than once when another update races it.
+     */
     fun updateLevel(transform: (AudioLevel) -> AudioLevel) {
-        val level = mutableState.updateAndGet { it.copy(level = transform(it.level)) }.level
-        current.load()?.setLevel(level)
+        mutableState.update { it.copy(level = transform(it.level)) }
+        applyLatest({ mutableState.value.level }) { level -> current.load()?.setLevel(level) }
     }
 
     fun updateTrackLevel(track: Int, transform: (AudioLevel) -> AudioLevel) {
         val audio = current.load() ?: return
         audio.updateTrackLevel(track, transform)
-        mutableState.update { it.copy(trackLevels = audio.trackLevels.value) }
+        applyLatest({ audio.trackLevels.value }) { levels ->
+            // A source replaced meanwhile publishes its own levels.
+            mutableState.update { if (current.load() === audio) it.copy(trackLevels = levels) else it }
+        }
     }
 
     fun setTrackEnabled(track: Int, enabled: Boolean) {

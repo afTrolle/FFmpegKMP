@@ -1,9 +1,13 @@
 // SPDX-License-Identifier: Apache-2.0
-@file:OptIn(kotlin.concurrent.atomics.ExperimentalAtomicApi::class)
+@file:OptIn(
+    io.github.aftrolle.ffmpegkmp.core.InternalFFmpegKmpApi::class,
+    kotlin.concurrent.atomics.ExperimentalAtomicApi::class,
+)
 
 package io.github.aftrolle.ffmpegkmp.player
 
 import io.github.aftrolle.ffmpegkmp.core.AudioLevel
+import io.github.aftrolle.ffmpegkmp.core.applyLatest
 import kotlin.concurrent.atomics.AtomicBoolean
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.microseconds
@@ -20,7 +24,7 @@ import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.updateAndGet
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -121,9 +125,13 @@ public class AudioPlayer internal constructor(
         updateLevel { it.copy(muted = muted) }
     }
 
-    /** Atomic, so a volume and a mute change from different threads never lose one another. */
+    /**
+     * Atomic, so a volume and a mute change from different threads never lose one another.
+     * [transform] may run more than once when another update races it, so keep it pure.
+     */
     public fun updateLevel(transform: (AudioLevel) -> AudioLevel) {
-        decoder.level = mutableLevel.updateAndGet(transform)
+        mutableLevel.update(transform)
+        applyLatest({ mutableLevel.value }) { decoder.level = it }
     }
 
     public fun setTrackLevel(track: Int, level: AudioLevel) {
@@ -138,10 +146,10 @@ public class AudioPlayer internal constructor(
         updateTrackLevel(track) { it.copy(muted = muted) }
     }
 
-    /** Atomic, like [updateLevel], for one track's level. */
+    /** Atomic, like [updateLevel], for one track's level; [transform] may likewise run more than once. */
     public fun updateTrackLevel(track: Int, transform: (AudioLevel) -> AudioLevel) {
         decoder.updateTrackLevel(track, transform)
-        mutableTrackLevels.value = decoder.trackLevels
+        applyLatest({ decoder.trackLevels }) { mutableTrackLevels.value = it }
     }
 
     /** Adds [track] to, or removes it from, the mix. */

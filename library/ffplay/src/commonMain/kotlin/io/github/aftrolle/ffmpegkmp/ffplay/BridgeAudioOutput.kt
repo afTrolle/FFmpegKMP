@@ -1,11 +1,15 @@
 // SPDX-License-Identifier: Apache-2.0
-@file:OptIn(io.github.aftrolle.ffmpegkmp.bindings.InternalFFmpegKmpApi::class)
+@file:OptIn(
+    io.github.aftrolle.ffmpegkmp.bindings.InternalFFmpegKmpApi::class,
+    io.github.aftrolle.ffmpegkmp.core.InternalFFmpegKmpApi::class,
+)
 
 package io.github.aftrolle.ffmpegkmp.ffplay
 
 import io.github.aftrolle.ffmpegkmp.bindings.NativeAudioProgress
 import io.github.aftrolle.ffmpegkmp.bindings.NativePlayerAudio
 import io.github.aftrolle.ffmpegkmp.core.AudioLevel
+import io.github.aftrolle.ffmpegkmp.core.applyLatest
 import io.github.aftrolle.ffmpegkmp.player.AudioTrackInfo
 import io.github.aftrolle.ffmpegkmp.player.PlaybackState
 import kotlin.time.Duration
@@ -13,7 +17,7 @@ import kotlin.time.Duration.Companion.microseconds
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.updateAndGet
+import kotlinx.coroutines.flow.update
 
 /** Audio the player bridge plays itself, presented as FFplay's audio output with AudioPlayer's states. */
 internal class BridgeAudioOutput(
@@ -76,10 +80,8 @@ internal class BridgeAudioOutput(
 
     override fun updateTrackLevel(track: Int, transform: (AudioLevel) -> AudioLevel) {
         requireTrack(track)
-        val level = mutableTrackLevels.updateAndGet { current ->
-            current.toMutableList().also { it[track] = transform(it[track]) }
-        }[track]
-        native.setTrackGain(track, level.effectiveVolume.toFloat())
+        mutableTrackLevels.update { current -> current.toMutableList().also { it[track] = transform(it[track]) } }
+        applyLatest({ mutableTrackLevels.value[track] }) { native.setTrackGain(track, it.effectiveVolume.toFloat()) }
     }
 
     override fun setTrackEnabled(track: Int, enabled: Boolean) {
