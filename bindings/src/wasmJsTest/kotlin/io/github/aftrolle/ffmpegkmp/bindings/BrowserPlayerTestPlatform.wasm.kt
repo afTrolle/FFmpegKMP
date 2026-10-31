@@ -43,3 +43,23 @@ private fun browserPlayerRegistrySize(): Int =
     js("globalThis.__ffmpegkmpVideoFrames?.frames?.size || 0")
 private fun hasBrowserWebCodecs(): Boolean =
     js("typeof globalThis.VideoDecoder === 'function' && typeof globalThis.EncodedVideoChunk === 'function'")
+
+internal actual fun browserVideoFrameNumber(frameId: Int): Int = js(
+    """(() => {
+      const registry = globalThis.__ffmpegkmpVideoFrames;
+      const frame = registry ? registry.frames.get(frameId) : undefined;
+      if (!frame) return -1;
+      const width = frame.displayWidth;
+      const height = frame.displayHeight;
+      const context = new OffscreenCanvas(width, height).getContext('2d', { willReadFrequently: true });
+      context.drawImage(frame, 0, 0);
+      const pixels = context.getImageData(0, 0, width, height).data;
+      let number = 0;
+      for (let bit = 0; bit < 12; bit++) {
+        const x = (bit % 6) * 16 + 8;
+        const y = Math.floor(bit / 6) * 16 + 8;
+        if (pixels[(y * width + x) * 4 + 1] > 128) number |= 1 << bit;
+      }
+      return number;
+    })()""",
+)
