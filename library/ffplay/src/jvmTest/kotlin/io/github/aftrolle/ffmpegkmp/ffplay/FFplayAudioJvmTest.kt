@@ -13,7 +13,7 @@ import io.github.aftrolle.ffmpegkmp.bindings.NativePlayerSource
 import io.github.aftrolle.ffmpegkmp.bindings.NativePlayerState
 import io.github.aftrolle.ffmpegkmp.bindings.NativeVideoFrame
 import io.github.aftrolle.ffmpegkmp.bindings.createPlatformPlayerBridge
-import io.github.aftrolle.ffmpegkmp.codec.DecoderPreference
+import io.github.aftrolle.ffmpegkmp.codec.CodecPreference
 import io.github.aftrolle.ffmpegkmp.codec.MediaSource
 import io.github.aftrolle.ffmpegkmp.codec.VideoFrame
 import io.github.aftrolle.ffmpegkmp.codec.VideoInfo
@@ -83,7 +83,7 @@ class FFplayAudioJvmTest {
     fun playsAudioWithVideoAndAppliesLiveControls() = runBlocking {
         val media = encodeAudioVideoFixture()
         val fileHandle = FileSystem.SYSTEM.openReadOnly(media)
-        val player = FFplayPlayer(FFplayConfiguration(decoderPreference = DecoderPreference.SOFTWARE))
+        val player = FFplayPlayer(FFplayConfiguration(decoderPreference = CodecPreference.SOFTWARE))
         val output = CountingOutput()
         player.attachOutput(output)
         try {

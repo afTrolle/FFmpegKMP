@@ -4,10 +4,6 @@
 package io.github.aftrolle.ffmpegkmp.bindings
 
 @InternalFFmpegKmpApi
-public actual fun createPlatformExecutionBridge(): NativeExecutionBridge =
-    createJavaCppExecutionBridge()
-
-@InternalFFmpegKmpApi
 public actual fun createPlatformPlayerBridge(
     configuration: NativePlayerConfiguration,
     update: (NativePlayerSnapshot) -> Unit,

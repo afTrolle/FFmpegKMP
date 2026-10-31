@@ -40,13 +40,13 @@ class DecoderModelsTest {
 
     @Test
     fun preferencesAndKindsMapOneToOne() {
-        for (preference in DecoderPreference.entries) {
+        for (preference in CodecPreference.entries) {
             assertEquals(preference.name, preference.toNative().name)
         }
         for (kind in NativePlayerDecoderKind.entries) {
             assertEquals(kind.name, kind.toPublic().name)
         }
-        assertEquals(NativePlayerDecoderPreference.entries.size, DecoderPreference.entries.size)
+        assertEquals(NativePlayerDecoderPreference.entries.size, CodecPreference.entries.size)
     }
 
     @Test

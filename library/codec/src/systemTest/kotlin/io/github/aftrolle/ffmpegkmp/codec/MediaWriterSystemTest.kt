@@ -253,7 +253,7 @@ class MediaWriterSystemTest {
     @Test
     fun canEncodeAnswersBeforeOpeningAndAddVideoTrackFailsWithTheReason() = runBlocking<Unit> {
         // The default builds are LGPL: no libx264, so no software H.264.
-        val software = VideoEncoderConfig(128, 128, FrameRate(30), encoder = EncoderPreference.SOFTWARE)
+        val software = VideoEncoderConfig(128, 128, FrameRate(30), encoder = CodecPreference.SOFTWARE)
         assertFalse(MediaWriter.canEncode(software))
         MediaWriter.open(MediaOutput.File((directory / "none.mp4").toString())).use { writer ->
             val failure = assertFailsWith<MediaWritingException> { writer.addVideoTrack(software) }
@@ -382,7 +382,7 @@ class MediaWriterSystemTest {
 
     private suspend fun decoder(name: String, output: VideoOutput = VideoOutput.Memory()): VideoDecoder {
         val bytes = readVideoDecoderFixture(name)
-        return VideoDecoder.open(MediaSource(name, CommandIo { input(name, Buffer().write(bytes)) }), output, DecoderPreference.SOFTWARE)
+        return VideoDecoder.open(MediaSource(name, CommandIo { input(name, Buffer().write(bytes)) }), output, CodecPreference.SOFTWARE)
     }
 
     private suspend fun encodes(config: VideoEncoderConfig): Boolean =

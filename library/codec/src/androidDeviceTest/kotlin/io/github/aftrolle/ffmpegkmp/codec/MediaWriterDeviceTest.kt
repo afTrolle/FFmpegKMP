@@ -43,7 +43,7 @@ class MediaWriterDeviceTest {
         val output = directory / "sdr.mp4"
         timesOutOnTheEmulator {
             assertEquals(30, transcode(output, config).videoFrames)
-            VideoDecoder.open(MediaSource(output.toString()), decoder = DecoderPreference.SOFTWARE).use { decoder ->
+            VideoDecoder.open(MediaSource(output.toString()), decoder = CodecPreference.SOFTWARE).use { decoder ->
                 assertEquals(DynamicRange.SDR, DynamicRange.of(decoder.info))
                 assertEquals(128, decoder.info.width)
                 assertEquals((0 until 30).toList(), decoder.frames().map { frame -> frame.use { it.number() } }.toList())
@@ -64,7 +64,7 @@ class MediaWriterDeviceTest {
         val output = directory / "hdr10.mp4"
         timesOutOnTheEmulator {
             assertEquals(30, transcode(output, config).videoFrames)
-            VideoDecoder.open(MediaSource(output.toString()), VideoOutput.Memory(FrameFormat.RgbaF16), DecoderPreference.SOFTWARE).use { decoder ->
+            VideoDecoder.open(MediaSource(output.toString()), VideoOutput.Memory(FrameFormat.RgbaF16), CodecPreference.SOFTWARE).use { decoder ->
                 assertEquals(DynamicRange.HDR10, DynamicRange.of(decoder.info))
                 assertEquals(10, decoder.info.bitDepth)
                 assertNotNull(decoder.info.hdrMetadata?.masteringDisplay)
@@ -78,7 +78,7 @@ class MediaWriterDeviceTest {
 
     @Test
     fun libaomEncodesAv1InSoftware() = runBlocking {
-        val config = VideoEncoderConfig(128, 128, FrameRate(30), VideoCodec.AV1, encoder = EncoderPreference.SOFTWARE)
+        val config = VideoEncoderConfig(128, 128, FrameRate(30), VideoCodec.AV1, encoder = CodecPreference.SOFTWARE)
         assertTrue(MediaWriter.canEncode(config), "The Android standard build has libaom")
         val result = transcode(directory / "av1.mp4", config, until = 0.5.seconds)
         assertEquals(15, result.videoFrames)
@@ -94,7 +94,7 @@ class MediaWriterDeviceTest {
             VideoDecoder.open(
                 MediaSource(name, CommandIo { input(name, Buffer().write(bytes)) }),
                 VideoOutput.Memory(track.config.canvasFormat),
-                DecoderPreference.SOFTWARE,
+                CodecPreference.SOFTWARE,
             ).use { decoder -> decoder.frames(until = until).collect { track.write(it) } }
             writer.finish()
         }

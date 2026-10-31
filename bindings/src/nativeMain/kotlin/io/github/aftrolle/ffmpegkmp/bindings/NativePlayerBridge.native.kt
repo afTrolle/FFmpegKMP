@@ -53,15 +53,15 @@ public actual fun createPlatformPlayerBridge(
     update: (NativePlayerSnapshot) -> Unit,
     frame: (NativeVideoFrame) -> Unit,
     platformFrame: (NativePlatformVideoFrame) -> Boolean,
-): NativePlayerBridge = NativeCInteropPlayerBridge(configuration, update, frame, platformFrame)
+): NativePlayerBridge {
+    val callbackState = NativePlayerCallbackState(update, frame, platformFrame)
+    return GuardedPlayerBridge(callbackState.guard, NativeCInteropPlayerEngine(configuration, callbackState))
+}
 
-private class NativeCInteropPlayerBridge(
+private class NativeCInteropPlayerEngine(
     configuration: NativePlayerConfiguration,
-    update: (NativePlayerSnapshot) -> Unit,
-    frame: (NativeVideoFrame) -> Unit,
-    platformFrame: (NativePlatformVideoFrame) -> Boolean,
-) : NativePlayerBridge {
-    private val callbackState = NativePlayerCallbackState(update, frame, platformFrame)
+    private val callbackState: NativePlayerCallbackState,
+) : PlayerEngineCalls {
     private val callbackReference = StableRef.create(callbackState)
     private val player = memScoped {
         val nativeConfiguration = alloc<ffplaykmp_configuration>()
@@ -77,7 +77,6 @@ private class NativeCInteropPlayerBridge(
         callbackReference.dispose()
         throw NativeBridgeUnavailableException("FFmpegKMP native player allocation failed")
     }
-    private val guard get() = callbackState.guard
 
     init {
         ffplaykmp_player_set_io_callback(
@@ -97,57 +96,39 @@ private class NativeCInteropPlayerBridge(
         )
     }
 
-    override fun prepare(source: NativePlayerSource): Int {
-        checkOpen()
-        callbackState.mounts = source.mounts.mapIndexed { index, mount ->
-            index.toLong() + 1L to NativeMountedResource(
-                resource = mount.resource,
-                replayableSource = true,
-            )
+    override fun mount(mounts: List<NativeMountedIo>) {
+        callbackState.mounts = mounts.mapIndexed { index, mount ->
+            index.toLong() + 1L to NativeMountedResource(resource = mount.resource, replayableSource = true)
         }.toMap()
-        return ffplaykmp_player_prepare(
-            player,
-            source.protocolInput(),
-            if (source.requireSecurePath) FFPLAYKMP_SOURCE_REQUIRE_SECURE_PATH else 0u,
-        ).also { result -> if (result < 0) callbackState.mounts = emptyMap() }
     }
 
-    override fun resetCancellation() {
-        checkOpen()
-        // Join the outgoing worker before a subsequent prepare reuses its mount ids.
-        ffplaykmp_player_reset_cancel(player)
-    }
+    override fun prepare(input: String, requireSecurePath: Boolean): Int = ffplaykmp_player_prepare(
+        player,
+        input,
+        if (requireSecurePath) FFPLAYKMP_SOURCE_REQUIRE_SECURE_PATH else 0u,
+    )
 
-    override fun setOutput(capabilities: NativePlayerOutputCapabilities): Int = memScoped {
-        checkOpen()
+    override fun resetCancel() = ffplaykmp_player_reset_cancel(player)
+
+    override fun setOutput(flags: Int): Int = memScoped {
         val nativeCapabilities = alloc<ffplaykmp_output_capabilities>()
         ffplaykmp_output_capabilities_init(nativeCapabilities.ptr)
-        nativeCapabilities.flags = capabilities.toNativeFlags().toUInt()
+        nativeCapabilities.flags = flags.toUInt()
         ffplaykmp_player_set_output(player, nativeCapabilities.ptr)
     }
 
-    override fun clearOutput() {
-        checkOpen()
-        ffplaykmp_player_clear_output(player)
-    }
+    override fun setPlatformOutputTarget(target: Any?, secure: Boolean): Int =
+        if (target == null) 0 else NativePlayerError.UNSUPPORTED
 
-    override fun play(): Int = checkedCall { ffplaykmp_player_play(player) }
-    override fun pause(): Int = checkedCall { ffplaykmp_player_pause(player) }
-    override fun setMasterClock(mediaTimeUs: Long) {
-        guard.use({}) { ffplaykmp_player_set_master_clock(player, mediaTimeUs) }
-    }
-    override fun seek(positionUs: Long): Int = checkedCall {
-        ffplaykmp_player_seek(player, positionUs)
-    }
-    override fun stop(): Int = checkedCall {
-        ffplaykmp_player_stop(player).also { if (it == 0) callbackState.mounts = emptyMap() }
-    }
-    override fun cancel() {
-        guard.use({}) { ffplaykmp_player_cancel(player) }
-    }
+    override fun clearOutput() = ffplaykmp_player_clear_output(player)
+    override fun play(): Int = ffplaykmp_player_play(player)
+    override fun pause(): Int = ffplaykmp_player_pause(player)
+    override fun seek(positionUs: Long): Int = ffplaykmp_player_seek(player, positionUs)
+    override fun stop(): Int = ffplaykmp_player_stop(player)
+    override fun cancel() = ffplaykmp_player_cancel(player)
+    override fun setMasterClock(mediaTimeUs: Long) = ffplaykmp_player_set_master_clock(player, mediaTimeUs)
 
     override fun snapshot(): NativePlayerSnapshot = memScoped {
-        checkOpen()
         val nativeSnapshot = alloc<ffplaykmp_snapshot>()
         ffplaykmp_snapshot_init(nativeSnapshot.ptr)
         val result = ffplaykmp_player_get_snapshot(player, nativeSnapshot.ptr)
@@ -155,19 +136,10 @@ private class NativeCInteropPlayerBridge(
         nativeSnapshot.toNativeSnapshot()
     }
 
-    override fun close() {
-        guard.close {
-            callbackState.mounts = emptyMap()
-            ffplaykmp_player_destroy(player)
-            callbackReference.dispose()
-        }
+    override fun release() {
+        ffplaykmp_player_destroy(player)
+        callbackReference.dispose()
     }
-
-    private fun checkedCall(block: () -> Int): Int = guard.use(::closedError, block)
-
-    private fun checkOpen() = check(guard.isOpen) { "The native player bridge is closed" }
-
-    private fun closedError(): Nothing = throw IllegalStateException("The native player bridge is closed")
 }
 
 private class NativePlayerCallbackState(

@@ -26,3 +26,16 @@ public data class AudioLevel(
         public val Muted: AudioLevel = AudioLevel(muted = true)
     }
 }
+
+/**
+ * Applies [current]'s value with [apply], and again whenever it changed meanwhile. Every writer
+ * checks after its own write, so concurrent updates leave the newest value applied rather than
+ * whichever write happened to land last, without a lock.
+ */
+@InternalFFmpegKmpApi
+public inline fun <T> applyLatest(current: () -> T, apply: (T) -> Unit) {
+    do {
+        val value = current()
+        apply(value)
+    } while (current() != value)
+}

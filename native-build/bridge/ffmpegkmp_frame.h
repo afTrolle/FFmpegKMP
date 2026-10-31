@@ -142,22 +142,6 @@ FFPLAYKMP_EXPORT int ffmpegkmp_frame_map_writable(ffmpegkmp_frame *frame, ffmpeg
 FFPLAYKMP_EXPORT void ffmpegkmp_frame_unmap_writable(ffmpegkmp_frame *frame);
 
 /*
- * A pool of frames keyed by layout and size. Frames are pooled AVBuffers, or
- * on Apple, for NV12, P010, BGRA8 and RGBA_F16, IOSurface-backed buffers from
- * a CVPixelBufferPool.
- *
- * With `capacity` 0 the pool makes a buffer whenever none is free. With a
- * capacity, at most 8, it is a ring: it makes at most that many buffers per
- * layout and size, once, and hands them out again as their frames close (a
- * CVPixelBufferPool takes the capacity as its allocation threshold).
- *
- * Freeing the pool leaves the frames it handed out valid; their memory is
- * released with their last reference, and a ring's bookkeeping with the last
- * of its frames. NULL when out of memory or for a capacity out of range.
- */
-FFPLAYKMP_EXPORT ffmpegkmp_frame_pool *ffmpegkmp_frame_pool_alloc(int32_t capacity);
-FFPLAYKMP_EXPORT void ffmpegkmp_frame_pool_free(ffmpegkmp_frame_pool *pool);
-/*
  * A frame of `format` at this size, its pixels unspecified. `pool` NULL is the
  * process-wide pool, which has no bound. It never waits: while all of a ring's
  * frames of this layout and size are out, it fails with AVERROR(EAGAIN).

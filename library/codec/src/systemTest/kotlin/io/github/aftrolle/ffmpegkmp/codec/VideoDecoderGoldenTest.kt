@@ -191,7 +191,7 @@ class VideoDecoderGoldenTest {
     private suspend fun decoder(name: String, output: VideoOutput): VideoDecoder = VideoDecoder.open(
         MediaSource(name, CommandIo { input(name, Buffer().write(readVideoDecoderFixture(name))) }),
         output,
-        DecoderPreference.SOFTWARE,
+        CodecPreference.SOFTWARE,
         10.seconds,
         DecoderThreads.Auto,
     )

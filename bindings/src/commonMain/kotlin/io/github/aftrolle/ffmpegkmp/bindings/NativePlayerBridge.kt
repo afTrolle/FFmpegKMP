@@ -403,6 +403,71 @@ public const val AVCOL_TRC_SMPTE2084: Int = 16
 @InternalFFmpegKmpApi
 public const val AVCOL_TRC_ARIB_STD_B67: Int = 18
 
+/** Raw `ffplaykmp_player_*` calls for one native player, implemented per platform binding. */
+internal interface PlayerEngineCalls {
+    /** Replaces the mounts the player's I/O callback serves, ids counting from 1. */
+    fun mount(mounts: List<NativeMountedIo>)
+    fun prepare(input: String, requireSecurePath: Boolean): Int
+    fun resetCancel()
+    fun setOutput(flags: Int): Int
+    fun setPlatformOutputTarget(target: Any?, secure: Boolean): Int
+    fun clearOutput()
+    fun play(): Int
+    fun pause(): Int
+    fun seek(positionUs: Long): Int
+    fun stop(): Int
+    fun cancel()
+    fun setMasterClock(mediaTimeUs: Long)
+    fun snapshot(): NativePlayerSnapshot
+
+    /** Frees the player and anything the binding keeps alive for it. */
+    fun release()
+}
+
+/**
+ * A [NativePlayerBridge] over [engine]. Every call enters [guard], which the engine's native
+ * callbacks also check, so [close] never frees the player under a call or a callback.
+ */
+internal class GuardedPlayerBridge(
+    private val guard: NativeHandleGuard,
+    private val engine: PlayerEngineCalls,
+) : NativePlayerBridge {
+    override fun prepare(source: NativePlayerSource): Int = call {
+        engine.mount(source.mounts)
+        engine.prepare(source.protocolInput(), source.requireSecurePath)
+            .also { result -> if (result < 0) engine.mount(emptyList()) }
+    }
+
+    // Joins the outgoing worker before a subsequent prepare reuses its mount ids.
+    override fun resetCancellation() = call { engine.resetCancel() }
+
+    override fun setOutput(capabilities: NativePlayerOutputCapabilities): Int =
+        call { engine.setOutput(capabilities.toNativeFlags()) }
+
+    override fun setPlatformOutputTarget(target: Any?, secure: Boolean): Int =
+        call { engine.setPlatformOutputTarget(target, secure) }
+
+    override fun clearOutput() = call { engine.clearOutput() }
+    override fun play(): Int = call { engine.play() }
+    override fun pause(): Int = call { engine.pause() }
+    override fun seek(positionUs: Long): Int = call { engine.seek(positionUs) }
+    override fun stop(): Int = call { engine.stop().also { if (it == 0) engine.mount(emptyList()) } }
+    override fun snapshot(): NativePlayerSnapshot = call { engine.snapshot() }
+
+    /** Cross-thread calls: after [close] they do nothing. */
+    override fun setMasterClock(mediaTimeUs: Long) = guard.use({}) { engine.setMasterClock(mediaTimeUs) }
+    override fun cancel() = guard.use({}) { engine.cancel() }
+
+    override fun close() = guard.close {
+        engine.mount(emptyList())
+        engine.release()
+    }
+
+    private inline fun <T> call(block: () -> T): T = guard.use(::closedError, block)
+
+    private fun closedError(): Nothing = throw IllegalStateException("The native player bridge is closed")
+}
+
 internal fun NativePlayerOutputCapabilities.toNativeFlags(): Int =
     (if (hardwareFrameImport) OUTPUT_HARDWARE_FRAME_IMPORT else 0) or
         (if (softwareFrameUpload) OUTPUT_SOFTWARE_FRAME_UPLOAD else 0) or

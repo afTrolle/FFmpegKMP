@@ -14,10 +14,6 @@ import io.github.aftrolle.ffmpegkmp.bindings.javacpp.AndroidPlayerSurface
 import org.bytedeco.javacpp.Loader
 
 @InternalFFmpegKmpApi
-public actual fun createPlatformExecutionBridge(): NativeExecutionBridge =
-    createJavaCppExecutionBridge()
-
-@InternalFFmpegKmpApi
 public actual fun createPlatformPlayerBridge(
     configuration: NativePlayerConfiguration,
     update: (NativePlayerSnapshot) -> Unit,

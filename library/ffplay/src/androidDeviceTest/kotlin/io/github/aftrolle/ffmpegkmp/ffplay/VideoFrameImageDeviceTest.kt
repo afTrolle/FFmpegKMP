@@ -4,7 +4,7 @@ package io.github.aftrolle.ffmpegkmp.ffplay
 import android.graphics.Bitmap
 import android.graphics.ColorSpace
 import androidx.compose.ui.graphics.asAndroidBitmap
-import io.github.aftrolle.ffmpegkmp.codec.DecoderPreference
+import io.github.aftrolle.ffmpegkmp.codec.CodecPreference
 import io.github.aftrolle.ffmpegkmp.codec.FrameFormat
 import io.github.aftrolle.ffmpegkmp.codec.MediaSource
 import io.github.aftrolle.ffmpegkmp.codec.VideoDecoder
@@ -66,7 +66,7 @@ class VideoFrameImageDeviceTest {
         return VideoDecoder.open(
             MediaSource(name, CommandIo { input(name, Buffer().write(bytes)) }),
             output,
-            DecoderPreference.SOFTWARE,
+            CodecPreference.SOFTWARE,
         )
     }
 

@@ -3,7 +3,7 @@ package io.github.aftrolle.ffmpegkmp.ffplay
 
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asSkiaBitmap
-import io.github.aftrolle.ffmpegkmp.codec.DecoderPreference
+import io.github.aftrolle.ffmpegkmp.codec.CodecPreference
 import io.github.aftrolle.ffmpegkmp.codec.FrameFormat
 import io.github.aftrolle.ffmpegkmp.codec.MediaSource
 import io.github.aftrolle.ffmpegkmp.codec.VideoDecoder
@@ -103,7 +103,7 @@ class VideoFrameImageTest {
     private suspend fun decoder(name: String, output: VideoOutput): VideoDecoder = VideoDecoder.open(
         MediaSource(name, CommandIo { input(name, Buffer().write(readVideoDecoderFixture(name))) }),
         output,
-        DecoderPreference.SOFTWARE,
+        CodecPreference.SOFTWARE,
     )
 
     /** RGBA samples: 8-bit codes from an 8-bit bitmap, half-float bits from a linear F16 one. */

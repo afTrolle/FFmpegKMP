@@ -65,7 +65,7 @@ class VideoDecoderMemoryDeviceTest {
     @Test
     fun autoDecodesAnEightBitSourceIntoMemoryWithMediaCodecOrFallsBack() = runBlocking {
         for (format in listOf(null, FrameFormat.Rgba8)) {
-            open("cfr-30-h264-128.mp4", VideoOutput.Memory(format), DecoderPreference.AUTO).use { decoder ->
+            open("cfr-30-h264-128.mp4", VideoOutput.Memory(format), CodecPreference.AUTO).use { decoder ->
                 // The emulator's goldfish decoders reject FFmpeg's input, so there AUTO falls back.
                 if (Build.HARDWARE != "ranchu") {
                     assertEquals(DecoderKind.HARDWARE, decoder.decoderKind, "MediaCodec decodes H.264 on every device")
@@ -87,7 +87,7 @@ class VideoDecoderMemoryDeviceTest {
 
     @Test
     fun requireHardwareDecodesAnEightBitSourceIntoMemoryOrFails() = runBlocking<Unit> {
-        runCatching { open("cfr-30-h264-128.mp4", VideoOutput.Memory(), DecoderPreference.REQUIRE_HARDWARE) }
+        runCatching { open("cfr-30-h264-128.mp4", VideoOutput.Memory(), CodecPreference.REQUIRE_HARDWARE) }
             .onSuccess { opened ->
                 opened.use { decoder ->
                     assertEquals(DecoderKind.HARDWARE, decoder.decoderKind)
@@ -99,18 +99,18 @@ class VideoDecoderMemoryDeviceTest {
 
     @Test
     fun aTenBitSourceDecodesIntoMemoryInSoftware() = runBlocking<Unit> {
-        open("hdr10-pq.mp4", VideoOutput.Memory(FrameFormat.RgbaF16), DecoderPreference.AUTO).use { decoder ->
+        open("hdr10-pq.mp4", VideoOutput.Memory(FrameFormat.RgbaF16), CodecPreference.AUTO).use { decoder ->
             assertEquals(DecoderKind.SOFTWARE, decoder.decoderKind)
         }
         assertFailsWith<VideoDecodingException> {
-            open("hdr10-pq.mp4", VideoOutput.Memory(), DecoderPreference.REQUIRE_HARDWARE).close()
+            open("hdr10-pq.mp4", VideoOutput.Memory(), CodecPreference.REQUIRE_HARDWARE).close()
         }
     }
 
     private suspend fun open(
         name: String,
         output: VideoOutput,
-        preference: DecoderPreference = DecoderPreference.SOFTWARE,
+        preference: CodecPreference = CodecPreference.SOFTWARE,
     ): VideoDecoder {
         val bytes = checkNotNull(javaClass.getResourceAsStream("/video-decoder/$name")) { "Missing fixture $name" }
             .use { it.readBytes() }

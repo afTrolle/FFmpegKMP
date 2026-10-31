@@ -40,10 +40,10 @@ import platform.posix.memcpy
 import kotlin.concurrent.atomics.AtomicBoolean
 
 @InternalFFmpegKmpApi
-public actual fun createPlatformExecutionBridge(): NativeExecutionBridge = NativeCInteropExecutionBridge()
+public actual fun createPlatformExecutionBridge(): NativeExecutionBridge =
+    CommandEngineBridge(NativeCInteropCommandEngine(), Dispatchers.IO)
 
-@InternalFFmpegKmpApi
-private class NativeCInteropExecutionBridge : NativeExecutionBridge {
+private class NativeCInteropCommandEngine : CommandEngineCalls {
     private val callbackState = CallbackState()
     private val callbackReference = StableRef.create(callbackState)
     private val context = ffmpegkmp_context_create(
@@ -53,75 +53,48 @@ private class NativeCInteropExecutionBridge : NativeExecutionBridge {
         callbackReference.dispose()
         throw NativeBridgeUnavailableException("FFmpegKMP native context allocation failed")
     }
-    private var closed = false
 
     init {
         ffmpegkmp_context_set_io_callback(context, staticCFunction(::receiveNativeIo))
     }
 
-    override suspend fun execute(
-        request: NativeExecutionRequest,
-        emit: (NativeExecutionEvent) -> Unit,
-    ): NativeExecutionResult {
-        check(!closed) { "The native execution bridge is closed" }
-        val mounts = request.mounts.mapIndexed { index, mount ->
+    override fun attach(mounts: List<NativeMountedIo>, emit: (NativeExecutionEvent) -> Unit) {
+        callbackState.mounts = mounts.mapIndexed { index, mount ->
             (index.toLong() + 1L) to NativeMountedResource(mount.resource)
         }.toMap()
-        val mountedPaths = request.mounts.mapIndexed { index, mount ->
-            mount.path to protocolUrl(index.toLong() + 1L, mount.path)
-        }.toMap()
-        try {
-            callbackState.emit = emit
-            callbackState.mounts = mounts
-            val executable = if (request.kind == NativeCommandKind.FFMPEG) "ffmpeg" else "ffprobe"
-            val arguments = listOf(executable) + request.arguments.map { mountedPaths[it] ?: it }
-            // The argument strings outlive a suspension, so they live in an Arena rather than a
-            // memScoped block.
-            val arena = Arena()
-            val returnCode = try {
-                val nativeArguments = arena.allocArray<CPointerVar<ByteVar>>(arguments.size)
-                arguments.forEachIndexed { index, argument -> nativeArguments[index] = argument.cstr.getPointer(arena) }
-                // A cancel stays on the context until cleared, so clearing it here (with no run
-                // in flight on this bridge) means any cancel from now on belongs to this run.
-                ffmpegkmp_context_reset_cancel(context)
-                runCancellableNative(Dispatchers.IO, cancelNative = { ffmpegkmp_cancel(context) }) {
-                    ffmpegkmp_execute(
-                        context,
-                        if (request.kind == NativeCommandKind.FFMPEG) {
-                            FFMPEGKMP_COMMAND_FFMPEG
-                        } else {
-                            FFMPEGKMP_COMMAND_FFPROBE
-                        },
-                        arguments.size,
-                        nativeArguments,
-                    )
-                }
-            } finally {
-                callbackState.emit = null
-                arena.clear()
-            }
-            if (returnCode == -38) {
-                throw NativeBridgeUnavailableException(
-                    "The FFmpegKMP bridge was built without the patched fftools entry points",
-                )
-            }
-            return NativeExecutionResult(returnCode)
+        callbackState.emit = emit
+    }
+
+    override fun detach() {
+        callbackState.emit = null
+        callbackState.mounts = emptyMap()
+    }
+
+    override fun resetCancel() = ffmpegkmp_context_reset_cancel(context)
+
+    override fun cancel() = ffmpegkmp_cancel(context)
+
+    override fun execute(kind: NativeCommandKind, arguments: List<String>): Int {
+        val arena = Arena()
+        return try {
+            val nativeArguments = arena.allocArray<CPointerVar<ByteVar>>(arguments.size)
+            arguments.forEachIndexed { index, argument -> nativeArguments[index] = argument.cstr.getPointer(arena) }
+            ffmpegkmp_execute(
+                context,
+                if (kind == NativeCommandKind.FFMPEG) FFMPEGKMP_COMMAND_FFMPEG else FFMPEGKMP_COMMAND_FFPROBE,
+                arguments.size,
+                nativeArguments,
+            )
         } finally {
-            callbackState.emit = null
-            callbackState.mounts = emptyMap()
+            arena.clear()
         }
     }
 
-    override fun close() {
-        if (closed) return
-        closed = true
-        callbackState.emit = null
-        callbackState.mounts = emptyMap()
+    override fun release() {
         ffmpegkmp_context_destroy(context)
         callbackReference.dispose()
     }
 }
-
 
 private class CallbackState {
     var emit: ((NativeExecutionEvent) -> Unit)? = null

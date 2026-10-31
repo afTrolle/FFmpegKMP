@@ -10,6 +10,7 @@ package io.github.aftrolle.ffmpegkmp.ffplay
 import io.github.aftrolle.ffmpegkmp.bindings.NativeFileResource
 import io.github.aftrolle.ffmpegkmp.codec.MediaSource
 import io.github.aftrolle.ffmpegkmp.core.AudioLevel
+import io.github.aftrolle.ffmpegkmp.core.applyLatest
 import io.github.aftrolle.ffmpegkmp.core.toNativeMounts
 import io.github.aftrolle.ffmpegkmp.player.AudioPlayer
 import io.github.aftrolle.ffmpegkmp.player.AudioTrackInfo
@@ -51,7 +52,7 @@ internal interface FFplayAudioOutput : AutoCloseable {
     fun pause()
     fun seekTo(position: Duration)
     fun setLevel(level: AudioLevel)
-    fun setTrackLevel(track: Int, level: AudioLevel)
+    fun updateTrackLevel(track: Int, transform: (AudioLevel) -> AudioLevel)
     fun setTrackEnabled(track: Int, enabled: Boolean)
     fun selectTracks(selected: Set<Int>)
 }
@@ -101,7 +102,7 @@ internal class FFplayAudio(
     fun attach(audio: FFplayAudioOutput, snapshot: FFplaySnapshot, reportClock: (Duration) -> Unit) {
         close()
         current.store(audio)
-        audio.setLevel(mutableState.value.level)
+        applyLatest({ mutableState.value.level }, audio::setLevel)
         mutableState.value = FFplayAudioState(
             available = true,
             tracks = audio.tracks,
@@ -150,15 +151,22 @@ internal class FFplayAudio(
         return position.inWholeMicroseconds
     }
 
-    fun setLevel(level: AudioLevel) {
-        current.load()?.setLevel(level)
-        mutableState.update { it.copy(level = level) }
+    /**
+     * Atomic, so a volume and a mute change from different threads never lose one another.
+     * [transform] may run more than once when another update races it.
+     */
+    fun updateLevel(transform: (AudioLevel) -> AudioLevel) {
+        mutableState.update { it.copy(level = transform(it.level)) }
+        applyLatest({ mutableState.value.level }) { level -> current.load()?.setLevel(level) }
     }
 
-    fun setTrackLevel(track: Int, level: AudioLevel) {
+    fun updateTrackLevel(track: Int, transform: (AudioLevel) -> AudioLevel) {
         val audio = current.load() ?: return
-        audio.setTrackLevel(track, level)
-        mutableState.update { it.copy(trackLevels = audio.trackLevels.value) }
+        audio.updateTrackLevel(track, transform)
+        applyLatest({ audio.trackLevels.value }) { levels ->
+            // A source replaced meanwhile publishes its own levels.
+            mutableState.update { if (current.load() === audio) it.copy(trackLevels = levels) else it }
+        }
     }
 
     fun setTrackEnabled(track: Int, enabled: Boolean) {
@@ -216,7 +224,8 @@ internal suspend fun openAudioPlayer(source: MediaSource): FFplayAudioOutput? {
         override fun pause() = player.pause()
         override fun seekTo(position: Duration) = player.seekTo(position)
         override fun setLevel(level: AudioLevel) = player.setLevel(level)
-        override fun setTrackLevel(track: Int, level: AudioLevel) = player.setTrackLevel(track, level)
+        override fun updateTrackLevel(track: Int, transform: (AudioLevel) -> AudioLevel) =
+            player.updateTrackLevel(track, transform)
         override fun setTrackEnabled(track: Int, enabled: Boolean) = player.setTrackEnabled(track, enabled)
         override fun selectTracks(selected: Set<Int>) = player.selectTracks(selected)
     }

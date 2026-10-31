@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 @file:OptIn(
     io.github.aftrolle.ffmpegkmp.bindings.InternalFFmpegKmpApi::class,
+    io.github.aftrolle.ffmpegkmp.core.InternalFFmpegKmpApi::class,
     kotlin.concurrent.atomics.ExperimentalAtomicApi::class,
 )
 
@@ -13,6 +14,7 @@ import io.github.aftrolle.ffmpegkmp.bindings.NativeBridgeUnavailableException
 import io.github.aftrolle.ffmpegkmp.bindings.openPlatformAudioDecoder
 import io.github.aftrolle.ffmpegkmp.core.AudioLevel
 import io.github.aftrolle.ffmpegkmp.core.FFmpegKmpException
+import io.github.aftrolle.ffmpegkmp.core.applyLatest
 import kotlin.concurrent.atomics.AtomicBoolean
 import kotlin.concurrent.atomics.AtomicReference
 import kotlin.concurrent.atomics.update
@@ -116,7 +118,7 @@ public class AudioDecoder internal constructor(
         get() = masterLevel.load()
         set(value) {
             masterLevel.store(value)
-            native.setMasterGain(value.effectiveVolume.toFloat())
+            applyLatest(masterLevel::load) { native.setMasterGain(it.effectiveVolume.toFloat()) }
         }
 
     public val trackLevels: List<AudioLevel> get() = levels.load()
@@ -124,9 +126,17 @@ public class AudioDecoder internal constructor(
     public fun trackLevel(track: Int): AudioLevel = levels.load()[requireTrack(track)]
 
     public fun setTrackLevel(track: Int, level: AudioLevel) {
+        updateTrackLevel(track) { level }
+    }
+
+    /**
+     * Atomic, so a volume and a mute change to one track from different threads never lose one
+     * another. [transform] may run more than once when another update races it, so keep it pure.
+     */
+    public fun updateTrackLevel(track: Int, transform: (AudioLevel) -> AudioLevel) {
         requireTrack(track)
-        levels.update { current -> current.toMutableList().also { it[track] = level } }
-        native.setTrackGain(track, level.effectiveVolume.toFloat())
+        levels.update { current -> current.toMutableList().also { it[track] = transform(it[track]) } }
+        applyLatest({ levels.load()[track] }) { native.setTrackGain(track, it.effectiveVolume.toFloat()) }
     }
 
     /** Tracks currently decoded and mixed. Opening enables FFmpeg's default track only. */

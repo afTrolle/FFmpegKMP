@@ -15,9 +15,10 @@ import org.bytedeco.javacpp.Pointer
 import org.bytedeco.javacpp.PointerPointer
 
 @InternalFFmpegKmpApi
-internal fun createJavaCppExecutionBridge(): NativeExecutionBridge = JavaCppExecutionBridge()
+public actual fun createPlatformExecutionBridge(): NativeExecutionBridge =
+    CommandEngineBridge(JavaCppCommandEngine(), Dispatchers.IO)
 
-private class JavaCppExecutionBridge : NativeExecutionBridge {
+private class JavaCppCommandEngine : CommandEngineCalls {
     @Volatile
     private var eventConsumer: ((NativeExecutionEvent) -> Unit)? = null
 
@@ -26,8 +27,6 @@ private class JavaCppExecutionBridge : NativeExecutionBridge {
     private val context: ffmpegkmp_context
     @Volatile
     private var mountedResources: Map<Long, MountedResource> = emptyMap()
-    @Volatile
-    private var closed = false
 
     init {
         JavaCppBridgeLoader.load()
@@ -70,62 +69,36 @@ private class JavaCppExecutionBridge : NativeExecutionBridge {
             ?.let { bridge.ffmpegkmp_set_temp_directory(it.absolutePath) }
     }
 
-    override suspend fun execute(
-        request: NativeExecutionRequest,
-        emit: (NativeExecutionEvent) -> Unit,
-    ): NativeExecutionResult {
-        check(!closed) { "The JavaCPP execution bridge is closed" }
-        val mounts = request.mounts.mapIndexed { index, mount ->
-            val id = index.toLong() + 1L
-            id to MountedResource(mount.resource)
-        }.toMap()
-        val mountedPaths = request.mounts.mapIndexed { index, mount ->
-            mount.path to protocolUrl(index.toLong() + 1L, mount.path)
-        }.toMap()
-        try {
-            val executable = if (request.kind == NativeCommandKind.FFMPEG) "ffmpeg" else "ffprobe"
-            val arguments = listOf(executable) + request.arguments.map { argument ->
-                mountedPaths[argument] ?: argument
-            }
-            val pointers = PointerPointer<BytePointer>(*arguments.toTypedArray())
-            mountedResources = mounts
-            eventConsumer = emit
-            // A cancel stays on the context until cleared, so clearing it here (with no run in
-            // flight on this bridge) means any cancel from now on belongs to this run.
-            bridge.ffmpegkmp_context_reset_cancel(context)
-            val returnCode = try {
-                runCancellableNative(Dispatchers.IO, cancelNative = { bridge.ffmpegkmp_cancel(context) }) {
-                    bridge.ffmpegkmp_execute(
-                        context,
-                        if (request.kind == NativeCommandKind.FFMPEG) {
-                            bridge.FFMPEGKMP_COMMAND_FFMPEG
-                        } else {
-                            bridge.FFMPEGKMP_COMMAND_FFPROBE
-                        },
-                        arguments.size,
-                        pointers,
-                    )
-                }
-            } finally {
-                eventConsumer = null
-                pointers.close()
-            }
-            if (returnCode == -38) {
-                throw NativeBridgeUnavailableException(
-                    "The FFmpegKMP JNI bridge was built without embedded fftools entry points",
-                )
-            }
-            return NativeExecutionResult(returnCode)
+    override fun attach(mounts: List<NativeMountedIo>, emit: (NativeExecutionEvent) -> Unit) {
+        mountedResources = mounts.mapIndexed { index, mount -> index.toLong() + 1L to MountedResource(mount.resource) }
+            .toMap()
+        eventConsumer = emit
+    }
+
+    override fun detach() {
+        eventConsumer = null
+        mountedResources = emptyMap()
+    }
+
+    override fun resetCancel() = bridge.ffmpegkmp_context_reset_cancel(context)
+
+    override fun cancel() = bridge.ffmpegkmp_cancel(context)
+
+    override fun execute(kind: NativeCommandKind, arguments: List<String>): Int {
+        val pointers = PointerPointer<BytePointer>(*arguments.toTypedArray())
+        return try {
+            bridge.ffmpegkmp_execute(
+                context,
+                if (kind == NativeCommandKind.FFMPEG) bridge.FFMPEGKMP_COMMAND_FFMPEG else bridge.FFMPEGKMP_COMMAND_FFPROBE,
+                arguments.size,
+                pointers,
+            )
         } finally {
-            mountedResources = emptyMap()
+            pointers.close()
         }
     }
 
-    override fun close() {
-        if (closed) return
-        closed = true
-        eventConsumer = null
-        mountedResources = emptyMap()
+    override fun release() {
         bridge.ffmpegkmp_context_destroy(context)
         ioCallback.close()
         callback.close()

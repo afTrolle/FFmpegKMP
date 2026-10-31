@@ -121,7 +121,6 @@ typedef struct ffmpegkmp_writer_result {
     int64_t duration_us;
 } ffmpegkmp_writer_result;
 
-FFPLAYKMP_EXPORT void ffmpegkmp_hdr_metadata_init(ffmpegkmp_hdr_metadata *metadata);
 FFPLAYKMP_EXPORT void ffmpegkmp_video_encoder_config_init(ffmpegkmp_video_encoder_config *config);
 FFPLAYKMP_EXPORT void ffmpegkmp_video_track_info_init(ffmpegkmp_video_track_info *info);
 FFPLAYKMP_EXPORT void ffmpegkmp_audio_encoder_config_init(ffmpegkmp_audio_encoder_config *config);

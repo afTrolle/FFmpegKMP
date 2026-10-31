@@ -19,7 +19,7 @@ import androidx.test.platform.app.InstrumentationRegistry
 import io.github.aftrolle.ffmpegkmp.codec.ColorPrimaries
 import io.github.aftrolle.ffmpegkmp.codec.ColorTransfer
 import io.github.aftrolle.ffmpegkmp.codec.ContentLightMetadata
-import io.github.aftrolle.ffmpegkmp.codec.DecoderPreference
+import io.github.aftrolle.ffmpegkmp.codec.CodecPreference
 import io.github.aftrolle.ffmpegkmp.codec.DynamicRange
 import io.github.aftrolle.ffmpegkmp.codec.FrameFormat
 import io.github.aftrolle.ffmpegkmp.codec.FrameRate
@@ -116,7 +116,7 @@ class SurfaceEncoderDeviceTest {
                     }
                     assertEquals(FRAMES.toLong(), writer.finish().videoFrames)
                 }
-                VideoDecoder.open(MediaSource(output.toString()), VideoOutput.Memory(FrameFormat.Rgba8), DecoderPreference.SOFTWARE).use { decoder ->
+                VideoDecoder.open(MediaSource(output.toString()), VideoOutput.Memory(FrameFormat.Rgba8), CodecPreference.SOFTWARE).use { decoder ->
                     assertEquals(SIZE, decoder.info.width)
                     val frames = decoder.frames().map { frame -> frame.use { it.pts to it.number() } }.toList()
                     assertEquals((0 until FRAMES).toList(), frames.map { it.second }, "$codec: frame numbers")
@@ -148,7 +148,7 @@ class SurfaceEncoderDeviceTest {
                     if (!surface) assertFalse(track.zeroCopy) else if (Build.HARDWARE != "ranchu") assertTrue(track.zeroCopy)
                     writer.finish()
                 }
-                VideoDecoder.open(MediaSource(output.toString()), VideoOutput.Memory(FrameFormat.Rgba8), DecoderPreference.SOFTWARE).use { decoder ->
+                VideoDecoder.open(MediaSource(output.toString()), VideoOutput.Memory(FrameFormat.Rgba8), CodecPreference.SOFTWARE).use { decoder ->
                     decoder.frameAt(Duration.ZERO).use { it.pixel(x = SIZE / 2, y = SIZE * 3 / 4) }
                 }
             }
@@ -196,7 +196,7 @@ class SurfaceEncoderDeviceTest {
                     }
                     writer.finish()
                 }
-                VideoDecoder.open(MediaSource(output.toString()), VideoOutput.Memory(FrameFormat.RgbaF16), DecoderPreference.SOFTWARE).use { decoder ->
+                VideoDecoder.open(MediaSource(output.toString()), VideoOutput.Memory(FrameFormat.RgbaF16), CodecPreference.SOFTWARE).use { decoder ->
                     val frames = decoder.frames().map { frame ->
                         frame.use { HdrFrame(it.hdrNumber(), List(HDR_PATCHES.size) { patch -> it.linearRgb(patchCentreX(patch), PATCH_CENTRE_Y) }) }
                     }.toList()

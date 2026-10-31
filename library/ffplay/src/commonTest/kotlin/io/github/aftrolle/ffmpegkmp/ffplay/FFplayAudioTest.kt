@@ -151,7 +151,7 @@ private class FakeAudio : FFplayAudioOutput {
     override fun setLevel(level: AudioLevel) {
         appliedLevel = level
     }
-    override fun setTrackLevel(track: Int, level: AudioLevel) = Unit
+    override fun updateTrackLevel(track: Int, transform: (AudioLevel) -> AudioLevel) = Unit
     override fun setTrackEnabled(track: Int, enabled: Boolean) = Unit
     override fun selectTracks(selected: Set<Int>) = Unit
     override fun close() {

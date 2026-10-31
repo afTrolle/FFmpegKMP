@@ -20,7 +20,7 @@ import io.github.aftrolle.ffmpegkmp.bindings.createInMemoryPlayerBridge
 import io.github.aftrolle.ffmpegkmp.bindings.createPlatformPlayerBridge
 import io.github.aftrolle.ffmpegkmp.codec.ColorPrimaries
 import io.github.aftrolle.ffmpegkmp.codec.ColorTransfer
-import io.github.aftrolle.ffmpegkmp.codec.DecoderPreference
+import io.github.aftrolle.ffmpegkmp.codec.CodecPreference
 import io.github.aftrolle.ffmpegkmp.codec.MediaSource
 import io.github.aftrolle.ffmpegkmp.codec.VideoFrame
 import io.github.aftrolle.ffmpegkmp.codec.VideoInfo
@@ -338,7 +338,7 @@ private class FFplayBridgeEngine(
         nativeQueueSerial = native.queueSerial
         nativeDroppedFrames = native.droppedFrames
         if (!decoderFallbackEmitted &&
-            configuration.decoderPreference == DecoderPreference.AUTO &&
+            configuration.decoderPreference == CodecPreference.AUTO &&
             output != null && negotiated.hardwareFrameImport &&
             native.activeDecoder == NativePlayerDecoderKind.SOFTWARE
         ) {
@@ -483,10 +483,10 @@ private class FFplayBridgeEngine(
         configuration.outputPreference == FFplayOutputPreference.NATIVE_SURFACE &&
             kind == FFplayRendererKind.COMPOSE_CANVAS ->
             "A native video surface was required, but only the Compose Canvas output is available"
-        configuration.decoderPreference == DecoderPreference.REQUIRE_HARDWARE &&
+        configuration.decoderPreference == CodecPreference.REQUIRE_HARDWARE &&
             !capabilities.hardwareFrameImport && this.capabilities.hardwareFrameImport ->
             "FORCE_SDR must tone map this HDR source in software, but hardware decoding was required"
-        configuration.decoderPreference == DecoderPreference.REQUIRE_HARDWARE &&
+        configuration.decoderPreference == CodecPreference.REQUIRE_HARDWARE &&
             !capabilities.hardwareFrameImport ->
             "Hardware decoding was required, but the attached output cannot import hardware frames"
         !capabilities.softwareFrameUpload && !capabilities.hardwareFrameImport ->

@@ -238,12 +238,12 @@ class VideoDecoderSystemTest {
 
     @Test
     fun hardwareDecodingReturnsTheSameFramesWhereTheHostHasIt() = runBlocking {
-        decoder("hdr10-pq.mp4", VideoOutput.Memory(FrameFormat.RgbaF16), DecoderPreference.AUTO).use { decoder ->
+        decoder("hdr10-pq.mp4", VideoOutput.Memory(FrameFormat.RgbaF16), CodecPreference.AUTO).use { decoder ->
             if (decoder.decoderKind == DecoderKind.HARDWARE) assertEquals("p010le", decoder.info.pixelFormat)
             decoder.frameAt(Duration.ZERO).use { assertEquals(1000.0 / 203.0, it.linear(x = 84, y = 32), 0.15) }
         }
         // No hardware decoder takes these MPEG-4 Part 2 clips, so AUTO falls back to software.
-        decoder("cfr-30.mp4", decoder = DecoderPreference.AUTO).use { decoder ->
+        decoder("cfr-30.mp4", decoder = CodecPreference.AUTO).use { decoder ->
             assertEquals(DecoderKind.SOFTWARE, decoder.decoderKind)
             assertEquals(45, decoder.number(1.5.seconds))
         }
@@ -268,7 +268,7 @@ class VideoDecoderSystemTest {
         FileSystem.SYSTEM.createDirectories(directory)
         val file = directory / "cfr-60.mp4"
         FileSystem.SYSTEM.write(file) { write(fixture("cfr-60.mp4")) }
-        VideoDecoder.open(MediaSource(file.toString()), decoder = DecoderPreference.SOFTWARE).use {
+        VideoDecoder.open(MediaSource(file.toString()), decoder = CodecPreference.SOFTWARE).use {
             assertEquals(150, it.number(2.5.seconds))
         }
     }
@@ -295,7 +295,7 @@ class VideoDecoderSystemTest {
             val started = TimeSource.Monotonic.markNow()
             val failure = assertFailsWith<VideoDecodingException> {
                 // AUTO: the stall comes before any decoder, so there is nothing to fall back from.
-                decoder("stalled.mp4", decoder = DecoderPreference.AUTO, source = stalled.source, timeout = TIMEOUT)
+                decoder("stalled.mp4", decoder = CodecPreference.AUTO, source = stalled.source, timeout = TIMEOUT)
             }
             assertContains(failure.message.orEmpty(), "timed out after $TIMEOUT")
             // Timeout, watchdog grace, and the bounded close of a decoder whose read is still blocked.
@@ -313,7 +313,7 @@ class VideoDecoderSystemTest {
             val decoder = VideoDecoder.open(
                 MediaSource(name, CommandIo { input(name, input) }),
                 VideoOutput.Memory(),
-                DecoderPreference.SOFTWARE,
+                CodecPreference.SOFTWARE,
                 TIMEOUT,
             )
             // The last host read is buffered; going back to the start needs a new one.
@@ -372,7 +372,7 @@ class VideoDecoderSystemTest {
         val name = "cfr-30-faststart.mp4"
         val input = StallingFileHandle(fixture(name))
         try {
-            VideoDecoder.open(MediaSource(name, CommandIo { input(name, input) }), decoder = DecoderPreference.SOFTWARE).use { decoder ->
+            VideoDecoder.open(MediaSource(name, CommandIo { input(name, input) }), decoder = CodecPreference.SOFTWARE).use { decoder ->
                 // The last host read is buffered; going back to the start needs a new one, which stalls.
                 assertEquals(147, decoder.number(4.9.seconds))
                 input.stall()
@@ -433,7 +433,7 @@ class VideoDecoderSystemTest {
     private suspend fun decoder(
         name: String,
         output: VideoOutput = VideoOutput.Memory(),
-        decoder: DecoderPreference = DecoderPreference.SOFTWARE,
+        decoder: CodecPreference = CodecPreference.SOFTWARE,
         source: Source = Buffer().write(fixture(name)),
         timeout: Duration = 10.seconds,
         threads: DecoderThreads = DecoderThreads.Auto,

@@ -79,7 +79,7 @@ class ParallelDecoderBudgetDeviceTest {
                     VideoDecoder.open(
                         MediaSource(clip.path),
                         VideoOutput.Memory(FrameFormat.Rgba8, size),
-                        DecoderPreference.SOFTWARE,
+                        CodecPreference.SOFTWARE,
                         60.seconds,
                         decoderThreads,
                     ).use { decoder ->

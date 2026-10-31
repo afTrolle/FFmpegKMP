@@ -53,7 +53,7 @@ class VideoDecoderPixelBufferTest {
             assertNotEquals(DecoderKind.UNKNOWN, decoder.decoderKind)
             assertHoldsFrames(decoder, fps = 24)
         }
-        decoder("cfr-24-h264.mp4", DecoderPreference.SOFTWARE).use { decoder ->
+        decoder("cfr-24-h264.mp4", CodecPreference.SOFTWARE).use { decoder ->
             assertEquals(DecoderKind.SOFTWARE, decoder.decoderKind)
             assertHoldsFrames(decoder, fps = 24)
         }
@@ -121,7 +121,7 @@ class VideoDecoderPixelBufferTest {
 
     @Test
     fun anHdr10SourceKeepsTenBitsAndItsColour() = runBlocking {
-        for (preference in listOf(DecoderPreference.AUTO, DecoderPreference.SOFTWARE)) {
+        for (preference in listOf(CodecPreference.AUTO, CodecPreference.SOFTWARE)) {
             decoder("hdr10-pq.mp4", preference).use { decoder ->
                 println("hdr10-pq.mp4 as decoded ($preference): ${decoder.decoderKind}")
                 decoder.frameAt(0.5.seconds).use { frame ->
@@ -151,7 +151,7 @@ class VideoDecoderPixelBufferTest {
             FrameFormat.Nv12 to kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange,
             FrameFormat.P010Hdr10 to kCVPixelFormatType_420YpCbCr10BiPlanarVideoRange,
         )
-        decoder("cfr-24.mp4", DecoderPreference.SOFTWARE).use { decoder ->
+        decoder("cfr-24.mp4", CodecPreference.SOFTWARE).use { decoder ->
             decoder.frameAt(1.seconds).use { decoded ->
                 for ((format, type) in expected) {
                     decoded.convert(format).use { frame ->
@@ -188,7 +188,7 @@ class VideoDecoderPixelBufferTest {
 
     private suspend fun decoder(
         name: String,
-        preference: DecoderPreference = DecoderPreference.AUTO,
+        preference: CodecPreference = CodecPreference.AUTO,
     ): VideoDecoder = VideoDecoder.open(
         MediaSource(name, CommandIo { input(name, Buffer().write(readVideoDecoderFixture(name))) }),
         VideoOutput.Memory(),

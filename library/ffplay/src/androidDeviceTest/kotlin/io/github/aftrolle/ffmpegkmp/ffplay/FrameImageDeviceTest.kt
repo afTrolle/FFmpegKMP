@@ -17,7 +17,7 @@ import androidx.compose.ui.graphics.asAndroidBitmap
 import androidx.compose.ui.unit.Density
 import androidx.test.platform.app.InstrumentationRegistry
 import io.github.aftrolle.ffmpegkmp.codec.DecoderKind
-import io.github.aftrolle.ffmpegkmp.codec.DecoderPreference
+import io.github.aftrolle.ffmpegkmp.codec.CodecPreference
 import io.github.aftrolle.ffmpegkmp.codec.FrameFormat
 import io.github.aftrolle.ffmpegkmp.codec.FramePlane
 import io.github.aftrolle.ffmpegkmp.codec.FrameSize
@@ -208,7 +208,7 @@ class FrameImageDeviceTest {
     @Test
     fun aGpuBuffersFrameDrawsAsTheSameFrameFromMemoryCroppedUprightAtItsDisplayAspect() = runBlocking<Unit> {
         assumeGpuBuffers()
-        open("cfr-30-h264-128.mp4", VideoOutput.GpuBuffers, DecoderPreference.AUTO).use { gpuDecoder ->
+        open("cfr-30-h264-128.mp4", VideoOutput.GpuBuffers, CodecPreference.AUTO).use { gpuDecoder ->
             open("cfr-30-h264-128.mp4", VideoOutput.Memory()).use { memoryDecoder ->
                 for (index in listOf(0, 13, 46, 149)) {
                     val time = index.seconds / 30
@@ -232,7 +232,7 @@ class FrameImageDeviceTest {
     @Test
     fun framesUpdatingAFrameImageBeforeEachRenderNeverWaitAndShowEachFramesOwnContentsWrappingOnEveryUpdate() = runBlocking<Unit> {
         assumeGpuBuffers()
-        open("cfr-30-h264-128.mp4", VideoOutput.GpuBuffers, DecoderPreference.AUTO).use { decoder ->
+        open("cfr-30-h264-128.mp4", VideoOutput.GpuBuffers, CodecPreference.AUTO).use { decoder ->
             FrameImage().use { image ->
                 renderer<FrameImage>(128, 128, gpu = true) { Canvas(Modifier.fillMaxSize()) { drawFrameImage(it) } }.use { renderer ->
                     val buffers = mutableSetOf<Long>()
@@ -259,7 +259,7 @@ class FrameImageDeviceTest {
     @Test
     fun aGpuBuffersFrameFailsClearlyOnTheSoftwarePath() = runBlocking<Unit> {
         assumeGpuBuffers()
-        open("cfr-30-h264-128.mp4", VideoOutput.GpuBuffers, DecoderPreference.AUTO).use { decoder ->
+        open("cfr-30-h264-128.mp4", VideoOutput.GpuBuffers, CodecPreference.AUTO).use { decoder ->
             FrameImage().use { image ->
                 decoder.frameAt(Duration.ZERO).use(image::update)
                 renderer<FrameImage>(128, 128, gpu = false) { Canvas(Modifier.fillMaxSize()) { drawFrameImage(it) } }.use { renderer ->
@@ -348,7 +348,7 @@ class FrameImageDeviceTest {
         checkNotNull(resource).use { input -> clip.outputStream().use { input.copyTo(it) } }
         try {
             val medians = listOf(VideoOutput.GpuBuffers, VideoOutput.Memory()).associateWith { output ->
-                VideoDecoder.open(MediaSource(clip.path), output, DecoderPreference.AUTO).use { decoder ->
+                VideoDecoder.open(MediaSource(clip.path), output, CodecPreference.AUTO).use { decoder ->
                     FrameImage().use { image ->
                         val times = mutableListOf<Long>()
                         decoder.frames(until = 2.seconds).collect { frame ->
@@ -488,7 +488,7 @@ class FrameImageDeviceTest {
 
     /** The frame at 0.5 s of [name] through [output], drawn on a 320x192 F16 canvas and read from the canvas's plane. */
     private suspend fun <T : Any> drawnOnF16(name: String, output: VideoOutput, read: (FramePlane) -> T): T =
-        open(name, output, DecoderPreference.AUTO).use { decoder ->
+        open(name, output, CodecPreference.AUTO).use { decoder ->
             if (output == VideoOutput.GpuBuffers && decoder.decoderKind != DecoderKind.HARDWARE) {
                 println("FrameImageDeviceTest: no hardware decoder takes $name, skipping")
                 assumeTrue("a hardware decoder takes $name", false)
@@ -548,7 +548,7 @@ class FrameImageDeviceTest {
         val light = doubleArrayOf(red, green, blue)
     }
 
-    private suspend fun open(name: String, output: VideoOutput, preference: DecoderPreference = DecoderPreference.SOFTWARE): VideoDecoder {
+    private suspend fun open(name: String, output: VideoOutput, preference: CodecPreference = CodecPreference.SOFTWARE): VideoDecoder {
         val bytes = checkNotNull(javaClass.getResourceAsStream("/video-decoder/$name")) { "Missing fixture $name" }
             .use { it.readBytes() }
         return VideoDecoder.open(

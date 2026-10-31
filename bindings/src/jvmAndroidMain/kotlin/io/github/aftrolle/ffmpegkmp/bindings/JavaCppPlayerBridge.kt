@@ -26,21 +26,23 @@ internal fun createJavaCppPlayerBridge(
     platformOutputTarget: (ffplaykmp_player, Any?, Boolean) -> Int = { _, target, _ ->
         if (target == null) 0 else NativePlayerError.UNSUPPORTED
     },
-): NativePlayerBridge = JavaCppPlayerBridge(
-    configuration,
-    update,
-    frame,
-    platformFrame,
-    platformOutputTarget,
-)
+): NativePlayerBridge {
+    val guard = NativeHandleGuard()
+    return GuardedPlayerBridge(
+        guard,
+        JavaCppPlayerEngine(guard, configuration, update, frame, platformFrame, platformOutputTarget),
+    )
+}
 
-private class JavaCppPlayerBridge(
+private class JavaCppPlayerEngine(
+    /** The bridge's guard: callbacks after close do nothing. */
+    guard: NativeHandleGuard,
     configuration: NativePlayerConfiguration,
     private val update: (NativePlayerSnapshot) -> Unit,
     private val frame: (NativeVideoFrame) -> Unit,
     private val platformFrame: (NativePlatformVideoFrame) -> Boolean,
     private val platformOutputTarget: (ffplaykmp_player, Any?, Boolean) -> Int,
-) : NativePlayerBridge {
+) : PlayerEngineCalls {
     private val stateCallback: ffplaykmp_state_callback
     private val frameCallback: ffplaykmp_video_frame_callback
     private val platformFrameCallback: ffplaykmp_platform_video_frame_callback
@@ -48,8 +50,6 @@ private class JavaCppPlayerBridge(
     private val player: ffplaykmp_player
     @Volatile
     private var mounts: Map<Long, MountedResource> = emptyMap()
-    /** Keeps [player] alive while the cross-thread calls (cancel, master clock) use it. */
-    private val guard = NativeHandleGuard()
 
     init {
         JavaCppBridgeLoader.load()
@@ -132,32 +132,24 @@ private class JavaCppPlayerBridge(
         )
     }
 
-    override fun prepare(source: NativePlayerSource): Int {
-        checkOpen()
-        mounts = source.mounts.mapIndexed { index, mount ->
-            index.toLong() + 1L to MountedResource(
-                resource = mount.resource,
-                replayableSource = true,
-            )
+    override fun mount(mounts: List<NativeMountedIo>) {
+        this.mounts = mounts.mapIndexed { index, mount ->
+            index.toLong() + 1L to MountedResource(resource = mount.resource, replayableSource = true)
         }.toMap()
-        return bridge.ffplaykmp_player_prepare(
-            player,
-            source.protocolInput(),
-            if (source.requireSecurePath) bridge.FFPLAYKMP_SOURCE_REQUIRE_SECURE_PATH else 0,
-        ).also { result -> if (result < 0) mounts = emptyMap() }
     }
 
-    override fun resetCancellation() {
-        checkOpen()
-        // Joins the outgoing worker before a subsequent prepare reuses its mount ids.
-        bridge.ffplaykmp_player_reset_cancel(player)
-    }
+    override fun prepare(input: String, requireSecurePath: Boolean): Int = bridge.ffplaykmp_player_prepare(
+        player,
+        input,
+        if (requireSecurePath) bridge.FFPLAYKMP_SOURCE_REQUIRE_SECURE_PATH else 0,
+    )
 
-    override fun setOutput(capabilities: NativePlayerOutputCapabilities): Int {
-        checkOpen()
+    override fun resetCancel() = bridge.ffplaykmp_player_reset_cancel(player)
+
+    override fun setOutput(flags: Int): Int {
         val nativeCapabilities = ffplaykmp_output_capabilities()
         bridge.ffplaykmp_output_capabilities_init(nativeCapabilities)
-        nativeCapabilities.flags(capabilities.toNativeFlags())
+        nativeCapabilities.flags(flags)
         return try {
             bridge.ffplaykmp_player_set_output(player, nativeCapabilities)
         } finally {
@@ -165,33 +157,18 @@ private class JavaCppPlayerBridge(
         }
     }
 
-    override fun setPlatformOutputTarget(target: Any?, secure: Boolean): Int {
-        checkOpen()
-        return platformOutputTarget(player, target, secure)
-    }
+    override fun setPlatformOutputTarget(target: Any?, secure: Boolean): Int =
+        platformOutputTarget(player, target, secure)
 
-    override fun clearOutput() {
-        checkOpen()
-        bridge.ffplaykmp_player_clear_output(player)
-    }
-
-    override fun play(): Int = checkedCall { bridge.ffplaykmp_player_play(player) }
-    override fun pause(): Int = checkedCall { bridge.ffplaykmp_player_pause(player) }
-    override fun setMasterClock(mediaTimeUs: Long) {
-        guard.use({}) { bridge.ffplaykmp_player_set_master_clock(player, mediaTimeUs) }
-    }
-    override fun seek(positionUs: Long): Int = checkedCall {
-        bridge.ffplaykmp_player_seek(player, positionUs)
-    }
-    override fun stop(): Int = checkedCall {
-        bridge.ffplaykmp_player_stop(player).also { if (it == 0) mounts = emptyMap() }
-    }
-    override fun cancel() {
-        guard.use({}) { bridge.ffplaykmp_player_cancel(player) }
-    }
+    override fun clearOutput() = bridge.ffplaykmp_player_clear_output(player)
+    override fun play(): Int = bridge.ffplaykmp_player_play(player)
+    override fun pause(): Int = bridge.ffplaykmp_player_pause(player)
+    override fun seek(positionUs: Long): Int = bridge.ffplaykmp_player_seek(player, positionUs)
+    override fun stop(): Int = bridge.ffplaykmp_player_stop(player)
+    override fun cancel() = bridge.ffplaykmp_player_cancel(player)
+    override fun setMasterClock(mediaTimeUs: Long) = bridge.ffplaykmp_player_set_master_clock(player, mediaTimeUs)
 
     override fun snapshot(): NativePlayerSnapshot {
-        checkOpen()
         val nativeSnapshot = ffplaykmp_snapshot()
         bridge.ffplaykmp_snapshot_init(nativeSnapshot)
         return try {
@@ -203,22 +180,13 @@ private class JavaCppPlayerBridge(
         }
     }
 
-    override fun close() {
-        guard.close {
-            mounts = emptyMap()
-            bridge.ffplaykmp_player_destroy(player)
-            ioCallback.close()
-            platformFrameCallback.close()
-            frameCallback.close()
-            stateCallback.close()
-        }
+    override fun release() {
+        bridge.ffplaykmp_player_destroy(player)
+        ioCallback.close()
+        platformFrameCallback.close()
+        frameCallback.close()
+        stateCallback.close()
     }
-
-    private fun checkedCall(block: () -> Int): Int = guard.use(::closedError, block)
-
-    private fun checkOpen() = check(guard.isOpen) { "The native player bridge is closed" }
-
-    private fun closedError(): Nothing = throw IllegalStateException("The native player bridge is closed")
 }
 
 internal fun ffplaykmp_snapshot.toNativeSnapshot(): NativePlayerSnapshot = nativePlayerSnapshot(

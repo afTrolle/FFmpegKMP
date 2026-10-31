@@ -35,15 +35,6 @@ void term_init(void) {
 }
 
 int ffmpegkmp_ffmpeg_entry(int argc, char **argv) {
-    /* The CLI frees these arrays but assumes process exit and leaves their counts unchanged. */
-    input_files = NULL;
-    nb_input_files = 0;
-    output_files = NULL;
-    nb_output_files = 0;
-    filtergraphs = NULL;
-    nb_filtergraphs = 0;
-    decoders = NULL;
-    nb_decoders = 0;
     received_sigterm = 0;
     received_nb_signals = 0;
     atomic_store(&transcode_init_done, 0);

@@ -4,7 +4,7 @@
 package io.github.aftrolle.ffmpegkmp.ffplay
 
 import io.github.aftrolle.ffmpegkmp.codec.DecoderKind
-import io.github.aftrolle.ffmpegkmp.codec.DecoderPreference
+import io.github.aftrolle.ffmpegkmp.codec.CodecPreference
 import io.github.aftrolle.ffmpegkmp.codec.MediaSource
 import io.github.aftrolle.ffmpegkmp.codec.VideoInfo
 import kotlin.test.Test
@@ -64,7 +64,7 @@ class FFplayPlayerTest {
     @Test
     fun strictHardwarePreferenceFailsTruthfullyOnCanvas() = runTest {
         val player = testPlayer(
-            FFplayConfiguration(decoderPreference = DecoderPreference.REQUIRE_HARDWARE),
+            FFplayConfiguration(decoderPreference = CodecPreference.REQUIRE_HARDWARE),
         )
         player.prepare(MediaSource("movie.mp4"))
         player.attachOutput(FakeOutput())
@@ -142,7 +142,7 @@ class FFplayPlayerTest {
     @Test
     fun protectedSourceAcceptsOnlyVerifiedSecureNativeOutput() = runTest {
         val player = testPlayer(
-            FFplayConfiguration(decoderPreference = DecoderPreference.REQUIRE_HARDWARE),
+            FFplayConfiguration(decoderPreference = CodecPreference.REQUIRE_HARDWARE),
         )
         player.prepare(MediaSource("protected.m3u8"), FFplayContentProtection.REQUIRE_SECURE_PATH)
         player.attachOutput(SecureFakeOutput())

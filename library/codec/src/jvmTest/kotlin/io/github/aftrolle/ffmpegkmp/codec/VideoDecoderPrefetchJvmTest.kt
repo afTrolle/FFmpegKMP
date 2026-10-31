@@ -44,7 +44,7 @@ class VideoDecoderPrefetchJvmTest {
 
     /** How long the collector waited for each frame after the first, which nothing decodes ahead of. */
     private suspend fun waits(clip: File): List<Duration> =
-        VideoDecoder.open(MediaSource(clip.path), VideoOutput.Memory(FrameFormat.Rgba8), DecoderPreference.SOFTWARE).use { decoder ->
+        VideoDecoder.open(MediaSource(clip.path), VideoOutput.Memory(FrameFormat.Rgba8), CodecPreference.SOFTWARE).use { decoder ->
             val waits = mutableListOf<Duration>()
             var asked = TimeSource.Monotonic.markNow()
             decoder.frames().collect { frame ->
