@@ -128,7 +128,8 @@ class FrameImageDeviceTest {
                 for (index in 0 until 3) decoder.frameAt(index.seconds / 30).use { assertTrue(image.updateIfOpen(it)) }
                 val shown = assertNotNull(image.shown).image.asAndroidBitmap()
                 assertEquals(IntSize(960, 540), IntSize(shown.width, shown.height))
-                assertEquals(Size(3840f, 2160f), image.displaySize)
+                // The clip's 3:2 picture, kept through the scaled frames' sample aspect ratio.
+                assertEquals(Size(3240f, 2160f), image.displaySize)
                 // A thumbnail: a step of 4K is 240 × 135, and shrinking two steps or more reallocates.
                 image.targetSize = IntSize(256, 144)
                 for (index in 3 until 6) decoder.frameAt(index.seconds / 30).use { assertTrue(image.updateIfOpen(it)) }
