@@ -170,6 +170,16 @@ frames and threads are freed (a paused 4K software decoder holds about 315 MB of
 MediaCodec instance; the frame on screen stays. `Duration.ZERO` releases it as soon as a decode
 ends, and null keeps it until the source, the output or its Surface changes.
 
+A hardware decoder takes a place in `DecoderBudget` (see [`codec`](../codec/README.md#hardware-decoder-budget)),
+which players share with `VideoDecoder`s, and the release gives it back. A player that finds every
+place taken decodes in software under `AUTO`, and `FFplayOutputInfo.decoderFallback` and the
+`FFplayEvent.DecoderFallback` say `BUDGET`; under `REQUIRE_HARDWARE` the call that needed the
+decoder throws a `NativePlayerException` whose `errorCode` is `NativePlayerError.BUSY`, and an
+output attached after prepare fails the player with it as `snapshot.failure.cause`. A budget fallback lasts
+for that decoder only: the next one the player opens, after its release or for a new output, asks
+the budget again. On Android it lasts for the Surface instead, since the canvas has drawn the
+software frames on it and MediaCodec can no longer connect to it; a new Surface asks again.
+
 ### Two bitmaps per source
 
 `toImageBitmap` allocates a bitmap for every frame, which only the garbage collector frees: four

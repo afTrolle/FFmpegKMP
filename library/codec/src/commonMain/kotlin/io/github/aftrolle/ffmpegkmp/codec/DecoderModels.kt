@@ -26,6 +26,14 @@ public enum class DecoderFallbackReason {
 
     /** The hardware decoder failed to open or to decode; the source stays in software. */
     FAILED,
+
+    /**
+     * Every hardware decoder [DecoderBudget] allows was open when this one opened. A player asks
+     * the budget again the next time it opens a decoder (after its idle release, or for a new
+     * output), except on an Android Surface its software frames were drawn on, which MediaCodec can
+     * no longer take: there it stays in software until the Surface changes.
+     */
+    BUDGET,
 }
 
 /**
@@ -76,6 +84,7 @@ public fun NativePlayerDecoderFallback.toPublic(): DecoderFallbackReason? = when
     NativePlayerDecoderFallback.NONE -> null
     NativePlayerDecoderFallback.UNSUPPORTED -> DecoderFallbackReason.UNSUPPORTED
     NativePlayerDecoderFallback.FAILED -> DecoderFallbackReason.FAILED
+    NativePlayerDecoderFallback.BUDGET -> DecoderFallbackReason.BUDGET
 }
 
 /** The decoder kind the bindings report, as the public API names it. */

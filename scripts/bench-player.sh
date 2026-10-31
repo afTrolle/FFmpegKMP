@@ -6,7 +6,8 @@
 # Links the FFmpeg the macosArm64 native build leaves in native-build/apple/out/standard/macosArm64, or else the
 # JVM host build's dylibs in native-build/jvm/out/standard/macos-arm64 (FFMPEGKMP_BENCH_FFMPEG overrides both).
 # Needs an ffmpeg with libx264 and libx265 on PATH to generate the clips (Homebrew's has both); it shares them
-# with scripts/bench-video-decoder.sh. FFMPEGKMP_BENCH_IO_LATENCY_US adds that many microseconds to every read.
+# with scripts/bench-video-decoder.sh. FFMPEGKMP_BENCH_IO_LATENCY_US adds that many microseconds to every read, and
+# FFMPEGKMP_BENCH_HARDWARE_DECODERS sets the hardware decoder budget (0 for no limit; the platform's default otherwise).
 #
 #   scripts/bench-player.sh [transitions|parallel|all]
 set -euo pipefail

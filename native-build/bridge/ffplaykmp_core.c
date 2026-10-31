@@ -13,6 +13,9 @@
 #if defined(__ANDROID__)
 #include <libavcodec/jni.h>
 #endif
+#if defined(__APPLE__)
+#include <TargetConditionals.h>
+#endif
 #include <libavutil/cpu.h>
 #include <libavutil/csp.h>
 #include <libavutil/display.h>
@@ -479,7 +482,73 @@ int ffplaykmp_decoder_thread_count(int threads) {
     return automatic > FFPLAYKMP_DECODER_THREADS_AUTO_MAX ? FFPLAYKMP_DECODER_THREADS_AUTO_MAX : automatic;
 }
 
-int ffplaykmp_video_codec_open(
+/*
+ * The hardware decoder budget: how many hardware decoders may be open at
+ * once, 0 for any number, and how many are. Places are taken and given back
+ * under the mutex, without waiting.
+ */
+#if defined(__EMSCRIPTEN__)
+#define FFPLAYKMP_DEFAULT_HARDWARE_DECODERS 0
+#elif defined(__ANDROID__)
+#define FFPLAYKMP_DEFAULT_HARDWARE_DECODERS 4
+#elif defined(__APPLE__) && TARGET_OS_IPHONE
+#define FFPLAYKMP_DEFAULT_HARDWARE_DECODERS 4
+#else
+#define FFPLAYKMP_DEFAULT_HARDWARE_DECODERS 8
+#endif
+
+static pthread_mutex_t ffplaykmp_budget_mutex = PTHREAD_MUTEX_INITIALIZER;
+static int32_t ffplaykmp_budget_limit = FFPLAYKMP_DEFAULT_HARDWARE_DECODERS;
+static int32_t ffplaykmp_budget_in_use;
+
+int ffplaykmp_decoder_budget_set(int32_t hardware_decoders) {
+    if (hardware_decoders < 0)
+        return FFPLAYKMP_ERROR_INVALID_ARGUMENT;
+    pthread_mutex_lock(&ffplaykmp_budget_mutex);
+    ffplaykmp_budget_limit = hardware_decoders;
+    pthread_mutex_unlock(&ffplaykmp_budget_mutex);
+    return 0;
+}
+
+int32_t ffplaykmp_decoder_budget_get(void) {
+    int32_t limit;
+    pthread_mutex_lock(&ffplaykmp_budget_mutex);
+    limit = ffplaykmp_budget_limit;
+    pthread_mutex_unlock(&ffplaykmp_budget_mutex);
+    return limit;
+}
+
+int32_t ffplaykmp_decoder_budget_in_use(void) {
+    int32_t in_use;
+    pthread_mutex_lock(&ffplaykmp_budget_mutex);
+    in_use = ffplaykmp_budget_in_use;
+    pthread_mutex_unlock(&ffplaykmp_budget_mutex);
+    return in_use;
+}
+
+/* Takes a place for `codec`, or returns FFPLAYKMP_ERROR_BUSY with every one taken. */
+static int ffplaykmp_budget_lease(ffplaykmp_video_codec *codec) {
+    int result = 0;
+    pthread_mutex_lock(&ffplaykmp_budget_mutex);
+    if (ffplaykmp_budget_limit > 0 && ffplaykmp_budget_in_use >= ffplaykmp_budget_limit)
+        result = FFPLAYKMP_ERROR_BUSY;
+    else
+        ffplaykmp_budget_in_use++;
+    pthread_mutex_unlock(&ffplaykmp_budget_mutex);
+    codec->leased = result == 0;
+    return result;
+}
+
+static void ffplaykmp_budget_return(ffplaykmp_video_codec *codec) {
+    if (!codec->leased)
+        return;
+    codec->leased = 0;
+    pthread_mutex_lock(&ffplaykmp_budget_mutex);
+    ffplaykmp_budget_in_use--;
+    pthread_mutex_unlock(&ffplaykmp_budget_mutex);
+}
+
+static int ffplaykmp_video_codec_open_leased(
         ffplaykmp_video_codec *codec,
         AVFormatContext *format,
         int stream_index,
@@ -521,6 +590,8 @@ int ffplaykmp_video_codec_open(
     }
     if (require_hardware && !hardware)
         return FFPLAYKMP_ERROR_UNSUPPORTED;
+    if (hardware && (result = ffplaykmp_budget_lease(codec)) < 0)
+        return result;
     codec->hardware = hardware;
 
     codec->decoder = avcodec_alloc_context3(decoder);
@@ -561,6 +632,24 @@ int ffplaykmp_video_codec_open(
     return avcodec_open2(codec->decoder, decoder, options);
 }
 
+int ffplaykmp_video_codec_open(
+        ffplaykmp_video_codec *codec,
+        AVFormatContext *format,
+        int stream_index,
+        int hardware,
+        int require_hardware,
+        int threads,
+        int thread_type,
+        void *android_surface,
+        AVDictionary **options) {
+    const int result = ffplaykmp_video_codec_open_leased(
+            codec, format, stream_index, hardware, require_hardware, threads, thread_type, android_surface, options);
+    /* A decoder that did not open holds no place, though the caller closes it later. */
+    if (result < 0)
+        ffplaykmp_budget_return(codec);
+    return result;
+}
+
 int ffplaykmp_video_codec_frame_is_hardware(const ffplaykmp_video_codec *codec, const AVFrame *frame) {
 #if defined(__ANDROID__)
     if (codec->hardware)
@@ -574,6 +663,7 @@ int ffplaykmp_video_codec_frame_is_hardware(const ffplaykmp_video_codec *codec, 
 void ffplaykmp_video_codec_close(ffplaykmp_video_codec *codec) {
     if (codec->decoder)
         atomic_fetch_add(&ffplaykmp_codec_closes, 1);
+    ffplaykmp_budget_return(codec);
 #if defined(__ANDROID__)
     if (codec->decoder && codec->mediacodec_context)
         av_mediacodec_default_free(codec->decoder);

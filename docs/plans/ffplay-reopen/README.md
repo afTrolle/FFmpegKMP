@@ -1,9 +1,10 @@
 # One open per source in the FFplay player
 
-Status: phases 1, 1b, 2, 3, 4 and 5 are built on `feature/ffplay-reopen`;
+Status: phases 1, 1b, 2, 3, 4, 5 and 6 are built on `feature/ffplay-reopen`;
 phase 2's web packet reader reuse moved to phase 7. Phase 0's macOS native
-baselines are measured (2b); its Android, JVM and browser measurements are not.
-Phases 6–8 are not built. The audio-cleanup and small-cleanups work this plan builds
+baselines are measured (2b); its Android, JVM and browser measurements are not,
+except the Android hardware decoder counts phase 6 measured.
+Phases 7 and 8 are not built. The audio-cleanup and small-cleanups work this plan builds
 on is merged into main as of f9f92c1.
 
 `FFplayPlayer` opens and probes its input again on nearly every transition:
@@ -432,6 +433,132 @@ Decisions the plan left open:
   the device lifecycle and Surface-swap tests) now keep the codec, so a slow
   run cannot release it between their steps.
 
+### Phase 6 results
+
+`ffplaykmp_video_codec_open` takes a place in a process-wide hardware decoder
+budget (`{mutex, limit, in_use}` in `ffplaykmp_core.c`) once it has decided on a
+hardware decoder, before creating the device or the MediaCodec context, and
+`ffplaykmp_video_codec_close` gives it back; an open that fails gives it back at
+once. With every place taken the open returns `FFPLAYKMP_ERROR_BUSY` (-1009)
+without waiting. Players and `ffmpegkmp_decoder.c` share the count through that
+one function: under AUTO both open the software decoder at once and report
+`FFPLAYKMP_DECODER_FALLBACK_BUDGET` (3); under REQUIRE_HARDWARE the call fails
+with BUSY. `ffplaykmp_decoder_budget_set/get/in_use` (Kotlin
+`nativeDecoderBudget()`, `setNativeDecoderBudget`) back codec's
+`object DecoderBudget { var hardwareDecoders: Int; val hardwareDecodersInUse: Int }`,
+0 for no limit; the browser keeps the value and applies it to nothing.
+Reporting is state, fixed when the decoder opens: `VideoDecoder.decoderFallback`,
+`FFplayOutputInfo.decoderFallback` and `FFplayEvent.DecoderFallback.reason` say
+`BUDGET`. A player's place goes back at its idle release (phase 5), stop, a new
+source and close; a `VideoDecoder`'s at close.
+
+Defaults, from measurements:
+
+macOS (M4 Pro), `scripts/bench-player.sh parallel` on the 4K H.264 clip with
+no limit (`FFMPEGKMP_BENCH_HARDWARE_DECODERS=0`), frames/s each over 2 s of play:
+
+| Players | 8 | 10 | 12 | 14 | 15 | 16 |
+|---|---|---|---|---|---|---|
+| VideoToolbox, all hardware | 23.8 | 23.4 | 24.0 | 24.0 | 10.5 | 4.3–4.8 |
+
+VideoToolbox gives every player a session and holds about 340 4K frames a
+second in all; past it every session slows at once. The default stays 8: it
+plays 4K up to about 40 fps and leaves room for other processes. With a limit of
+12, sixteen players play at 24.1 each (12 + 4 software, 2196 MB paused); with 8,
+at 20.6–23.9 (8 + 8, 3140 MB). (The HEVC PQ clip is no measure of VideoToolbox
+here: its players are bound by the CPU tone map, 4.2 frames/s each at 8.)
+
+Android, Galaxy S25 Ultra (SM-S938B), `ParallelDecoderBudgetDeviceTest#measureHardware`
+(`hardwareBudget=true`): K AUTO `VideoDecoder`s with `GpuBuffers` output
+(MediaCodec into an ImageReader Surface, as a player renders) opened at once,
+no limit, each then decoding 96 frames as fast as it can, frames/s each with all
+running. `getMaxSupportedInstances` says 16 for every AVC and HEVC decoder.
+
+| Decoders | 1 | 2 | 4 | 6 | 8 | 10 | 12 | 16 |
+|---|---|---|---|---|---|---|---|---|
+| 4K H.264: MediaCodec opened | 1 | 2 | 4 | 6 | 8 | 8 | 8 | 8 |
+| 4K H.264: frames/s each | 212 | 109 | 58 | 39 | 29 | 29 | 31 | 25 |
+| 4K HEVC PQ: MediaCodec opened | 1 | 2 | 4 | 6 | 8 | 8 | 8 | 8 |
+| 4K HEVC PQ: frames/s each | 295 | 166 | 86 | 59 | 44 | 45 | 25 | 13 |
+
+The phone opens eight 4K MediaCodec decoders and fails the ninth at configure;
+without a budget AUTO reports those as FAILED and keeps them in software for the
+source. Eight 4K H.264 decoders share about 235 frames a second, 29 each, just
+over a 24 fps clip. The Android default is 4 (58 frames/s each, twice a 30 fps
+clip's rate, and four MediaCodec instances left for encoders and other apps).
+iOS takes 4 too, unmeasured; other desktops 8, unmeasured.
+
+Player bench, macOS, against phase 5. Transitions of one player are phase 5's
+within noise (no budget is near full): play after the grace 75/297/631/835/493 ms
+for 1080p SW, 4K H.264 SW and AUTO, 4K HEVC PQ SW and AUTO (phase 5:
+78/296/655/827/509). Many players (4K H.264, 10 s), default limit 8:
+
+| Players | AUTO fps each, phase 5 → 6 | AUTO hardware, budget | AUTO paused footprint | after the grace |
+|---|---|---|---|---|
+| 1 | 23.5 → 24.0 | 1, 0 | 95 → 94 MB | 93 MB |
+| 4 | 23.6 → 24.0 | 4, 0 | 353 → 352 MB | 348 MB |
+| 8 | 23.4 → 21.7 | 8, 0 | 694 → 691 MB | 682 MB |
+| 16 | **2.3 → 20.6** | 8, 8 | 1378 → 3140 MB | 2746 MB |
+
+Sixteen AUTO players no longer collapse. The cost is memory: eight of them now
+decode in software, 315 MB each while their codec is kept, which phase 5's
+release brings down after the grace. Software players are unchanged (16 at
+23.4 frames/s). Every place came back once the players' codecs were released
+(0 held after the grace).
+
+Verified: JVM bindings 48, codec 81, ffplay 96; macOS bindings 8, ffplay 82;
+iOS simulator 8 and 82; js and wasm bindings 24 each (worker relinked), ffplay
+56 each; Samsung SM-S938B ffplay device suite with `hdrGpuCheck=true` 98 tests,
+97 pass, `CompositeExportBudgetDeviceTest.measure` gated; codec device suite 43
+tests, 40 pass, the two `ParallelDecoderBudgetDeviceTest` measurements gated
+and `beforeAndroid14OpeningFails` assumed away on Android 17. `:library:codec:macosArm64Test`
+does not compile at HEAD (`VideoDecoderPixelBufferTest.kt:114`, an unresolved
+`ring` from f9f92c1), so `DecoderBudgetSystemTest` ran on the JVM only. New
+checks: with room for two, four players give exactly two HARDWARE and two
+BUDGET, with BUDGET events (JVM bridge and `FFplayPlayer` on VideoToolbox, and
+on the Samsung through MediaCodec onto Surfaces); a player and a `VideoDecoder`
+fill one budget, the next player and decoder report BUDGET, and the closed
+decoder's place goes to the next player (JVM); an idle release gives the place
+back and the player the budget sent to software takes hardware at its next
+seek (JVM bridge); a closed player's place goes to a budget player on a new
+Surface (device); a budget player's frames are as decoded, with no download and
+no frame buffer allocated (JVM bridge); REQUIRE_HARDWARE with a full budget
+fails with BUSY through the bridge, through `FFplayPlayer.prepare`'s and
+`seekTo`'s `NativePlayerException.errorCode`, and as `snapshot.failure.cause`
+for an output attached after prepare; a `VideoDecoder` reports BUDGET, fails
+REQUIRE_HARDWARE with BUSY and gives its place back at close (JVM); a negative
+limit is rejected.
+
+Decisions the plan left open:
+- Open question 7: no waiting. A full budget answers at once; nothing queues.
+- `DecoderPriority` is not added. With no waiting and no eviction, a priority
+  could only reserve places, and the measurements give no case for it: idle
+  holders give their places back after the 2 s grace, and nothing here shows a
+  warm idle holder starving a visible player for longer than that. It comes
+  with eviction, if ever.
+- `ffplaykmp_idle_release_us` is unchanged: v1 has no waiter, and a player
+  refused a place has already opened software, so releasing an idle holder
+  sooner would help only a later opener.
+- A BUDGET fallback is not sticky for the source, unlike FAILED: on the desktop
+  it holds for the codec it opened, and the next codec the player opens (after
+  its idle release, or for an output that changes the hardware decision) asks
+  the budget again, so a freed place is taken up then; a running software decode
+  is not switched to hardware mid-run. On Android it holds for the Surface: the
+  canvas has drawn the software frames on it, after which MediaCodec cannot
+  connect (phase 4's finding), so retrying there would only turn BUDGET into
+  FAILED. A new Surface asks again.
+- `FFplayEngine.attachOutput`'s failure now carries a `NativePlayerException` as
+  `FFplayFailure.cause` and in the `Fatal` event, so BUSY is inspectable when the
+  output is attached after prepare; prepare itself throws it, as phase 4 made
+  every failed call do.
+- The budget counts decoders, not their size: a 1080p and a 4K decoder take one
+  place each. MediaCodec's real limit depends on resolution, and VideoToolbox's
+  on throughput, so the defaults are set at 4K.
+- `VideoDecoder.decoderFallback` also reports UNSUPPORTED (AUTO with no
+  hardware decoder for the stream, including Android memory output of sources
+  deeper than 8 bits) and FAILED (the start fallback), not only BUDGET; it is
+  null under SOFTWARE and REQUIRE_HARDWARE and in the browser.
+
 ## 3. Design options (behaviour at 1 / 4 / 16 concurrent sources)
 
 **(a) Keep-open per player** (demuxer + codec from prepare to stop). 1: ideal, seek = flush + seek + decode-to-target; 4: fine on desktop; 16: software 4K ≈ 3 GB of frame-thread frames, 16 × 8 decoder threads, 16 hardware instances (over any Android cap; paused players still hold them). Simple, but the user's concern is exactly the resource held open. Not recommended alone.
@@ -701,8 +828,9 @@ workers seeking and memory sampled.
 
 Defaults in bold are what the phases assume until decided otherwise.
 
-1. Default `hardwareDecoders` per platform. **0 (unlimited) until phase 0
-   gives numbers.**
+1. Default `hardwareDecoders` per platform. Phase 6 set **8 on macOS and other
+   desktops, 4 on Android and iOS** from its measurements (iOS and non-Apple
+   desktops unmeasured).
 2. Seek previews: **blocking, as today**, or asynchronous through C-side
    coalescing behind `FFplayConfiguration(previewSeeks = ASYNC)`, observed as
    `snapshot` going SEEKING → PAUSED or PLAYING.
@@ -712,11 +840,12 @@ Defaults in bold are what the phases assume until decided otherwise.
    phase 3 comes before phase 4 on that assumption. If a device test shows
    cross-thread use is fine, phase 3 can be simplified.
 5. VideoToolbox limits are inferred; Apple numbers from phase 0 decide whether
-   the budget applies there by default.
+   the budget applies there by default. Phase 6: **it does** (macOS collapses
+   between 14 and 16 4K players); iOS is not measured.
 6. Kept software codecs keep their frame-thread frames; release on pause is the
    only lever. Confirm that is acceptable against the reopen cost on
    software-only platforms.
-7. Budget waiting: **ship without it**, or add `HardwareDecoding.WAIT` inside
+7. Budget waiting: **ship without it** (phase 6 did), or add `HardwareDecoding.WAIT` inside
    the already-suspend `VideoDecoder.open` and `FFplayPlayer.prepare`, bounded by
    the native deadline.
 8. Run the native prepare on `Dispatchers.IO` instead of `Dispatchers.Default`;

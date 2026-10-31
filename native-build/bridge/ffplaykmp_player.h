@@ -47,13 +47,16 @@ typedef enum ffplaykmp_decoder_kind {
 
 /*
  * Why a player whose output wanted a hardware decoder decodes in software:
- * this host has no hardware decoder for the stream, or opening or decoding
- * with it failed, after which AUTO keeps to software for the source.
+ * this host has no hardware decoder for the stream, opening or decoding with
+ * it failed, after which AUTO keeps to software for the source, or the
+ * process's hardware decoder budget (ffplaykmp_decoder_budget_set) was full
+ * when the decoder opened.
  */
 typedef enum ffplaykmp_decoder_fallback {
     FFPLAYKMP_DECODER_FALLBACK_NONE = 0,
     FFPLAYKMP_DECODER_FALLBACK_UNSUPPORTED = 1,
     FFPLAYKMP_DECODER_FALLBACK_FAILED = 2,
+    FFPLAYKMP_DECODER_FALLBACK_BUDGET = 3,
 } ffplaykmp_decoder_fallback;
 
 /*
@@ -80,6 +83,8 @@ typedef enum ffplaykmp_error {
     FFPLAYKMP_ERROR_TIMED_OUT = -1007,
     /* Every frame of a decoder's ring is held by the caller; the call fails and the decoder stays usable. */
     FFPLAYKMP_ERROR_RING_FULL = -1008,
+    /* Every hardware decoder the process's budget allows is open; REQUIRE_HARDWARE fails with it. */
+    FFPLAYKMP_ERROR_BUSY = -1009,
 } ffplaykmp_error;
 
 typedef enum ffplaykmp_source_flags {
@@ -319,6 +324,28 @@ typedef struct ffplaykmp_statistics {
 
 FFPLAYKMP_EXPORT void ffplaykmp_statistics_init(ffplaykmp_statistics *statistics);
 FFPLAYKMP_EXPORT void ffplaykmp_get_statistics(ffplaykmp_statistics *statistics);
+
+/*
+ * The process's budget of hardware video decoders, shared by every player and
+ * pull decoder (ffmpegkmp_decoder.h): at most `hardware_decoders` are open at
+ * once, 0 for no limit. A decoder takes its place when it opens and gives it
+ * back when it closes, which a player does once it has been idle for its
+ * codec_release_delay_us. A decoder that finds the budget full opens in
+ * software under FFPLAYKMP_DECODER_AUTO, reporting
+ * FFPLAYKMP_DECODER_FALLBACK_BUDGET, and fails with FFPLAYKMP_ERROR_BUSY under
+ * REQUIRE_HARDWARE; nothing waits for a place. Lowering the limit closes no
+ * open decoder: the next ones open in software until fewer are open. Returns
+ * FFPLAYKMP_ERROR_INVALID_ARGUMENT for a negative limit. The default is 8 on
+ * macOS, where VideoToolbox gives sixteen 4K decoders a session each and then
+ * decodes a few frames a second on every one, 4 on Android, where a phone opens
+ * eight 4K MediaCodec decoders and fails the next, and on iOS, 8 on other
+ * desktops, and 0 in the browser, whose player decodes in software only.
+ */
+FFPLAYKMP_EXPORT int ffplaykmp_decoder_budget_set(int32_t hardware_decoders);
+/* The budget's limit, 0 for none. */
+FFPLAYKMP_EXPORT int32_t ffplaykmp_decoder_budget_get(void);
+/* The hardware decoders open now, by players and pull decoders together. */
+FFPLAYKMP_EXPORT int32_t ffplaykmp_decoder_budget_in_use(void);
 
 /*
  * Flat callback facade used by the browser worker. It keeps C structure layout out of

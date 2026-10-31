@@ -662,6 +662,11 @@ int ffmpegkmp_video_decoder_set_android_surface(
 }
 #endif
 
+/*
+ * Opens the decoder `preference` asks for. Under AUTO, one the hardware
+ * decoder budget has no place for opens in software instead. Records why a
+ * wanted hardware decoder is not the one open, as a player reports it.
+ */
 static int ffmpegkmp_open_codec(ffmpegkmp_video_decoder *decoder, int preference) {
     void *surface = NULL;
     AVDictionary *options = NULL;
@@ -683,6 +688,13 @@ static int ffmpegkmp_open_codec(ffmpegkmp_video_decoder *decoder, int preference
             &decoder->codec, decoder->input.format, decoder->stream_index, hardware,
             preference == FFPLAYKMP_DECODER_REQUIRE_HARDWARE, decoder->threads, FF_THREAD_SLICE, surface, &options);
     av_dict_free(&options);
+    if (result == FFPLAYKMP_ERROR_BUSY && preference == FFPLAYKMP_DECODER_AUTO) {
+        ffplaykmp_video_codec_close(&decoder->codec);
+        decoder->info.decoder_fallback = FFPLAYKMP_DECODER_FALLBACK_BUDGET;
+        return ffmpegkmp_open_codec(decoder, FFPLAYKMP_DECODER_SOFTWARE);
+    }
+    if (result >= 0 && preference == FFPLAYKMP_DECODER_AUTO && !decoder->codec.hardware)
+        decoder->info.decoder_fallback = FFPLAYKMP_DECODER_FALLBACK_UNSUPPORTED;
     return result;
 }
 
@@ -712,6 +724,7 @@ int ffmpegkmp_video_decoder_start(ffmpegkmp_video_decoder *decoder) {
         ffplaykmp_close_input(&decoder->input);
         atomic_store(&decoder->timed_out, 0);
         ffmpegkmp_arm_deadline(decoder);
+        decoder->info.decoder_fallback = FFPLAYKMP_DECODER_FALLBACK_FAILED;
         result = ffmpegkmp_open_stream(decoder);
         if (result >= 0)
             result = ffmpegkmp_open_codec(decoder, FFPLAYKMP_DECODER_SOFTWARE);

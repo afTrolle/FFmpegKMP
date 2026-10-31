@@ -51,8 +51,10 @@ public data class FFplayConfiguration(
      * waiting for an output, or showing a seek's frame. A play or seek within it uses that decoder,
      * going on from the frame on screen where it can; one after it opens a decoder and decodes from
      * the keyframe before the position. Releasing frees the decoder's frames and threads, and a
-     * hardware decoder for other players; the frame on screen stays. [Duration.ZERO] releases it as
-     * soon as nothing decodes; null keeps it until the source, the output or its surface changes.
+     * hardware decoder's place in [io.github.aftrolle.ffmpegkmp.codec.DecoderBudget] for other
+     * players and video decoders; the frame on screen stays. [Duration.ZERO] releases it as soon as
+     * nothing decodes; null keeps it, and its place in the budget, until the source, the output or
+     * its surface changes.
      */
     val releaseDecoderWhenPaused: Duration? = 2.seconds,
 ) {

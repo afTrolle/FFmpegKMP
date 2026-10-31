@@ -25,10 +25,11 @@ public enum class NativePlayerDecoderKind { UNKNOWN, HARDWARE, SOFTWARE }
 
 /**
  * Why a player whose output wanted a hardware decoder decodes in software, mirroring
- * `ffplaykmp_decoder_fallback`: none for the stream on this host, or it failed to open or decode.
+ * `ffplaykmp_decoder_fallback`: none for the stream on this host, it failed to open or decode, or
+ * the process's hardware decoder budget ([nativeDecoderBudget]) was full.
  */
 @InternalFFmpegKmpApi
-public enum class NativePlayerDecoderFallback { NONE, UNSUPPORTED, FAILED }
+public enum class NativePlayerDecoderFallback { NONE, UNSUPPORTED, FAILED, BUDGET }
 
 @InternalFFmpegKmpApi
 public data class NativePlayerMasteringDisplayMetadata(
@@ -158,6 +159,9 @@ public object NativePlayerError {
 
     /** The caller holds every frame of the decoder's ring; the call fails and the decoder stays usable. */
     public const val RING_FULL: Int = -1008
+
+    /** Every hardware decoder the process's budget allows is open, and the call required hardware. */
+    public const val BUSY: Int = -1009
 }
 
 /** A player call that failed with [errorCode], a [NativePlayerError] code or an FFmpeg `AVERROR`. */
@@ -179,6 +183,25 @@ public data class NativePlayerStatistics(
 
 @InternalFFmpegKmpApi
 public expect fun nativePlayerStatistics(): NativePlayerStatistics
+
+/**
+ * The process's hardware video decoder budget, mirroring `ffplaykmp_decoder_budget_get` and
+ * `ffplaykmp_decoder_budget_in_use`: at most [hardwareDecoders] hardware decoders open at once, 0 for
+ * no limit, shared by every player and video decoder, of which [inUse] are open now. The browser
+ * has none: its player decodes in software, and WebCodecs keeps its own.
+ */
+@InternalFFmpegKmpApi
+public data class NativeDecoderBudget(val hardwareDecoders: Int, val inUse: Int)
+
+@InternalFFmpegKmpApi
+public expect fun nativeDecoderBudget(): NativeDecoderBudget
+
+/**
+ * Sets the budget's limit (`ffplaykmp_decoder_budget_set`), 0 for none. Decoders already open stay
+ * open; the next ones see the new limit. The browser keeps the value and applies it to nothing.
+ */
+@InternalFFmpegKmpApi
+public expect fun setNativeDecoderBudget(hardwareDecoders: Int)
 
 @InternalFFmpegKmpApi
 public interface NativePlayerBridge : AutoCloseable {

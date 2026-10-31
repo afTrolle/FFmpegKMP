@@ -2,10 +2,14 @@
 package io.github.aftrolle.ffmpegkmp.ffplay
 
 import io.github.aftrolle.ffmpegkmp.bindings.InternalFFmpegKmpApi
+import io.github.aftrolle.ffmpegkmp.bindings.NativePlayerError
+import io.github.aftrolle.ffmpegkmp.bindings.NativePlayerException
 import io.github.aftrolle.ffmpegkmp.bindings.nativePlayerStatistics
+import io.github.aftrolle.ffmpegkmp.codec.DecoderBudget
 import io.github.aftrolle.ffmpegkmp.codec.DecoderFallbackReason
 import io.github.aftrolle.ffmpegkmp.codec.DecoderKind
 import io.github.aftrolle.ffmpegkmp.codec.CodecPreference
+import io.github.aftrolle.ffmpegkmp.codec.VideoDecoder
 import io.github.aftrolle.ffmpegkmp.codec.VideoFrame
 import io.github.aftrolle.ffmpegkmp.codec.VideoInfo
 import io.github.aftrolle.ffmpegkmp.core.CommandIo
@@ -20,6 +24,7 @@ import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.milliseconds
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
@@ -130,6 +135,130 @@ class FFplayProductionJvmTest {
         }
     }
 
+    /**
+     * With room for two hardware decoders, two of four players decode in VideoToolbox and two in
+     * software, and say why.
+     */
+    @Test
+    fun aBudgetOfTwoGivesTwoOfFourPlayersHardware() = withBudget(extra = 2) {
+        val players = (1..4).map { budgetPlayer() }
+        val fallbacks = players.map { player ->
+            async(Dispatchers.Default, CoroutineStart.UNDISPATCHED) {
+                player.events.filterIsInstance<FFplayEvent.DecoderFallback>().first()
+            }
+        }
+        try {
+            players.forEach { it.prepare(fixtureSource("hardware-h264.mp4")) }
+            val outputs = players.map { assertNotNull(it.snapshot.value.output) }
+            assertEquals(2, outputs.count { it.decoder == DecoderKind.HARDWARE && it.decoderFallback == null })
+            assertEquals(2, outputs.count { it.decoder == DecoderKind.SOFTWARE && it.decoderFallback == DecoderFallbackReason.BUDGET })
+            val reasons = fallbacks.filterIndexed { index, _ -> outputs[index].decoderFallback != null }
+                .map { withTimeout(2_000) { it.await() }.reason }
+            assertEquals(listOf(DecoderFallbackReason.BUDGET, DecoderFallbackReason.BUDGET), reasons)
+        } finally {
+            fallbacks.forEach { it.cancel() }
+            players.forEach { it.close() }
+        }
+    }
+
+    /** Players and video decoders take places in one budget, and a closed decoder's place goes to the next player. */
+    @Test
+    fun playersAndVideoDecodersShareOneBudget() = withBudget(extra = 2) {
+        val players = mutableListOf<FFplayPlayer>()
+        val decoder = VideoDecoder.open(fixtureSource("hardware-h264.mp4"), decoder = CodecPreference.AUTO)
+        try {
+            assertEquals(DecoderKind.HARDWARE, decoder.decoderKind)
+            assertNull(decoder.decoderFallback)
+            players += budgetPlayer().apply { prepare(fixtureSource("hardware-h264.mp4")) }
+            assertEquals(DecoderKind.HARDWARE, players[0].snapshot.value.output?.decoder)
+
+            // The budget is full: the next player and the next decoder decode in software.
+            players += budgetPlayer().apply { prepare(fixtureSource("hardware-h264.mp4")) }
+            assertEquals(DecoderFallbackReason.BUDGET, players[1].snapshot.value.output?.decoderFallback)
+            VideoDecoder.open(fixtureSource("hardware-h264.mp4"), decoder = CodecPreference.AUTO).use {
+                assertEquals(DecoderKind.SOFTWARE, it.decoderKind)
+                assertEquals(DecoderFallbackReason.BUDGET, it.decoderFallback)
+            }
+
+            decoder.close()
+            players += budgetPlayer().apply { prepare(fixtureSource("hardware-h264.mp4")) }
+            assertEquals(DecoderKind.HARDWARE, players[2].snapshot.value.output?.decoder)
+            assertNull(players[2].snapshot.value.output?.decoderFallback)
+        } finally {
+            decoder.close()
+            players.forEach { it.close() }
+        }
+    }
+
+    /**
+     * Under REQUIRE_HARDWARE a full budget is a failure with BUSY: prepare throws it, an output
+     * attached later fails the player with it, and so does a seek that needs a decoder again after
+     * the idle release.
+     */
+    @Test
+    fun requireHardwareWithAFullBudgetFailsWithBusy() = withBudget(extra = 1) {
+        val held = DecoderBudget.hardwareDecodersInUse
+        val releasing = budgetPlayer(CodecPreference.REQUIRE_HARDWARE, releaseDecoder = 300.milliseconds)
+        val holder = budgetPlayer()
+        val late = budgetPlayer(CodecPreference.REQUIRE_HARDWARE)
+        val unattached = FFplayPlayer(FFplayConfiguration(decoderPreference = CodecPreference.REQUIRE_HARDWARE, audio = false))
+        try {
+            releasing.prepare(fixtureSource("hardware-h264.mp4"))
+            assertEquals(DecoderKind.HARDWARE, releasing.snapshot.value.output?.decoder)
+            withTimeout(3_000) { while (DecoderBudget.hardwareDecodersInUse > held) delay(10) }
+            holder.prepare(fixtureSource("hardware-h264.mp4"))
+            assertEquals(DecoderKind.HARDWARE, holder.snapshot.value.output?.decoder)
+
+            val failure = assertFailsWith<NativePlayerException> { releasing.seekTo(500.milliseconds) }
+            assertEquals(NativePlayerError.BUSY, failure.errorCode)
+
+            val prepareFailure = assertFailsWith<NativePlayerException> { late.prepare(fixtureSource("hardware-h264.mp4")) }
+            assertEquals(NativePlayerError.BUSY, prepareFailure.errorCode)
+
+            unattached.prepare(fixtureSource("hardware-h264.mp4"))
+            unattached.attachOutput(budgetOutput(CodecPreference.REQUIRE_HARDWARE))
+            assertEquals(FFplayState.FAILED, unattached.snapshot.value.state)
+            assertEquals(NativePlayerError.BUSY, (unattached.snapshot.value.failure?.cause as? NativePlayerException)?.errorCode)
+        } finally {
+            releasing.close()
+            holder.close()
+            late.close()
+            unattached.close()
+        }
+    }
+
+    /**
+     * A player that keeps its decoder, so it keeps its place in the budget, with a Canvas output, or
+     * under REQUIRE_HARDWARE one that takes hardware frames, as REQUIRE_HARDWARE needs.
+     */
+    private fun budgetPlayer(
+        preference: CodecPreference = CodecPreference.AUTO,
+        releaseDecoder: Duration? = null,
+    ): FFplayPlayer =
+        FFplayPlayer(FFplayConfiguration(decoderPreference = preference, audio = false, releaseDecoderWhenPaused = releaseDecoder))
+            .apply { attachOutput(budgetOutput(preference)) }
+
+    private fun budgetOutput(preference: CodecPreference): ProductionOutput =
+        if (preference == CodecPreference.REQUIRE_HARDWARE) {
+            ProductionOutput(FFplayOutputCapabilities(hardwareFrameImport = true), FFplayRendererKind.GPU_TEXTURE)
+        } else {
+            ProductionOutput()
+        }
+
+    /** Runs [block] on macOS with room for [extra] hardware decoders more than are open, then puts the limit back and checks every place came back. */
+    private fun withBudget(extra: Int, block: suspend CoroutineScope.() -> Unit) = runBlocking {
+        if (!System.getProperty("os.name").contains("Mac", ignoreCase = true)) return@runBlocking
+        val limit = DecoderBudget.hardwareDecoders
+        val held = DecoderBudget.hardwareDecodersInUse
+        DecoderBudget.hardwareDecoders = held + extra
+        try {
+            block()
+        } finally {
+            DecoderBudget.hardwareDecoders = limit
+        }
+        assertEquals(held, DecoderBudget.hardwareDecodersInUse, "places still held")
+    }
+
     private fun fixtureSource(name: String): MediaSource {
         val bytes = checkNotNull(javaClass.getResourceAsStream("/$name")) { "Missing fixture $name" }.use { it.readBytes() }
         return MediaSource(name, CommandIo { input(name, Buffer().write(bytes)) })
@@ -186,9 +315,10 @@ class FFplayProductionJvmTest {
 }
 
 @OptIn(InternalFFmpegKmpApi::class)
-private class ProductionOutput : FFplayVideoOutput {
-    override val kind = FFplayRendererKind.COMPOSE_CANVAS
-    override val capabilities = FFplayOutputCapabilities()
+private class ProductionOutput(
+    override val capabilities: FFplayOutputCapabilities = FFplayOutputCapabilities(),
+    override val kind: FFplayRendererKind = FFplayRendererKind.COMPOSE_CANVAS,
+) : FFplayVideoOutput {
     var framesReceived = 0
         private set
 

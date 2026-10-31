@@ -115,7 +115,11 @@ FFPLAYKMP_EXPORT int ffmpegkmp_video_decoder_set_android_surface(
  * Under FFPLAYKMP_DECODER_AUTO a hardware decoder that fails or times out
  * before producing a frame is replaced once by the software one, which gets a
  * fresh deadline; a SURFACE output then returns frames in memory, as decoded,
- * instead (reported by `hardware == 0` and a non-NULL frame).
+ * instead (reported by `hardware == 0` and a non-NULL frame). A hardware
+ * decoder holds a place in the process's budget (ffplaykmp_decoder_budget_set)
+ * until the decoder is destroyed; with the budget full AUTO opens the software
+ * one at once and REQUIRE_HARDWARE fails with FFPLAYKMP_ERROR_BUSY. The info's
+ * decoder_fallback says why AUTO decodes in software.
  */
 FFPLAYKMP_EXPORT int ffmpegkmp_video_decoder_start(ffmpegkmp_video_decoder *decoder);
 /* Stream metadata, refined by the first decoded frame after start. */

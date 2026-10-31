@@ -276,13 +276,15 @@ private class FFplayBridgeEngine(
             this.output = null
             clearBridgeOutput()
             val message = nativeError("attach output", result)
+            // The cause carries the native code, BUSY for a full DecoderBudget under REQUIRE_HARDWARE.
+            val cause = NativePlayerException(message, result)
             snapshot = snapshot.copy(
                 state = FFplayState.FAILED,
-                failure = FFplayFailure(message),
+                failure = FFplayFailure(message, cause),
                 output = null,
             )
             update(snapshot)
-            emit(FFplayEvent.Fatal(message))
+            emit(FFplayEvent.Fatal(message, cause))
         } else if (!rendererFallbackEmitted &&
             configuration.outputPreference == FFplayOutputPreference.AUTO &&
             output.kind == FFplayRendererKind.COMPOSE_CANVAS
@@ -526,11 +528,13 @@ private fun NativePlayerState.toPublic(): FFplayState = when (this) {
 private fun DecoderFallbackReason.message(): String = when (this) {
     DecoderFallbackReason.UNSUPPORTED -> "No hardware decoder takes this video; using software decoding"
     DecoderFallbackReason.FAILED -> "The hardware decoder failed; using software decoding"
+    DecoderFallbackReason.BUDGET -> "Every hardware decoder DecoderBudget allows is in use; using software decoding"
 }
 
 private fun nativeError(operation: String, code: Int): String = when (code) {
     NativePlayerError.ACCESS_DENIED -> "Unable to $operation: protected content requires a verified secure output path"
     NativePlayerError.INVALID_ARGUMENT -> "Unable to $operation: invalid native player argument"
     NativePlayerError.UNSUPPORTED -> "Unable to $operation: the required decoder or output capability is unsupported"
+    NativePlayerError.BUSY -> "Unable to $operation: every hardware decoder DecoderBudget allows is in use"
     else -> "Unable to $operation: native player error $code"
 }

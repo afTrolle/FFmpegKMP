@@ -82,3 +82,15 @@ public actual fun nativeFrameStatistics(): NativeFrameStatistics = NativeFrameSt
 @InternalFFmpegKmpApi
 public actual fun nativePlayerStatistics(): NativePlayerStatistics =
     NativePlayerStatistics(codecOpens = 0, videoPackets = 0, downloads = 0, codecCloses = 0)
+
+/** The browser's player decodes in software and WebCodecs keeps its own decoders, so the limit applies to nothing. */
+private var browserDecoderBudget = 0
+
+@InternalFFmpegKmpApi
+public actual fun nativeDecoderBudget(): NativeDecoderBudget = NativeDecoderBudget(hardwareDecoders = browserDecoderBudget, inUse = 0)
+
+@InternalFFmpegKmpApi
+public actual fun setNativeDecoderBudget(hardwareDecoders: Int) {
+    require(hardwareDecoders >= 0) { "The hardware decoder budget must not be negative: $hardwareDecoders" }
+    browserDecoderBudget = hardwareDecoders
+}

@@ -10,7 +10,8 @@ plain JVM server can decode video without depending on it:
 - `MediaWriter`, encoding video and audio tracks into an MP4, with the export's
   `DynamicRange` (`SDR`, `HDR10` or `HLG`) deciding every format along the way;
 - `CodecPreference` (`AUTO`, `REQUIRE_HARDWARE`, `SOFTWARE`), the `DecoderKind` that actually took
-  a source, and `DecoderThreads`, the software decoder's threads;
+  a source, `DecoderThreads`, the software decoder's threads, and `DecoderBudget`, how many
+  hardware decoders the process's decoders and players keep open at once;
 - `VideoInfo`, a stream's size, aspect ratio, rotation, pixel format, bit depth and its colour as
   the same `FrameColor` a frame carries, with the `HdrMetadata` it carries: HDR10's mastering
   display and content light levels, which an HDR10 export takes, and Dolby Vision and HDR10+ as
@@ -274,6 +275,28 @@ deadline by themselves; only a mounted `Source` blocked in `read` needs the watc
 JVM and Android interrupts the thread (ending an Okio `Pipe` read) and elsewhere leaves the read to
 finish on its own. A frame decoded for a call nobody waits for any more is closed.
 
+### Hardware decoder budget
+
+`DecoderBudget.hardwareDecoders` caps the hardware decoders open at once in the process, shared by
+every `VideoDecoder` and every `FFplayPlayer` (0 for no limit). A hardware decoder takes a place
+when it opens and gives it back when it closes: a `VideoDecoder` at `close()`, a player once it has
+been idle for its `releaseDecoderWhenPaused` grace. Nothing waits for a place: with every place
+taken, `AUTO` opens the software decoder at once and `decoderFallback` reports
+`DecoderFallbackReason.BUDGET`, and `REQUIRE_HARDWARE` fails with a `VideoDecodingException`.
+`decoderFallback` is fixed when the decoder opens, like `decoderKind`; `hardwareDecodersInUse`
+says how many places are taken.
+
+Hardware decoders do not degrade gracefully past what the device sustains. On an M4 Pro,
+VideoToolbox plays fourteen 4K H.264 players at their full 24 frames a second, fifteen at 10 and
+sixteen at under 5 each, so the default there, 8, leaves room for higher frame rates and other
+apps. A Galaxy S25 Ultra opens eight 4K MediaCodec decoders at once and refuses the ninth (its
+`getMaxSupportedInstances` says 16), and eight 4K H.264 decoders share about 235 frames a second,
+29 each; the default on Android, 4, gives each about 58 and leaves MediaCodec instances for
+encoders and other apps. iOS takes 4 as well, unmeasured, and other desktops 8; the browser has no
+budget, since its player decodes in software and WebCodecs keeps its own decoders. Without a
+budget, a MediaCodec decoder past the device's limit fails to open and `AUTO` falls back with
+`FAILED`, for good on that source; with one it reports `BUDGET` and asks again later.
+
 ## Encoding
 
 `MediaWriter` encodes tracks into one output on FFmpeg's libraries directly, alongside commands,
@@ -379,4 +402,6 @@ skipped.
 `ParallelDecoderBudgetDeviceTest` measures several 4K software decoders at once on a phone, over a
 clip that `scripts/generate-budget-clip.sh` makes, since it is too large to commit; it takes about
 ten minutes, so it runs only with the `parallelBudget=true` instrumentation argument (see the test
-for the command).
+for the command). Its `measureHardware` opens up to sixteen MediaCodec decoders at once, with no
+`DecoderBudget` limit, to find where the phone's hardware decoders run out, with
+`hardwareBudget=true`.

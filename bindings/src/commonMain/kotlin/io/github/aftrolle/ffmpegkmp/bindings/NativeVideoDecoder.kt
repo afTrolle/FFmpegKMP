@@ -41,6 +41,8 @@ public class NativeVideoStream(
     public val activeDecoder: NativePlayerDecoderKind,
     /** Negative when the input does not report a duration. */
     public val durationMicros: Long,
+    /** Why AUTO decodes in software, as it was when the decoder opened. */
+    public val decoderFallback: NativePlayerDecoderFallback = NativePlayerDecoderFallback.NONE,
 )
 
 /**
@@ -127,6 +129,7 @@ internal class GuardedVideoDecoder(
                 ?: throw NativeVideoDecoderException("'$input' reports no video size", NativePlayerError.UNSUPPORTED),
             activeDecoder = snapshot.activeDecoder,
             durationMicros = snapshot.durationUs ?: -1L,
+            decoderFallback = snapshot.decoderFallback,
         )
     }
 

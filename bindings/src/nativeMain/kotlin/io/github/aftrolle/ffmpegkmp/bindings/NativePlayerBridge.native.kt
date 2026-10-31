@@ -35,6 +35,9 @@ import io.github.aftrolle.ffmpegkmp.bindings.cinterop.ffplaykmp_snapshot_init
 import io.github.aftrolle.ffmpegkmp.bindings.cinterop.ffplaykmp_statistics
 import io.github.aftrolle.ffmpegkmp.bindings.cinterop.ffplaykmp_statistics_init
 import io.github.aftrolle.ffmpegkmp.bindings.cinterop.ffplaykmp_get_statistics
+import io.github.aftrolle.ffmpegkmp.bindings.cinterop.ffplaykmp_decoder_budget_get
+import io.github.aftrolle.ffmpegkmp.bindings.cinterop.ffplaykmp_decoder_budget_in_use
+import io.github.aftrolle.ffmpegkmp.bindings.cinterop.ffplaykmp_decoder_budget_set
 import io.github.aftrolle.ffmpegkmp.bindings.cinterop.ffplaykmp_video_frame
 import io.github.aftrolle.ffmpegkmp.bindings.cinterop.ffplaykmp_platform_video_frame
 import kotlinx.cinterop.COpaquePointer
@@ -282,4 +285,14 @@ public actual fun nativePlayerStatistics(): NativePlayerStatistics = memScoped {
         downloads = statistics.downloads.toLong(),
         codecCloses = statistics.codec_closes.toLong(),
     )
+}
+
+@InternalFFmpegKmpApi
+public actual fun nativeDecoderBudget(): NativeDecoderBudget =
+    NativeDecoderBudget(hardwareDecoders = ffplaykmp_decoder_budget_get(), inUse = ffplaykmp_decoder_budget_in_use())
+
+@InternalFFmpegKmpApi
+public actual fun setNativeDecoderBudget(hardwareDecoders: Int) {
+    require(hardwareDecoders >= 0) { "The hardware decoder budget must not be negative: $hardwareDecoders" }
+    ffplaykmp_decoder_budget_set(hardwareDecoders)
 }

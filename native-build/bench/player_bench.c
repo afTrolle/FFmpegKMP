@@ -8,6 +8,8 @@
  * codecs it opened and video packets it demuxed. The players release an idle
  * codec after the default grace, 2 s. Frames are converted into one
  * reused RGBA8 bitmap at their own size, as a Canvas output's FrameImage does.
+ * The hardware decoder budget is the platform's default, or
+ * FFMPEGKMP_BENCH_HARDWARE_DECODERS (0 for no limit).
  * scripts/bench-player.sh builds and runs it.
  *
  *   player_bench <clips> transitions <clip> <AUTO|SOFTWARE>
@@ -334,10 +336,12 @@ typedef struct bench_parallel_job {
     double prepare_ms;
     int played;
     ffplaykmp_decoder_kind decoder;
+    ffplaykmp_decoder_fallback fallback;
 } bench_parallel_job;
 
 static void *bench_parallel_main(void *opaque) {
     bench_parallel_job *job = opaque;
+    ffplaykmp_snapshot snapshot;
     double start;
     int frames;
     if (bench_player_open(&job->bench, job->path, job->preference) < 0)
@@ -350,7 +354,9 @@ static void *bench_parallel_main(void *opaque) {
     ffplaykmp_player_play(job->bench.player);
     av_usleep(2000000);
     job->played = atomic_load(&job->bench.frames) - frames;
-    job->decoder = bench_snapshot(&job->bench).active_decoder;
+    snapshot = bench_snapshot(&job->bench);
+    job->decoder = snapshot.active_decoder;
+    job->fallback = snapshot.decoder_fallback;
     ffplaykmp_player_pause(job->bench.player);
     return NULL;
 }
@@ -369,6 +375,7 @@ static void bench_parallel(const char *path, int preference, int count) {
     double prepare_ms = 0;
     int played = 0;
     int hardware = 0;
+    int budget = 0;
     int idle_threads;
     int idle_footprint_mb;
     int paused_threads;
@@ -388,17 +395,18 @@ static void bench_parallel(const char *path, int preference, int count) {
         prepare_ms += jobs[index].prepare_ms;
         played += jobs[index].played;
         hardware += jobs[index].decoder == FFPLAYKMP_DECODER_HARDWARE;
+        budget += jobs[index].fallback == FFPLAYKMP_DECODER_FALLBACK_BUDGET;
     }
     process_usage(&paused_threads, &paused_footprint_mb);
     /* Past the default 2 s grace, every paused player has released its codec. */
     av_usleep(3000000);
     process_usage(&released_threads, &released_footprint_mb);
-    printf("%-22s %-8s players=%-2d | prepare %6.1f ms | %5.1f frames/s each | %2d hw | paused: %3d threads, "
-            "%5d MB (%4d MB each) | after the grace: %3d threads, %5d MB (%4d MB each)\n",
+    printf("%-22s %-8s players=%-2d | prepare %6.1f ms | %5.1f frames/s each | %2d hw, %2d budget (limit %d) | "
+            "paused: %3d threads, %5d MB (%4d MB each) | after the grace: %3d threads, %5d MB (%4d MB each), %d hw held\n",
             file_name(path), preference == FFPLAYKMP_DECODER_AUTO ? "AUTO" : "SOFTWARE", count, prepare_ms / count,
-            played / 2.0 / count, hardware, paused_threads, paused_footprint_mb,
+            played / 2.0 / count, hardware, budget, ffplaykmp_decoder_budget_get(), paused_threads, paused_footprint_mb,
             (paused_footprint_mb - idle_footprint_mb) / count, released_threads, released_footprint_mb,
-            (released_footprint_mb - idle_footprint_mb) / count);
+            (released_footprint_mb - idle_footprint_mb) / count, ffplaykmp_decoder_budget_in_use());
     for (index = 0; index < count; index++)
         bench_player_close(&jobs[index].bench);
 }
@@ -410,6 +418,8 @@ int main(int argc, char **argv) {
         fprintf(stderr, "usage: %s <clips> transitions|parallel <clip> AUTO|SOFTWARE [players]\n", argv[0]);
         return 2;
     }
+    if (getenv("FFMPEGKMP_BENCH_HARDWARE_DECODERS"))
+        ffplaykmp_decoder_budget_set(atoi(getenv("FFMPEGKMP_BENCH_HARDWARE_DECODERS")));
     snprintf(path, sizeof(path), "%s/%s", argv[1], argv[3]);
     preference = !strcmp(argv[4], "AUTO") ? FFPLAYKMP_DECODER_AUTO : FFPLAYKMP_DECODER_SOFTWARE;
     if (!strcmp(argv[2], "transitions"))

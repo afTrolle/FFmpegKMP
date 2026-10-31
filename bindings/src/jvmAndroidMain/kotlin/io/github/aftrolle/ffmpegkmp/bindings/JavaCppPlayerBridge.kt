@@ -234,3 +234,19 @@ public actual fun nativePlayerStatistics(): NativePlayerStatistics {
         statistics.close()
     }
 }
+
+@InternalFFmpegKmpApi
+public actual fun nativeDecoderBudget(): NativeDecoderBudget {
+    JavaCppBridgeLoader.load()
+    return NativeDecoderBudget(
+        hardwareDecoders = bridge.ffplaykmp_decoder_budget_get(),
+        inUse = bridge.ffplaykmp_decoder_budget_in_use(),
+    )
+}
+
+@InternalFFmpegKmpApi
+public actual fun setNativeDecoderBudget(hardwareDecoders: Int) {
+    require(hardwareDecoders >= 0) { "The hardware decoder budget must not be negative: $hardwareDecoders" }
+    JavaCppBridgeLoader.load()
+    bridge.ffplaykmp_decoder_budget_set(hardwareDecoders)
+}

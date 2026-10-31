@@ -96,6 +96,8 @@ typedef struct ffplaykmp_video_codec {
     AVCodecContext *decoder;
     int stream_index;
     int hardware;
+    /* Holds one of the hardware decoder budget's places, which closing gives back. */
+    int leased;
 #if defined(__ANDROID__)
     AVMediaCodecContext *mediacodec_context;
 #else
@@ -124,7 +126,11 @@ int ffplaykmp_decoder_thread_count(int threads);
  * Opens `stream_index`'s decoder. When `hardware` is requested but this host
  * has no hardware decoder for the codec, the software decoder is opened and
  * codec->hardware stays 0; `require_hardware` turns that into
- * FFPLAYKMP_ERROR_UNSUPPORTED instead. A software decoder decodes with
+ * FFPLAYKMP_ERROR_UNSUPPORTED instead. A hardware decoder takes a place in the
+ * process's budget (ffplaykmp_decoder_budget_set), held until the codec
+ * closes or its open fails; with the budget full the call opens nothing and
+ * returns FFPLAYKMP_ERROR_BUSY, leaving the software retry, or the failure, to
+ * the caller. A software decoder decodes with
  * ffplaykmp_decoder_thread_count(`threads`) threads of `thread_type`:
  * FF_THREAD_FRAME | FF_THREAD_SLICE as ffplay's `-threads` sets them, where
  * FFmpeg takes frame threading wherever the codec has it and keeps about one

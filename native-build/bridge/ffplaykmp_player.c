@@ -48,6 +48,16 @@ typedef struct ffplaykmp_session {
     uint32_t codec_input;
     /* AUTO: hardware failed on this source, so its codecs open in software until a new Surface. */
     int hardware_failed;
+#if defined(__ANDROID__)
+    /*
+     * AUTO: the hardware decoder budget was full when a codec for this Surface
+     * opened, so the canvas drew the software frames on it, after which
+     * MediaCodec can no longer connect to it: its codecs open in software,
+     * reporting the budget, until a new Surface. Elsewhere a budget fallback
+     * holds only for the codec it opened, and the next asks the budget again.
+     */
+    int budget_fallback;
+#endif
     /*
      * The decoder goes on from the last frame it gave out and the demuxer from
      * the last packet the decoder took, so a run forward needs no seek. While
@@ -625,8 +635,10 @@ static int ffplaykmp_session_open_input(ffplaykmp_player *player, const char *ur
  * one when it is: a hardware decoder when `preference` allows it and the
  * output takes hardware frames, unless AUTO's hardware attempt failed on this
  * source. Under AUTO a hardware decoder that will not open gives way to
- * software, for the source's later runs too. Publishes why a wanted hardware
- * decoder is not the one open, and what a preview learns from a new codec.
+ * software, for the source's later runs too, and one the hardware decoder
+ * budget has no place for gives way to software for this codec only (on
+ * Android, for the Surface). Publishes why a wanted hardware decoder is not
+ * the one open, and what a preview learns from a new codec.
  */
 static int ffplaykmp_session_open_codec(
         ffplaykmp_player *player,
@@ -636,6 +648,7 @@ static int ffplaykmp_session_open_codec(
     ffplaykmp_decoder_fallback fallback = FFPLAYKMP_DECODER_FALLBACK_NONE;
     int hardware_wanted = 0;
     int hardware;
+    int budget = 0;
     void *android_surface = NULL;
     int result;
     if (preference != FFPLAYKMP_DECODER_SOFTWARE) {
@@ -661,11 +674,24 @@ static int ffplaykmp_session_open_codec(
         return 0;
     ffplaykmp_session_close_codec(session);
     hardware = hardware_wanted && !(preference == FFPLAYKMP_DECODER_AUTO && session->hardware_failed);
+#if defined(__ANDROID__)
+    if (hardware && preference == FFPLAYKMP_DECODER_AUTO && session->budget_fallback) {
+        hardware = 0;
+        budget = 1;
+    }
+#endif
     result = ffplaykmp_video_codec_open(
             &session->codec, session->input.format, session->video_stream, hardware,
             preference == FFPLAYKMP_DECODER_REQUIRE_HARDWARE, player->configuration.decoder_threads,
             FF_THREAD_FRAME | FF_THREAD_SLICE, hardware ? android_surface : NULL, NULL);
-    if (result < 0 && session->codec.hardware && preference == FFPLAYKMP_DECODER_AUTO) {
+    if (result == FFPLAYKMP_ERROR_BUSY && preference == FFPLAYKMP_DECODER_AUTO) {
+        /* Not this source's failure: hardware_failed stays as it was. */
+        ffplaykmp_session_close_codec(session);
+        budget = 1;
+        result = ffplaykmp_video_codec_open(
+                &session->codec, session->input.format, session->video_stream, 0, 0,
+                player->configuration.decoder_threads, FF_THREAD_FRAME | FF_THREAD_SLICE, NULL, NULL);
+    } else if (result < 0 && session->codec.hardware && preference == FFPLAYKMP_DECODER_AUTO) {
         ffplaykmp_session_close_codec(session);
         session->hardware_failed = 1;
         result = ffplaykmp_video_codec_open(
@@ -681,9 +707,13 @@ static int ffplaykmp_session_open_codec(
     session->codec_surface = android_surface;
     session->codec_input = session->input_generation;
     if (hardware_wanted && !session->codec.hardware)
-        fallback = session->hardware_failed
-                ? FFPLAYKMP_DECODER_FALLBACK_FAILED
+        fallback = session->hardware_failed ? FFPLAYKMP_DECODER_FALLBACK_FAILED
+                : budget ? FFPLAYKMP_DECODER_FALLBACK_BUDGET
                 : FFPLAYKMP_DECODER_FALLBACK_UNSUPPORTED;
+#if defined(__ANDROID__)
+    if (budget && hardware_wanted)
+        session->budget_fallback = 1;
+#endif
     pthread_mutex_lock(&player->mutex);
     /* A configured device is not proof of hardware decoding: the first frame decides. */
     player->snapshot.active_decoder = FFPLAYKMP_DECODER_UNKNOWN;
@@ -1441,10 +1471,11 @@ int ffplaykmp_player_set_android_surface(
     pthread_mutex_unlock(&player->mutex);
     if (previous)
         (*env)->DeleteGlobalRef(env, previous);
-    /* A hardware decoder that failed on another Surface may open on this one. */
+    /* A hardware decoder that failed on another Surface, or found the budget full, may open on this one. */
     if (retained) {
         pthread_mutex_lock(&player->session_mutex);
         player->session.hardware_failed = 0;
+        player->session.budget_fallback = 0;
         pthread_mutex_unlock(&player->session_mutex);
     }
     return 0;

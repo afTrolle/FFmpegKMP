@@ -23,6 +23,7 @@ import android.view.Surface
 import androidx.compose.ui.layout.ContentScale
 import io.github.aftrolle.ffmpegkmp.bindings.nativePlayerStatistics
 import io.github.aftrolle.ffmpegkmp.codec.CodecPreference
+import io.github.aftrolle.ffmpegkmp.codec.DecoderBudget
 import io.github.aftrolle.ffmpegkmp.codec.DecoderFallbackReason
 import io.github.aftrolle.ffmpegkmp.codec.DecoderKind
 import io.github.aftrolle.ffmpegkmp.codec.VideoFrame
@@ -225,6 +226,54 @@ class FFplayNativePlayerDeviceTest {
         } finally {
             players.forEach(Playing::close)
         }
+    }
+
+    /**
+     * With room for two hardware decoders, two of four players render through MediaCodec and two are drawn by the
+     * canvas, saying why. A closed player's place goes to the next decoder opened: a budget player's Surface was drawn
+     * by the canvas and stays the canvas's, so it takes MediaCodec again on a new Surface.
+     */
+    @Test
+    fun aBudgetOfTwoGivesTwoOfFourPlayersMediaCodec() = runBlocking {
+        if (!hardwareAvcDecoder()) return@runBlocking log("no hardware H.264 decoder takes $SIZE x $SIZE")
+        val limit = DecoderBudget.hardwareDecoders
+        val held = DecoderBudget.hardwareDecodersInUse
+        DecoderBudget.hardwareDecoders = held + 2
+        val players = (1..4).map { Playing(CodecPreference.AUTO, releaseDecoder = null) }
+        val open = players.toMutableList()
+        try {
+            for (playing in players) {
+                withTimeout(15.seconds) { playing.player.prepare(playing.source()) }
+                playing.show()
+                playing.player.await("ready") { it.state == FFplayState.READY }
+                playing.surface.await("the preview") { it.number == 0 }
+            }
+            val outputs = players.map { it.player.snapshot.value.output }
+            log("budget of two: ${outputs.map { "${it?.decoder}/${it?.decoderFallback}" }}")
+            assertEquals(2, outputs.count { it?.decoder == DecoderKind.HARDWARE && it.decoderFallback == null })
+            assertEquals(2, outputs.count { it?.decoder == DecoderKind.SOFTWARE && it.decoderFallback == DecoderFallbackReason.BUDGET })
+            assertEquals(held + 2, DecoderBudget.hardwareDecodersInUse)
+            val budgeted = players.filter { it.player.snapshot.value.output?.decoderFallback == DecoderFallbackReason.BUDGET }
+            for (playing in budgeted) {
+                withTimeoutOrNull(2.seconds) { while (playing.decoderFallbacks().isEmpty()) delay(20) }
+                assertEquals(listOf(DecoderFallbackReason.BUDGET), playing.decoderFallbacks())
+            }
+
+            val closed = players.first { it.player.snapshot.value.output?.decoder == DecoderKind.HARDWARE }
+            closed.close()
+            open -= closed
+            assertEquals(held + 1, DecoderBudget.hardwareDecodersInUse)
+            val moved = budgeted.first()
+            moved.replaceSurface()
+            moved.player.await("MediaCodec on the new Surface") { it.output?.decoder == DecoderKind.HARDWARE }
+            moved.surface.await("the preview on the new Surface") { it.count > 0 }
+            assertNull(moved.player.snapshot.value.output?.decoderFallback)
+            assertEquals(held + 2, DecoderBudget.hardwareDecodersInUse)
+        } finally {
+            open.forEach(Playing::close)
+            DecoderBudget.hardwareDecoders = limit
+        }
+        assertEquals(held, DecoderBudget.hardwareDecodersInUse, "places held after the players closed")
     }
 
     @Test
