@@ -100,16 +100,17 @@ private class CInteropVideoDecoderEngine(
     override fun info(): NativePlayerSnapshot = memScoped {
         val snapshot = alloc<ffplaykmp_snapshot>()
         ffplaykmp_snapshot_init(snapshot.ptr)
-        requireVideoSuccess(ffmpegkmp_video_decoder_get_info(decoder, snapshot.ptr), "read the video info")
+        requireNative(ffmpegkmp_video_decoder_get_info(decoder, snapshot.ptr), "read the video info", ::NativeVideoDecoderException)
         snapshot.toNativeSnapshot()
     }
 
     override fun seek(positionNanos: Long) = ffmpegkmp_video_decoder_seek(decoder, positionNanos)
 
     override fun frameAt(positionNanos: Long): NativeDecodedFrame {
-        requireVideoSuccess(
+        requireNative(
             ffmpegkmp_video_decoder_frame_at(decoder, positionNanos, frame.ptr),
             "decode the frame at ${positionNanos}ns",
+            ::NativeVideoDecoderException,
         )
         return NativeDecodedFrame(
             serial = frame.serial.toLong(),

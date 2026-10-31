@@ -75,7 +75,7 @@ public actual suspend fun createPlatformMediaWriter(
 public actual suspend fun platformVideoEncoderFor(config: NativeVideoEncoderConfig): NativeVideoTrackInfo? = memScoped {
     val info = alloc<ffmpegkmp_video_track_info>().also { ffmpegkmp_video_track_info_init(it.ptr) }
     val result = ffmpegkmp_writer_can_encode(config.toNative(this).ptr, info.ptr)
-    requireWriterSuccess(result, "check the encoder")
+    requireNative(result, "check the encoder", ::NativeMediaWriterException)
     if (result == 0) null else info.toNative()
 }
 
@@ -98,7 +98,7 @@ private class CInteropMediaWriterEngine(
     override fun addVideoTrack(config: NativeVideoEncoderConfig): NativeAddedVideoTrack = memScoped {
         val info = alloc<ffmpegkmp_video_track_info>().also { ffmpegkmp_video_track_info_init(it.ptr) }
         val index = ffmpegkmp_writer_add_video_track(writer, config.toNative(this).ptr, info.ptr)
-        requireWriterSuccess(index, "add a ${config.width}x${config.height} ${config.codec} ${config.dynamicRange} track")
+        requireNative(index, "add a ${config.width}x${config.height} ${config.codec} ${config.dynamicRange} track", ::NativeMediaWriterException)
         NativeAddedVideoTrack(index, info.toNative())
     }
 
@@ -126,7 +126,7 @@ private class CInteropMediaWriterEngine(
 
     override fun finish(): NativeWriterResult = memScoped {
         val result = alloc<ffmpegkmp_writer_result>().also { ffmpegkmp_writer_result_init(it.ptr) }
-        requireWriterSuccess(ffmpegkmp_writer_finish(writer, result.ptr), "finish the output")
+        requireNative(ffmpegkmp_writer_finish(writer, result.ptr), "finish the output", ::NativeMediaWriterException)
         NativeWriterResult(result.bytes, result.duration_us)
     }
 

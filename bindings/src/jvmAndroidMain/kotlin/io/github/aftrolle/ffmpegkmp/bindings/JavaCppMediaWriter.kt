@@ -57,7 +57,7 @@ public actual suspend fun platformVideoEncoderFor(config: NativeVideoEncoderConf
         try {
             bridge.ffmpegkmp_video_track_info_init(info)
             val result = bridge.ffmpegkmp_writer_can_encode(native, info)
-            requireWriterSuccess(result, "check the encoder")
+            requireNative(result, "check the encoder", ::NativeMediaWriterException)
             if (result == 0) null else info.toNative()
         } finally {
             info.close()
@@ -83,7 +83,7 @@ private class JavaCppMediaWriterEngine(
         try {
             bridge.ffmpegkmp_video_track_info_init(info)
             val index = bridge.ffmpegkmp_writer_add_video_track(writer, native, info)
-            requireWriterSuccess(index, "add a ${config.width}x${config.height} ${config.codec} ${config.dynamicRange} track")
+            requireNative(index, "add a ${config.width}x${config.height} ${config.codec} ${config.dynamicRange} track", ::NativeMediaWriterException)
             NativeAddedVideoTrack(index, info.toNative()).also { videoTracks[index] = config to it.info }
         } finally {
             info.close()
@@ -153,7 +153,7 @@ private class JavaCppMediaWriterEngine(
         val result = ffmpegkmp_writer_result()
         return try {
             bridge.ffmpegkmp_writer_result_init(result)
-            requireWriterSuccess(bridge.ffmpegkmp_writer_finish(writer, result), "finish the output")
+            requireNative(bridge.ffmpegkmp_writer_finish(writer, result), "finish the output", ::NativeMediaWriterException)
             NativeWriterResult(result.bytes(), result.duration_us())
         } finally {
             result.close()

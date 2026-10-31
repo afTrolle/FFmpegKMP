@@ -133,10 +133,7 @@ public interface NativeEncoderSurface {
 }
 
 @InternalFFmpegKmpApi
-public class NativeMediaWriterException(
-    message: String,
-    public val errorCode: Int,
-) : IllegalStateException(message)
+public class NativeMediaWriterException(message: String, errorCode: Int) : NativeCallException(message, errorCode)
 
 /**
  * Creates a writer for [output], opening it for writing. [fastStart] puts an MP4's index first.
@@ -182,20 +179,20 @@ internal class GuardedMediaWriter(
         guard.use(::closedError) { engine.addVideoTrack(config) }
 
     override suspend fun addAudioTrack(sampleRate: Int, channels: Int, bitRate: Long): Int = guard.use(::closedError) {
-        engine.addAudioTrack(sampleRate, channels, bitRate).also { requireWriterSuccess(it, "add an audio track") }
+        engine.addAudioTrack(sampleRate, channels, bitRate).also { requireNative(it, "add an audio track", ::NativeMediaWriterException) }
     }
 
     override suspend fun writeVideo(track: Int, frame: NativeFrame, ptsNanos: Long) = guard.use(::closedError) {
-        requireWriterSuccess(engine.writeVideo(track, frame, ptsNanos), "encode the frame at ${ptsNanos}ns")
+        requireNative(engine.writeVideo(track, frame, ptsNanos), "encode the frame at ${ptsNanos}ns", ::NativeMediaWriterException)
     }
 
     override suspend fun writeAudio(track: Int, samples: FloatArray, offset: Int, frames: Int) = guard.use(::closedError) {
         require(offset >= 0 && frames >= 0) { "Offset and frame count must not be negative" }
-        requireWriterSuccess(engine.writeAudio(track, samples, offset, frames), "encode audio")
+        requireNative(engine.writeAudio(track, samples, offset, frames), "encode audio", ::NativeMediaWriterException)
     }
 
     override suspend fun endTrack(track: Int) = guard.use(::closedError) {
-        requireWriterSuccess(engine.endTrack(track), "finish track $track")
+        requireNative(engine.endTrack(track), "finish track $track", ::NativeMediaWriterException)
     }
 
     override suspend fun openInputSurface(track: Int): NativeEncoderSurface? = guard.use(::closedError) { engine.openInputSurface(track) }
@@ -209,10 +206,6 @@ internal class GuardedMediaWriter(
     override fun close() = guard.close(engine::release)
 
     private fun closedError(): Nothing = throw IllegalStateException("The media writer for '$output' is closed")
-}
-
-internal fun requireWriterSuccess(result: Int, action: String) {
-    if (result < 0) throw NativeMediaWriterException("Could not $action (error $result)", result)
 }
 
 /** The URL [output] is written through, `ffmpegkmp:1.<ext>` for a mounted resource. */

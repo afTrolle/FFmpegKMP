@@ -79,7 +79,7 @@ private class JavaCppVideoDecoderEngine(
         val snapshot = ffplaykmp_snapshot()
         bridge.ffplaykmp_snapshot_init(snapshot)
         return try {
-            requireVideoSuccess(bridge.ffmpegkmp_video_decoder_get_info(decoder, snapshot), "read the video info")
+            requireNative(bridge.ffmpegkmp_video_decoder_get_info(decoder, snapshot), "read the video info", ::NativeVideoDecoderException)
             snapshot.toNativeSnapshot()
         } finally {
             snapshot.close()
@@ -89,9 +89,10 @@ private class JavaCppVideoDecoderEngine(
     override fun seek(positionNanos: Long) = bridge.ffmpegkmp_video_decoder_seek(decoder, positionNanos)
 
     override fun frameAt(positionNanos: Long): NativeDecodedFrame {
-        requireVideoSuccess(
+        requireNative(
             bridge.ffmpegkmp_video_decoder_frame_at(decoder, positionNanos, frame),
             "decode the frame at ${positionNanos}ns",
+            ::NativeVideoDecoderException,
         )
         return NativeDecodedFrame(
             serial = frame.serial(),

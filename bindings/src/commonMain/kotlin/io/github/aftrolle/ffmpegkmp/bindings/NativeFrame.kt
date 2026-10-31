@@ -85,8 +85,4 @@ public data class NativeFrameStatistics(val buffers: Long, val bytes: Long)
 public expect fun nativeFrameStatistics(): NativeFrameStatistics
 
 @InternalFFmpegKmpApi
-public class NativeFrameException(message: String, public val errorCode: Int) : IllegalStateException(message)
-
-internal fun requireFrameSuccess(result: Int, action: String) {
-    if (result < 0) throw NativeFrameException("Could not $action (error $result)", result)
-}
+public class NativeFrameException(message: String, errorCode: Int) : NativeCallException(message, errorCode)

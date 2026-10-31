@@ -50,7 +50,7 @@ internal class CInteropFrame(internal val handle: CPointer<ffmpegkmp_frame>) : N
         memScoped {
             val info = alloc<ffmpegkmp_frame_info>()
             ffmpegkmp_frame_info_init(info.ptr)
-            requireFrameSuccess(ffmpegkmp_frame_get_info(handle, info.ptr), "describe a frame")
+            requireNative(ffmpegkmp_frame_get_info(handle, info.ptr), "describe a frame", ::NativeFrameException)
             width = info.width
             height = info.height
             mappable = info.mappable != 0
@@ -67,7 +67,7 @@ internal class CInteropFrame(internal val handle: CPointer<ffmpegkmp_frame>) : N
     override fun <R> usePlanes(block: (List<NativeFramePlane>) -> R): R = memScoped {
         val planes = alloc<ffmpegkmp_frame_planes>()
         ffmpegkmp_frame_planes_init(planes.ptr)
-        requireFrameSuccess(ffmpegkmp_frame_map(handle, planes.ptr), "map a frame")
+        requireNative(ffmpegkmp_frame_map(handle, planes.ptr), "map a frame", ::NativeFrameException)
         try {
             block(
                 List(planes.count) { index ->
@@ -91,22 +91,23 @@ internal class CInteropFrame(internal val handle: CPointer<ffmpegkmp_frame>) : N
 
     override fun convert(format: NativeFrameFormat): NativeFrame = memScoped {
         val destination = alloc<CPointerVar<ffmpegkmp_frame>>()
-        requireFrameSuccess(
+        requireNative(
             ffmpegkmp_frame_convert_to(handle, format.toNative(this).ptr, destination.ptr),
             "convert a frame",
+            ::NativeFrameException,
         )
         CInteropFrame(checkNotNull(destination.value))
     }
 
     override fun convertInto(target: NativeFrame) {
         val destination = requireNotNull(target as? CInteropFrame) { "Frames of another binding cannot be converted into" }
-        requireFrameSuccess(ffmpegkmp_frame_convert_into(destination.handle, handle), "convert a frame")
+        requireNative(ffmpegkmp_frame_convert_into(destination.handle, handle), "convert a frame", ::NativeFrameException)
     }
 
     override fun <R> useWritablePixels(block: (address: Long, rowBytes: Int) -> R): R = memScoped {
         val planes = alloc<ffmpegkmp_frame_planes>()
         ffmpegkmp_frame_planes_init(planes.ptr)
-        requireFrameSuccess(ffmpegkmp_frame_map_writable(handle, planes.ptr), "map a frame for writing")
+        requireNative(ffmpegkmp_frame_map_writable(handle, planes.ptr), "map a frame for writing", ::NativeFrameException)
         try {
             check(planes.count == 1) { "A ${planes.count}-plane frame has no single packed plane to write" }
             block(checkNotNull(planes.data[0]).rawValue.toLong(), planes.row_bytes[0])
@@ -136,9 +137,10 @@ public fun wrapNativeFrame(
 @InternalFFmpegKmpApi
 public actual fun allocateNativeFrame(format: NativeFrameFormat, width: Int, height: Int): NativeFrame = memScoped {
     val frame = alloc<CPointerVar<ffmpegkmp_frame>>()
-    requireFrameSuccess(
+    requireNative(
         ffmpegkmp_frame_pool_get(null, format.toNative(this).ptr, width, height, frame.ptr),
         "allocate a ${width}x$height frame",
+        ::NativeFrameException,
     )
     CInteropFrame(checkNotNull(frame.value))
 }
