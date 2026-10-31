@@ -21,12 +21,16 @@
 #include <libavutil/time.h>
 
 /*
- * What decoding the player's input holds. Each run still opens and closes the
- * input and the codec; the packet and frames are the player's, allocated once
- * with it. A run holds session_mutex throughout, so one runs at a time.
+ * What decoding the player's input holds. The input is opened and probed once,
+ * by prepare, and kept until stop, destroy, reset_cancel or the next prepare;
+ * each run opens and closes the codec. The packet and frames are the player's,
+ * allocated once with it. A run holds session_mutex throughout, so one runs at
+ * a time, and so does anything that opens or closes the input.
  */
 typedef struct ffplaykmp_session {
     ffplaykmp_input input;
+    /* The input has not been read past its probe, so a run from the start needs no seek. */
+    int at_start;
     int video_stream;
     const AVStream *stream;
     int64_t media_start_us;
@@ -409,17 +413,41 @@ static int ffplaykmp_present_held_frame(
     return result;
 }
 
-/* Opens `url` into the session and finds its video stream. */
+/* Closes the session's input, with session_mutex held; the next run opens it again. */
+static void ffplaykmp_session_close_input(ffplaykmp_session *session) {
+    ffplaykmp_close_input(&session->input);
+    memset(&session->input, 0, sizeof(session->input));
+    session->video_stream = -1;
+    session->stream = NULL;
+    session->media_start_us = 0;
+    session->at_start = 0;
+}
+
+/* Closes the player's input once no run uses it, before the host may unmount what it reads. */
+static void ffplaykmp_player_close_input(ffplaykmp_player *player) {
+    pthread_mutex_lock(&player->session_mutex);
+    ffplaykmp_session_close_input(&player->session);
+    pthread_mutex_unlock(&player->session_mutex);
+}
+
+/* Opens `url` into the session and finds its video stream, unless it is open already. */
 static int ffplaykmp_session_open_input(ffplaykmp_player *player, const char *url) {
     ffplaykmp_session *session = &player->session;
-    int result = ffplaykmp_player_open_input(player, url, &session->input);
-    if (result < 0)
+    int result;
+    if (session->input.format)
+        return 0;
+    result = ffplaykmp_player_open_input(player, url, &session->input);
+    if (result >= 0) {
+        session->video_stream = ffplaykmp_find_video_stream(session->input.format, NULL);
+        result = session->video_stream < 0 ? session->video_stream : 0;
+    }
+    if (result < 0) {
+        ffplaykmp_session_close_input(session);
         return result;
-    session->video_stream = ffplaykmp_find_video_stream(session->input.format, NULL);
-    if (session->video_stream < 0)
-        return session->video_stream;
+    }
     session->stream = session->input.format->streams[session->video_stream];
     session->media_start_us = ffplaykmp_media_start_us(session->input.format);
+    session->at_start = 1;
     return 0;
 }
 
@@ -471,12 +499,23 @@ static int ffplaykmp_session_open_codec(
     return 0;
 }
 
-/* Seeks to the keyframe at or before `start_position_us`; an input just opened is already at the start. */
+/*
+ * Seeks to the keyframe at or before `start_position_us`; an input not yet
+ * read past its probe is already at the start.
+ */
 static int ffplaykmp_session_seek(ffplaykmp_session *session, int64_t start_position_us) {
+    AVIOContext *pb = session->input.format->pb;
     int64_t target;
     int result;
-    if (start_position_us <= 0)
+    if (start_position_us <= 0 && session->at_start)
         return 0;
+    session->at_start = 0;
+    /* A read an interrupt failed (a pause or a seek ends the run that way) stays in the
+     * AVIOContext and would fail the seek's reads; clear it, as ffplay clears eof_reached. */
+    if (pb) {
+        pb->error = 0;
+        pb->eof_reached = 0;
+    }
     target = av_rescale_q(session->media_start_us + start_position_us, AV_TIME_BASE_Q, session->stream->time_base);
     result = avformat_seek_file(
             session->input.format, session->video_stream, INT64_MIN, target, INT64_MAX, AVSEEK_FLAG_BACKWARD);
@@ -550,27 +589,25 @@ finish:
 }
 
 /*
- * Closes what a run opened, frames first, since a MediaCodec frame holds one of
- * the codec's buffers, and keeps the packet and frames for the next run.
+ * Closes the codec a run opened, frames first, since a MediaCodec frame holds
+ * one of the codec's buffers, and keeps the input, packet and frames for the
+ * next run.
  */
 static void ffplaykmp_session_close(ffplaykmp_session *session) {
     av_packet_unref(session->packet);
     av_frame_unref(session->frame);
     av_frame_unref(session->held);
     ffplaykmp_video_codec_close(&session->codec);
-    ffplaykmp_close_input(&session->input);
     memset(&session->codec, 0, sizeof(session->codec));
-    memset(&session->input, 0, sizeof(session->input));
-    session->video_stream = -1;
-    session->stream = NULL;
-    session->media_start_us = 0;
 }
 
 /*
- * Opens `url` and decodes its video: one preview frame at `start_position_us`,
- * or (continuous) every frame on the playback clock. A hardware attempt under
- * AUTO that fails before decoding anything is retried once in software. Runs
- * one at a time, holding session_mutex.
+ * Decodes the video of `url`, opening it unless prepare left it open: one
+ * preview frame at `start_position_us`, or (continuous) every frame on the
+ * playback clock. A hardware attempt under AUTO that fails before decoding
+ * anything is retried once in software, on the same input. Any other failure
+ * but an abort closes the input, so the next run opens it afresh. Runs one at
+ * a time, holding session_mutex.
  */
 static int ffplaykmp_decode_frames(
         ffplaykmp_player *player,
@@ -579,55 +616,71 @@ static int ffplaykmp_decode_frames(
         int continuous,
         ffplaykmp_decoder_preference preference) {
     ffplaykmp_session *session = &player->session;
+    ffplaykmp_decoder_kind reported;
+    int decoded_frames;
     int result;
     int retry;
     pthread_mutex_lock(&player->session_mutex);
+    pthread_mutex_lock(&player->mutex);
+    reported = player->snapshot.active_decoder;
+    pthread_mutex_unlock(&player->mutex);
     do {
-        int decoded_frames = 0;
         int hardware;
+        decoded_frames = 0;
         result = ffplaykmp_session_open_input(player, url);
         if (result >= 0)
             result = ffplaykmp_session_open_codec(player, preference, continuous);
         hardware = session->codec.hardware;
         if (result >= 0)
             result = ffplaykmp_session_seek(session, start_position_us);
-        if (result >= 0)
+        if (result >= 0) {
+            session->at_start = 0;
             result = ffplaykmp_session_decode(player, start_position_us, continuous,
                     preference == FFPLAYKMP_DECODER_REQUIRE_HARDWARE, &decoded_frames);
+        }
         ffplaykmp_session_close(session);
         retry = result < 0 && hardware && decoded_frames == 0 &&
                 preference == FFPLAYKMP_DECODER_AUTO && !ffplaykmp_is_aborted(player);
+        /* The software retry keeps the input; it seeks back to the start position. */
+        if (result < 0 && !retry && !ffplaykmp_is_aborted(player))
+            ffplaykmp_session_close_input(session);
         preference = FFPLAYKMP_DECODER_SOFTWARE;
     } while (retry);
+    /* Opening the codec forgot the decoder kind until a frame decided it; a run a pause or
+     * seek stopped before then would reopen the same kind, so the last one reported stands. */
+    if (decoded_frames == 0 && ffplaykmp_is_aborted(player)) {
+        pthread_mutex_lock(&player->mutex);
+        if (player->snapshot.active_decoder == FFPLAYKMP_DECODER_UNKNOWN)
+            player->snapshot.active_decoder = reported;
+        pthread_mutex_unlock(&player->mutex);
+    }
     pthread_mutex_unlock(&player->session_mutex);
     return result;
 }
 
 /*
- * Opens only the container and stream headers. This keeps prepare independent
- * from an output target and never crosses the decoded-pixel
- * boundary for protected sources.
+ * Opens and probes the input, reads its container and stream headers, and keeps
+ * it open for the runs that follow. This keeps prepare independent from an
+ * output target and never crosses the decoded-pixel boundary for protected
+ * sources.
  */
 static int ffplaykmp_inspect_source(ffplaykmp_player *player, const char *url) {
-    ffplaykmp_input input = { 0 };
-    int video_stream = -1;
-    int result = ffplaykmp_player_open_input(player, url, &input);
+    ffplaykmp_session *session = &player->session;
+    int result;
+    pthread_mutex_lock(&player->session_mutex);
+    ffplaykmp_session_close_input(session);
+    result = ffplaykmp_session_open_input(player, url);
     if (result >= 0) {
-        video_stream = ffplaykmp_find_video_stream(input.format, NULL);
-        result = video_stream < 0 ? video_stream : 0;
-    }
-    if (result >= 0) {
-        const AVStream *stream = input.format->streams[video_stream];
         pthread_mutex_lock(&player->mutex);
-        player->snapshot.video_width = stream->codecpar->width;
-        player->snapshot.video_height = stream->codecpar->height;
-        ffplaykmp_read_stream_metadata(&player->snapshot, stream);
-        player->snapshot.duration_us = input.format->duration == AV_NOPTS_VALUE
+        player->snapshot.video_width = session->stream->codecpar->width;
+        player->snapshot.video_height = session->stream->codecpar->height;
+        ffplaykmp_read_stream_metadata(&player->snapshot, session->stream);
+        player->snapshot.duration_us = session->input.format->duration == AV_NOPTS_VALUE
                 ? -1
-                : input.format->duration;
+                : session->input.format->duration;
         pthread_mutex_unlock(&player->mutex);
     }
-    ffplaykmp_close_input(&input);
+    pthread_mutex_unlock(&player->session_mutex);
     return result;
 }
 
@@ -920,6 +973,7 @@ void ffplaykmp_player_destroy(ffplaykmp_player *player) {
     free(player->input);
     /* Waits for a run on another thread, which the cancel ends, before freeing what it uses. */
     pthread_mutex_lock(&player->session_mutex);
+    ffplaykmp_session_close_input(&player->session);
     av_packet_free(&player->session.packet);
     av_frame_free(&player->session.frame);
     av_frame_free(&player->session.held);
@@ -927,6 +981,21 @@ void ffplaykmp_player_destroy(ffplaykmp_player *player) {
     pthread_mutex_destroy(&player->session_mutex);
     pthread_mutex_destroy(&player->mutex);
     free(player);
+}
+
+/* Forgets the source a prepare failed on, closing its input before the host unmounts it. */
+static int ffplaykmp_prepare_failed(ffplaykmp_player *player, int result) {
+    ffplaykmp_player_close_input(player);
+    pthread_mutex_lock(&player->mutex);
+    free(player->input);
+    player->input = NULL;
+    player->source_flags = 0;
+    player->play_when_ready = 0;
+    player->snapshot.last_error = result;
+    player->snapshot.state = FFPLAYKMP_STATE_FAILED;
+    pthread_mutex_unlock(&player->mutex);
+    ffplaykmp_publish(player);
+    return result;
 }
 
 int ffplaykmp_player_prepare(
@@ -962,49 +1031,21 @@ int ffplaykmp_player_prepare(
     pthread_mutex_unlock(&player->mutex);
     ffplaykmp_publish(player);
     result = ffplaykmp_inspect_source(player, input);
-    if (result < 0) {
-        pthread_mutex_lock(&player->mutex);
-        free(player->input);
-        player->input = NULL;
-        player->source_flags = 0;
-        player->play_when_ready = 0;
-        player->snapshot.last_error = result;
-        player->snapshot.state = FFPLAYKMP_STATE_FAILED;
-        pthread_mutex_unlock(&player->mutex);
-        ffplaykmp_publish(player);
-        return result;
-    }
+    if (result < 0)
+        return ffplaykmp_prepare_failed(player, result);
     /* Publish inspected stream metadata before output negotiation decodes its preview frame. */
     ffplaykmp_publish(player);
     if (has_output) {
         result = ffplaykmp_validate_output(player, output_flags);
         if (result < 0) {
-            pthread_mutex_lock(&player->mutex);
-            free(player->input);
-            player->input = NULL;
-            player->source_flags = 0;
-            player->play_when_ready = 0;
-            player->snapshot.last_error = result;
-            player->snapshot.state = FFPLAYKMP_STATE_FAILED;
-            pthread_mutex_unlock(&player->mutex);
-            ffplaykmp_publish(player);
-            return result;
+            return ffplaykmp_prepare_failed(player, result);
         }
     }
     if (has_output && ffplaykmp_can_decode(player, output_flags)) {
         result = ffplaykmp_decode_frames(player, input, 0, 0,
                 player->configuration.decoder_preference);
         if (result < 0) {
-            pthread_mutex_lock(&player->mutex);
-            free(player->input);
-            player->input = NULL;
-            player->source_flags = 0;
-            player->play_when_ready = 0;
-            player->snapshot.last_error = result;
-            player->snapshot.state = FFPLAYKMP_STATE_FAILED;
-            pthread_mutex_unlock(&player->mutex);
-            ffplaykmp_publish(player);
-            return result;
+            return ffplaykmp_prepare_failed(player, result);
         }
     }
     pthread_mutex_lock(&player->mutex);
@@ -1164,6 +1205,7 @@ int ffplaykmp_player_stop(ffplaykmp_player *player) {
     if (!player)
         return FFPLAYKMP_ERROR_INVALID_ARGUMENT;
     ffplaykmp_stop_worker(player);
+    ffplaykmp_player_close_input(player);
     ffplaykmp_invalidate_master_clock(player);
     pthread_mutex_lock(&player->mutex);
     free(player->input);
@@ -1188,9 +1230,11 @@ void ffplaykmp_player_cancel(ffplaykmp_player *player) {
     }
 }
 
+/* Also closes the input, so its IO_CLOSE reaches the mounts it was opened from before a remount. */
 void ffplaykmp_player_reset_cancel(ffplaykmp_player *player) {
     if (player) {
         ffplaykmp_stop_worker(player);
+        ffplaykmp_player_close_input(player);
         atomic_store(&player->cancelled, 0);
     }
 }

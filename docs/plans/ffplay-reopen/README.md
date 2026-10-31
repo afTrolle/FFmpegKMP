@@ -1,9 +1,10 @@
 # One open per source in the FFplay player
 
-Status: phase 0's macOS native baselines are measured (2b); its Android, JVM
-and browser measurements are not. Phase 1b is built on its own branch
-(54fb779, not merged). Phases 1 and 2–8 are not built. The audio-cleanup and small-cleanups work this plan
-builds on is merged into main as of f9f92c1.
+Status: phases 1, 1b and 2 are built on `feature/ffplay-reopen`; phase 2's
+web packet reader reuse moved to phase 7. Phase 0's macOS native baselines are
+measured (2b); its Android, JVM and browser measurements are not. Phases 3–8
+are not built. The audio-cleanup and small-cleanups work this plan builds on is
+merged into main as of f9f92c1.
 
 `FFplayPlayer` opens and probes its input again on nearly every transition:
 `prepare` opens it twice, a seek while playing opens it twice more, and play
@@ -207,6 +208,25 @@ itself, so a paused player's first preview frame (often its only one) is
 already converted at the drawn size. An RGBA F16 frame keeps its own size,
 decided from its pixel layout, instead of a retry after `ENOSYS`. The two new
 Android device tests have not run.
+
+### Phase 2 results (macOS native, the same benches as 2b)
+
+Every transition after prepare now opens the input 0 times (1–2 before), and
+reads only what it decodes. Per call:
+
+| Transition | 1080p SW before → after | 4K H.264 SW | 4K H.264 AUTO | 4K HEVC PQ SW | 4K HEVC PQ AUTO |
+|---|---|---|---|---|---|
+| set_output (preview) | 80 → 33 ms | 272 → 107 ms | 266 → 121 ms | 636 → 487 ms | 565 → 419 ms |
+| seek while paused | 120 → 57 ms | 480 → 246 ms | 512 → 425 ms | 862 → 605 ms | 363 → 327 ms |
+| step forward, paused | 114 → 54 ms | 382 → 176 ms | 261 → 181 ms | 577 → 407 ms | 228 → 200 ms |
+| play to first frame | 106 → 48 ms | 442 → 216 ms | 539 → 449 ms | 892 → 620 ms | 345 → 299 ms |
+| seek while playing | 118 → 56 ms | 535 → 270 ms | 568 → 477 ms | 906 → 650 ms | 398 → 333 ms |
+
+What remains per transition is the codec open (phase 4), the decode from the
+keyframe and, for HDR, the tone map at the source size (phase 1b covers Canvas
+outputs). A JVM test (`NativePlayerBridgeJvmTest.theInputIsProbedOncePerPrepare`)
+checks through a counting mount that previews, seeks, play and pause never
+reopen the input and that a new prepare does.
 
 ## 3. Design options (behaviour at 1 / 4 / 16 concurrent sources)
 
@@ -426,7 +446,9 @@ Instrumentation added in phase 0 and kept:
 2. **Keep the demuxer open per prepared source.** The inspect opens and keeps
    it; previews and the worker reuse it; `reset_cancel`, `stop`, `destroy` and
    a replacing prepare close it; `GuardedPlayerBridge.close` releases before it
-   unmounts; web `open_packets` reuses it. Verify: a JVM test with a counting
+   unmounts. (The web packet reader still opens its own input: `ffplaykmp_input`
+   points into itself, so handing the kept one over needs care; done in phase 7.)
+   Verify: a JVM test with a counting
    mount (one IO_OPEN per prepare, one IO_CLOSE at stop, close or replace, no
    read after unmount); `FFplayPrepareConcurrencyJvmTest`. Check: probe bytes
    paid once; seek latency is phase 0's minus the probe; the `ReplayableSource`

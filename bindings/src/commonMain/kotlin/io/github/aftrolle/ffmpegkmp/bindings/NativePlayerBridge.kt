@@ -450,9 +450,10 @@ internal class GuardedPlayerBridge(
     override fun setMasterClock(mediaTimeUs: Long) = guard.use({}) { engine.setMasterClock(mediaTimeUs) }
     override fun cancel() = guard.use({}) { engine.cancel() }
 
+    // The player keeps its input open until it is released, so its IO_CLOSE must still find the mounts.
     override fun close() = guard.close {
-        engine.mount(emptyList())
         engine.release()
+        engine.mount(emptyList())
     }
 
     private inline fun <T> call(block: () -> T): T = guard.use(::closedError, block)

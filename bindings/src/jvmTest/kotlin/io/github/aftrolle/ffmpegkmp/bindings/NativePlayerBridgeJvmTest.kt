@@ -6,12 +6,14 @@ package io.github.aftrolle.ffmpegkmp.bindings
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicInteger
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertNotEquals
 import kotlin.test.assertTrue
 import okio.Buffer
+import okio.FileHandle
 
 class NativePlayerBridgeJvmTest {
     @Test
@@ -123,6 +125,49 @@ class NativePlayerBridgeJvmTest {
             assertEquals(NativePlayerDecoderKind.SOFTWARE, bridge.snapshot().activeDecoder)
             assertEquals(1, frames.size)
             frames.forEach { it.frame.close() }
+        }
+    }
+
+    @Test
+    fun theInputIsProbedOncePerPrepare() {
+        val input = CountingFileHandle(fixtureBytes("playback-color-patches-1s.mp4"))
+        val source = NativePlayerSource(
+            input = "playback-color-patches-1s.mp4",
+            mounts = listOf(
+                NativeMountedIo(
+                    "playback-color-patches-1s.mp4",
+                    NativeFileResource(input, NativeIoAccess.READ),
+                ),
+            ),
+            requireSecurePath = false,
+        )
+        val played = CountDownLatch(3)
+        createPlatformPlayerBridge(
+            NativePlayerConfiguration(NativePlayerDecoderPreference.SOFTWARE),
+            update = {},
+            frame = { frame ->
+                frame.frame.close()
+                played.countDown()
+            },
+        ).use { bridge ->
+            assertEquals(0, bridge.prepare(source))
+            // The mov demuxer asks for the input's size once as it opens it, and never to seek.
+            val probes = input.sizeRequests.get()
+            assertTrue(probes > 0, "prepare did not open the input")
+
+            assertEquals(0, bridge.setOutput(NativePlayerOutputCapabilities()))
+            listOf(900_000L, 100_000L, 500_000L, 0L).forEach { assertEquals(0, bridge.seek(it)) }
+            assertEquals(0, bridge.play())
+            assertTrue(played.await(3, TimeUnit.SECONDS), "playback presented no frames")
+            assertEquals(0, bridge.pause())
+            assertEquals(0, bridge.seek(300_000))
+            assertEquals(0, bridge.play())
+            assertEquals(0, bridge.pause())
+            assertEquals(probes, input.sizeRequests.get(), "a preview, seek or play opened the input again")
+
+            assertEquals(0, bridge.stop())
+            assertEquals(0, bridge.prepare(source))
+            assertEquals(2 * probes, input.sizeRequests.get(), "a new prepare probes the input again")
         }
     }
 
@@ -408,6 +453,37 @@ private const val PQ = 3
 private const val HLG = 4
 private const val RGB = 0
 private const val FULL = 1
+
+private fun NativePlayerBridgeJvmTest.fixtureBytes(resourceName: String): ByteArray =
+    checkNotNull(javaClass.getResourceAsStream("/$resourceName")) {
+        "Missing common video fixture $resourceName"
+    }.use { it.readBytes() }
+
+/** Serves [bytes] read-only and counts the size requests each open of it makes. */
+private class CountingFileHandle(private val bytes: ByteArray) : FileHandle(readWrite = false) {
+    val sizeRequests = AtomicInteger()
+
+    override fun protectedRead(fileOffset: Long, array: ByteArray, arrayOffset: Int, byteCount: Int): Int {
+        if (fileOffset >= bytes.size) return -1
+        val count = minOf(byteCount.toLong(), bytes.size - fileOffset).toInt()
+        bytes.copyInto(array, arrayOffset, fileOffset.toInt(), fileOffset.toInt() + count)
+        return count
+    }
+
+    override fun protectedSize(): Long {
+        sizeRequests.incrementAndGet()
+        return bytes.size.toLong()
+    }
+
+    override fun protectedWrite(fileOffset: Long, array: ByteArray, arrayOffset: Int, byteCount: Int) =
+        throw UnsupportedOperationException()
+
+    override fun protectedFlush() = Unit
+
+    override fun protectedResize(size: Long) = throw UnsupportedOperationException()
+
+    override fun protectedClose() = Unit
+}
 
 private fun NativePlayerBridgeJvmTest.clearVideoSource(
     requireSecurePath: Boolean = false,
