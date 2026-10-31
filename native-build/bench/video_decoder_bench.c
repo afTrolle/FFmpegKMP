@@ -11,6 +11,8 @@
  */
 #include "ffmpegkmp_decoder.h"
 #include "ffplaykmp_core.h"
+#include "bench_io.h"
+#include "bench_usage.h"
 
 #include <math.h>
 #include <pthread.h>
@@ -21,9 +23,6 @@
 #include <libavutil/pixdesc.h>
 #include <libavutil/time.h>
 
-#if defined(__APPLE__)
-#include <mach/mach.h>
-#endif
 
 /* ffplaykmp_player.c defines it; the benchmark does not link the player. */
 void ffplaykmp_snapshot_init(ffplaykmp_snapshot *snapshot) {
@@ -148,28 +147,6 @@ static void bench_steps(const char *path, int output, int preference, int frames
     ffmpegkmp_video_decoder_destroy(decoder);
 }
 
-/* The process's thread count and physical footprint in MB now; 0 where the benchmark cannot tell. */
-static void process_usage(int *threads, int *footprint_mb) {
-#if defined(__APPLE__)
-    thread_act_array_t list;
-    mach_msg_type_number_t count = 0;
-    task_vm_info_data_t vm;
-    mach_msg_type_number_t vm_count = TASK_VM_INFO_COUNT;
-#endif
-    *threads = 0;
-    *footprint_mb = 0;
-#if defined(__APPLE__)
-    if (task_threads(mach_task_self(), &list, &count) == KERN_SUCCESS) {
-        for (mach_msg_type_number_t index = 0; index < count; index++)
-            mach_port_deallocate(mach_task_self(), list[index]);
-        vm_deallocate(mach_task_self(), (vm_address_t)list, count * sizeof(*list));
-        *threads = (int)count;
-    }
-    if (task_info(mach_task_self(), TASK_VM_INFO, (task_info_t)&vm, &vm_count) == KERN_SUCCESS)
-        *footprint_mb = (int)(vm.phys_footprint >> 20);
-#endif
-}
-
 /* One of bench_parallel's decoders: `frames` frames of `path` forward, into RGBA8 at the size. */
 typedef struct bench_decoder_job {
     const char *path;
@@ -290,6 +267,88 @@ static void bench_parallel(const char *path, int width, int height, int frames, 
     if (decoded != count * frames)
         printf(" | %d of %d frames", decoded, count * frames);
     printf("\n");
+}
+
+/* Seek targets as fractions of a clip, jumping back and forth as a scrub across a timeline does. */
+static const double reopen_targets[] = { 0.5, 0.1, 0.9, 0.3, 0.7, 0.2, 0.8, 0.4, 0.6, 0.15 };
+#define REOPEN_TARGETS ((int)(sizeof(reopen_targets) / sizeof(reopen_targets[0])))
+
+/*
+ * What a player transition costs today against what it would cost with the
+ * input and codec kept open: each target first through a decoder of its own
+ * (create, start, frame_at, destroy: an open, a probe, a codec open and a
+ * seek, as ffplaykmp_decode_frames does on every seek and play), then through
+ * one decoder kept open (frame_at only). The input goes through bench_io, so
+ * each row also counts the opens, reads and bytes one target costs.
+ */
+static void bench_reopen(const char *path, int preference, double duration_s) {
+    const ffmpegkmp_frame_format rgba8 = rgba8_format();
+    const int threads = bench_threads();
+    ffmpegkmp_decoded_frame frame;
+    ffmpegkmp_video_decoder *decoder;
+    bench_io io;
+    bench_io_counts before;
+    bench_io_counts used;
+    double start;
+    double took;
+    int error = 0;
+    int hardware = 0;
+    int done = 0;
+    int index;
+    if (bench_io_open(&io, path) < 0) {
+        printf("%s: cannot open\n", file_name(path));
+        return;
+    }
+    ffmpegkmp_decoded_frame_init(&frame);
+    before = bench_io_now(&io);
+    start = now_ms();
+    for (index = 0; index < REOPEN_TARGETS; index++) {
+        const int64_t position_ns = llround(reopen_targets[index] * duration_s * 1e9);
+        decoder = ffmpegkmp_video_decoder_create(BENCH_IO_URL, FFMPEGKMP_VIDEO_OUTPUT_MEMORY, &rgba8, 0, 0,
+                preference, threads, 0, bench_io_callback, &io, &error);
+        if (!decoder)
+            break;
+        if (ffmpegkmp_video_decoder_start(decoder) >= 0 &&
+                ffmpegkmp_video_decoder_frame_at(decoder, position_ns, &frame) >= 0) {
+            hardware = frame.hardware;
+            ffmpegkmp_frame_unref(frame.frame);
+            done++;
+        }
+        ffmpegkmp_video_decoder_destroy(decoder);
+    }
+    took = now_ms() - start;
+    used = bench_io_since(&io, before);
+    printf("%-20s %-10s hw=%d | reopen per target %7.1f ms | %4.1f opens %6.1f reads %7.2f MB per target\n",
+            file_name(path), preference_name(preference), hardware, done ? took / done : 0,
+            done ? (double)used.opens / done : 0, done ? (double)used.reads / done : 0,
+            done ? used.bytes / 1048576.0 / done : 0);
+
+    decoder = ffmpegkmp_video_decoder_create(BENCH_IO_URL, FFMPEGKMP_VIDEO_OUTPUT_MEMORY, &rgba8, 0, 0,
+            preference, threads, 0, bench_io_callback, &io, &error);
+    if (!decoder || ffmpegkmp_video_decoder_start(decoder) < 0) {
+        printf("%s: create failed (%d)\n", file_name(path), error);
+        ffmpegkmp_video_decoder_destroy(decoder);
+        bench_io_close(&io);
+        return;
+    }
+    done = 0;
+    before = bench_io_now(&io);
+    start = now_ms();
+    for (index = 0; index < REOPEN_TARGETS; index++) {
+        if (ffmpegkmp_video_decoder_frame_at(decoder, llround(reopen_targets[index] * duration_s * 1e9), &frame) < 0)
+            break;
+        hardware = frame.hardware;
+        ffmpegkmp_frame_unref(frame.frame);
+        done++;
+    }
+    took = now_ms() - start;
+    used = bench_io_since(&io, before);
+    printf("%-20s %-10s hw=%d | kept per target   %7.1f ms | %4.1f opens %6.1f reads %7.2f MB per target\n",
+            file_name(path), preference_name(preference), hardware, done ? took / done : 0,
+            done ? (double)used.opens / done : 0, done ? (double)used.reads / done : 0,
+            done ? used.bytes / 1048576.0 / done : 0);
+    ffmpegkmp_video_decoder_destroy(decoder);
+    bench_io_close(&io);
 }
 
 /* The first frame of `path`, decoded in software. */
@@ -469,6 +528,14 @@ int main(int argc, char **argv) {
         bench_conversions(h264_1080, 0);
         bench_conversions(h264_2160, 0);
         bench_conversions(hevc_2160_pq, 1);
+    }
+    if (!strcmp(mode, "reopen")) {
+        bench_reopen(h264_1080, FFPLAYKMP_DECODER_SOFTWARE, 4);
+        bench_reopen(h264_1080_gop30, FFPLAYKMP_DECODER_SOFTWARE, 4);
+        bench_reopen(h264_2160, FFPLAYKMP_DECODER_SOFTWARE, 3);
+        bench_reopen(h264_2160, FFPLAYKMP_DECODER_AUTO, 3);
+        bench_reopen(hevc_2160_pq, FFPLAYKMP_DECODER_SOFTWARE, 2);
+        bench_reopen(hevc_2160_pq, FFPLAYKMP_DECODER_AUTO, 2);
     }
     /* parallel hevc|h264 full|small <decoders>: one case, small being 960x540. */
     if (!strcmp(mode, "parallel") && argc > 5) {
