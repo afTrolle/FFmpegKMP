@@ -16,6 +16,7 @@ import io.github.aftrolle.ffmpegkmp.core.FFmpegKmpException
 import kotlin.concurrent.atomics.AtomicBoolean
 import kotlin.concurrent.atomics.AtomicReference
 import kotlin.concurrent.atomics.update
+import kotlin.concurrent.atomics.updateAndFetch
 import kotlin.coroutines.cancellation.CancellationException
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.microseconds
@@ -124,8 +125,15 @@ public class AudioDecoder internal constructor(
     public fun trackLevel(track: Int): AudioLevel = levels.load()[requireTrack(track)]
 
     public fun setTrackLevel(track: Int, level: AudioLevel) {
+        updateTrackLevel(track) { level }
+    }
+
+    /** Atomic, so a volume and a mute change to one track from different threads never lose one another. */
+    public fun updateTrackLevel(track: Int, transform: (AudioLevel) -> AudioLevel) {
         requireTrack(track)
-        levels.update { current -> current.toMutableList().also { it[track] = level } }
+        val level = levels.updateAndFetch { current ->
+            current.toMutableList().also { it[track] = transform(it[track]) }
+        }[track]
         native.setTrackGain(track, level.effectiveVolume.toFloat())
     }
 

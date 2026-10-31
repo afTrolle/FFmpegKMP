@@ -14,7 +14,7 @@ import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asSkiaBitmap
 import io.github.aftrolle.ffmpegkmp.bindings.NativeGpuBuffer
-import io.github.aftrolle.ffmpegkmp.codec.DecoderPreference
+import io.github.aftrolle.ffmpegkmp.codec.CodecPreference
 import io.github.aftrolle.ffmpegkmp.codec.FrameFormat
 import io.github.aftrolle.ffmpegkmp.codec.FrameSize
 import io.github.aftrolle.ffmpegkmp.codec.MediaSource
@@ -296,7 +296,7 @@ class FrameImageTest {
     private suspend fun decoder(name: String, output: VideoOutput): VideoDecoder = VideoDecoder.open(
         MediaSource(name, CommandIo { input(name, Buffer().write(readVideoDecoderFixture(name))) }),
         output,
-        DecoderPreference.SOFTWARE,
+        CodecPreference.SOFTWARE,
     )
 
     /** An RGBA8 bitmap's pixels, rows packed. */

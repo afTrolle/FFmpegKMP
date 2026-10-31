@@ -20,7 +20,7 @@ class VideoDecoderTimeoutDeviceTest {
     @Test
     fun requireHardwareOnMpeg4EitherDecodesInHardwareOrFailsWithinTheTimeout() = runBlocking<Unit> {
         val started = TimeSource.Monotonic.markNow()
-        val decoder = runCatching { open("cfr-30.mp4", DecoderPreference.REQUIRE_HARDWARE) }
+        val decoder = runCatching { open("cfr-30.mp4", CodecPreference.REQUIRE_HARDWARE) }
         assertTrue(started.elapsedNow() < TIMEOUT + SLACK, "open took ${started.elapsedNow()}")
         decoder.onSuccess { opened ->
             opened.use { assertEquals(DecoderKind.HARDWARE, it.decoderKind) }
@@ -32,7 +32,7 @@ class VideoDecoderTimeoutDeviceTest {
     @Test
     fun autoFallsBackToSoftwareOnceWhenHardwareStallsOrFails() = runBlocking<Unit> {
         val started = TimeSource.Monotonic.markNow()
-        open("cfr-30-h264.mp4", DecoderPreference.AUTO).use { decoder ->
+        open("cfr-30-h264.mp4", CodecPreference.AUTO).use { decoder ->
             // The hardware attempt and the software fallback each get the timeout.
             assertTrue(started.elapsedNow() < TIMEOUT * 2 + SLACK, "open took ${started.elapsedNow()}")
             assertTrue(decoder.decoderKind != DecoderKind.UNKNOWN, "No decoder kind reported")
@@ -40,7 +40,7 @@ class VideoDecoderTimeoutDeviceTest {
         }
     }
 
-    private suspend fun open(name: String, preference: DecoderPreference): VideoDecoder {
+    private suspend fun open(name: String, preference: CodecPreference): VideoDecoder {
         val bytes = checkNotNull(javaClass.getResourceAsStream("/video-decoder/$name")) { "Missing fixture $name" }
             .use { it.readBytes() }
         return VideoDecoder.open(

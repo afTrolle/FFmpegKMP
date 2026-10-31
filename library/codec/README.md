@@ -10,7 +10,7 @@ plain JVM server can decode video without depending on it:
 - `MediaWriter`, encoding video and audio tracks into an MP4, with the export's
   `DynamicRange` (`SDR`, `HDR10` or `HLG`) deciding every format along the way;
 - `MediaSource`, a path, URL or mounted `CommandIo` input;
-- `DecoderPreference` (`AUTO`, `REQUIRE_HARDWARE`, `SOFTWARE`), the `DecoderKind` that actually took
+- `CodecPreference` (`AUTO`, `REQUIRE_HARDWARE`, `SOFTWARE`), the `DecoderKind` that actually took
   a source, and `DecoderThreads`, the software decoder's threads;
 - `VideoInfo`, a stream's size, aspect ratio, rotation, pixel format, bit depth and its colour as
   the same `FrameColor` a frame carries, with the `HdrMetadata` it carries: HDR10's mastering
@@ -18,7 +18,7 @@ plain JVM server can decode video without depending on it:
   flags. Whether a stream is HDR, and which kind, follows from its `color.transfer` alone.
 
 `ffplay` depends on `codec` and adds `VideoFrame.toImageBitmap()` for Compose. It uses the
-`codec` types (`MediaSource`, `VideoInfo`, `DecoderPreference`) as they are. Binaries built against
+`codec` types (`MediaSource`, `VideoInfo`, `CodecPreference`) as they are. Binaries built against
 0.2 need recompiling.
 
 `codec` publishes every target the other library modules do, including tvOS and watchOS.
@@ -335,7 +335,7 @@ an encoder takes it, as for HDR.
   needs. Frames drawn for a composite carry none, and nothing fills the config for you: pass
   `HdrMetadata.combine(main, others)`, the main source's mastering display and the highest MaxCLL
   and MaxFALL of them all, which makes MaxFALL an upper bound.
-- `EncoderPreference.AUTO` tries the platform's hardware encoders (MediaCodec, VideoToolbox, and on
+- `CodecPreference.AUTO` tries the platform's hardware encoders (MediaCodec, VideoToolbox, and on
   Windows NVENC, Quick Sync, AMF and Media Foundation), then a software one. The default LGPL builds
   have no software H.264 or HEVC encoder, libx264 and libx265 being GPL, so `SOFTWARE` H.264 fails;
   the Android standard build has libaom for AV1. `MediaWriter.canEncode(config)` answers before

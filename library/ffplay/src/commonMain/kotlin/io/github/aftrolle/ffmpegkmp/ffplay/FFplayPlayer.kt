@@ -149,30 +149,30 @@ public class FFplayPlayer internal constructor(
 
     /** Sets the master audio level; it carries over to later sources. */
     public fun setAudioLevel(level: AudioLevel) {
-        audioPlayback.setLevel(level)
+        audioPlayback.updateLevel { level }
     }
 
     public fun setVolume(volume: Double) {
-        setAudioLevel(audio.value.level.copy(volume = volume))
+        audioPlayback.updateLevel { it.copy(volume = volume) }
     }
 
     public fun setMuted(muted: Boolean) {
-        setAudioLevel(audio.value.level.copy(muted = muted))
+        audioPlayback.updateLevel { it.copy(muted = muted) }
     }
 
     /** Sets one audio track's level in the mix (audio-relative index, as in [FFplayAudioState.tracks]). */
     public fun setAudioTrackLevel(track: Int, level: AudioLevel) {
-        audioPlayback.setTrackLevel(track, level)
+        audioPlayback.updateTrackLevel(track) { level }
     }
 
     public fun setAudioTrackVolume(track: Int, volume: Double) {
-        val current = audio.value.trackLevels.getOrNull(track) ?: return
-        setAudioTrackLevel(track, current.copy(volume = volume))
+        if (track !in audio.value.trackLevels.indices) return
+        audioPlayback.updateTrackLevel(track) { it.copy(volume = volume) }
     }
 
     public fun setAudioTrackMuted(track: Int, muted: Boolean) {
-        val current = audio.value.trackLevels.getOrNull(track) ?: return
-        setAudioTrackLevel(track, current.copy(muted = muted))
+        if (track !in audio.value.trackLevels.indices) return
+        audioPlayback.updateTrackLevel(track) { it.copy(muted = muted) }
     }
 
     /** Plays [track] alone, e.g. to switch language. */

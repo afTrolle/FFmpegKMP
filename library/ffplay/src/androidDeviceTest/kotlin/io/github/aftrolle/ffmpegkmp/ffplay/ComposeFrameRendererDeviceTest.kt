@@ -28,7 +28,7 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.dp
 import androidx.test.platform.app.InstrumentationRegistry
-import io.github.aftrolle.ffmpegkmp.codec.DecoderPreference
+import io.github.aftrolle.ffmpegkmp.codec.CodecPreference
 import io.github.aftrolle.ffmpegkmp.codec.DynamicRange
 import io.github.aftrolle.ffmpegkmp.codec.FrameColor
 import io.github.aftrolle.ffmpegkmp.codec.FrameFormat
@@ -173,7 +173,7 @@ class ComposeFrameRendererDeviceTest {
                 }
                 writer.finish()
             }
-            VideoDecoder.open(MediaSource(output.toString()), VideoOutput.Memory(FrameFormat.RgbaF16), DecoderPreference.SOFTWARE).use { decoder ->
+            VideoDecoder.open(MediaSource(output.toString()), VideoOutput.Memory(FrameFormat.RgbaF16), CodecPreference.SOFTWARE).use { decoder ->
                 decoder.frameAt(Duration.ZERO).use { frame ->
                     assertColour(frame, x = 16, y = 16, red = 1.0, green = 1.0, blue = 1.0, "white at 203 nits", tolerance = 0.06)
                     assertColour(frame, x = 88, y = 8, red = 1.0, green = 0.0, blue = 0.0, "red", tolerance = 0.1)
@@ -207,7 +207,7 @@ class ComposeFrameRendererDeviceTest {
                 }
                 writer.finish()
             }
-            VideoDecoder.open(MediaSource(output.toString()), VideoOutput.Memory(FrameFormat.Rgba8), DecoderPreference.SOFTWARE).use { decoder ->
+            VideoDecoder.open(MediaSource(output.toString()), VideoOutput.Memory(FrameFormat.Rgba8), CodecPreference.SOFTWARE).use { decoder ->
                 assertEquals(10, decoder.info.bitDepth)
                 decoder.frameAt(Duration.ZERO).use { frame ->
                     assertColour(frame, x = 16, y = 16, red = 1.0, green = 1.0, blue = 1.0, "white", tolerance = 0.04)

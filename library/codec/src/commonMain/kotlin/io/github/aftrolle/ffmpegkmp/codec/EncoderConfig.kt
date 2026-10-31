@@ -1,12 +1,14 @@
 // SPDX-License-Identifier: Apache-2.0
-@file:OptIn(io.github.aftrolle.ffmpegkmp.bindings.InternalFFmpegKmpApi::class)
+@file:OptIn(
+    io.github.aftrolle.ffmpegkmp.bindings.InternalFFmpegKmpApi::class,
+    io.github.aftrolle.ffmpegkmp.core.InternalFFmpegKmpApi::class,
+)
 
 package io.github.aftrolle.ffmpegkmp.codec
 
 import io.github.aftrolle.ffmpegkmp.bindings.NativeDynamicRange
 import io.github.aftrolle.ffmpegkmp.bindings.NativeHdrMetadata
 import io.github.aftrolle.ffmpegkmp.bindings.NativeMasteringDisplay
-import io.github.aftrolle.ffmpegkmp.bindings.NativePlayerDecoderPreference
 import io.github.aftrolle.ffmpegkmp.bindings.NativeVideoCodec
 import io.github.aftrolle.ffmpegkmp.bindings.NativeVideoEncoderConfig
 import kotlin.time.Duration
@@ -42,14 +44,6 @@ public enum class DynamicRange {
 }
 
 public enum class VideoCodec { H264, HEVC, AV1 }
-
-/**
- * Which encoder a video track opens. [AUTO] prefers the platform's hardware encoder and falls back
- * to a software one where the build has one for the codec: the default LGPL builds have none for
- * H.264 or HEVC, since libx264 and libx265 are GPL. [REQUIRE_HARDWARE] and [SOFTWARE] take only
- * their kind.
- */
-public enum class EncoderPreference { AUTO, REQUIRE_HARDWARE, SOFTWARE }
 
 /** A CIE 1931 chromaticity. */
 public data class Chromaticity(val x: Double, val y: Double)
@@ -154,7 +148,7 @@ public data class VideoEncoderConfig(
     /** Bits per second; null for one that suits the size and rate. */
     val bitRate: Long? = null,
     val keyframeInterval: Duration = 2.seconds,
-    val encoder: EncoderPreference = EncoderPreference.AUTO,
+    val encoder: CodecPreference = CodecPreference.AUTO,
 ) {
     init {
         require(width > 0 && height > 0 && width % 2 == 0 && height % 2 == 0) {
@@ -213,11 +207,7 @@ internal fun VideoEncoderConfig.toNative(): NativeVideoEncoderConfig = NativeVid
         DynamicRange.HDR10 -> NativeDynamicRange.HDR10
         DynamicRange.HLG -> NativeDynamicRange.HLG
     },
-    preference = when (encoder) {
-        EncoderPreference.AUTO -> NativePlayerDecoderPreference.AUTO
-        EncoderPreference.REQUIRE_HARDWARE -> NativePlayerDecoderPreference.REQUIRE_HARDWARE
-        EncoderPreference.SOFTWARE -> NativePlayerDecoderPreference.SOFTWARE
-    },
+    preference = encoder.toNative(),
     bitRate = bitRate ?: 0L,
     keyframeIntervalMicros = keyframeInterval.inWholeMicroseconds,
     bitDepth = bitDepth ?: 0,

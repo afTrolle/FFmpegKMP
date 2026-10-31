@@ -168,10 +168,10 @@ class VideoDecoderSizeTest {
     private suspend fun decoder(name: String, output: VideoOutput = VideoOutput.Memory()): VideoDecoder = VideoDecoder.open(
         MediaSource(name, CommandIo { input(name, Buffer().write(readVideoDecoderFixture(name))) }),
         output,
-        DecoderPreference.SOFTWARE,
+        CodecPreference.SOFTWARE,
         10.seconds,
     )
 
     private suspend fun open(path: String, output: VideoOutput): VideoDecoder =
-        VideoDecoder.open(MediaSource(path), output, DecoderPreference.SOFTWARE, 10.seconds)
+        VideoDecoder.open(MediaSource(path), output, CodecPreference.SOFTWARE, 10.seconds)
 }

@@ -50,6 +50,12 @@ typedef struct ffplaykmp_input {
     int resource_opened;
 } ffplaykmp_input;
 
+/*
+ * Reads the resource id of an `ffmpegkmp:<id>` URL: 1 with the id, 0 for any
+ * other URL, FFPLAYKMP_ERROR_INVALID_ARGUMENT for a malformed or non-positive id.
+ */
+int ffplaykmp_parse_resource_id(const char *input, int64_t *resource_id);
+
 /* Opens and probes `url`; on failure the caller still closes `input`. */
 int ffplaykmp_open_input(const ffplaykmp_io_host *host, const char *url, ffplaykmp_input *input);
 void ffplaykmp_close_input(ffplaykmp_input *input);
@@ -243,6 +249,23 @@ struct ffmpegkmp_frame {
 
 /* A new handle holding a reference to `frame`; NULL when out of memory. */
 ffmpegkmp_frame *ffmpegkmp_frame_from_av(const AVFrame *frame);
+
+/*
+ * A pool of frames keyed by layout and size. Frames are pooled AVBuffers, or
+ * on Apple, for NV12, P010, BGRA8 and RGBA_F16, IOSurface-backed buffers from
+ * a CVPixelBufferPool.
+ *
+ * With `capacity` 0 the pool makes a buffer whenever none is free. With a
+ * capacity, at most 8, it is a ring: it makes at most that many buffers per
+ * layout and size, once, and hands them out again as their frames close (a
+ * CVPixelBufferPool takes the capacity as its allocation threshold).
+ *
+ * Freeing the pool leaves the frames it handed out valid; their memory is
+ * released with their last reference, and a ring's bookkeeping with the last
+ * of its frames. NULL when out of memory or for a capacity out of range.
+ */
+ffmpegkmp_frame_pool *ffmpegkmp_frame_pool_alloc(int32_t capacity);
+void ffmpegkmp_frame_pool_free(ffmpegkmp_frame_pool *pool);
 
 /*
  * ffmpegkmp_frame_pool_get, except that a full ring fails with

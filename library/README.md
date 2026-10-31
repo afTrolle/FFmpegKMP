@@ -15,7 +15,7 @@ binding details.
   owns, and its `FrameFormat`), frame-accurate pull decoding (`VideoDecoder`)
   for exporters, and the types decoders and players share: the media source
   (`MediaSource`), the decoder choice and threads
-  (`DecoderPreference`, `DecoderKind`, `DecoderThreads`), and the stream
+  (`CodecPreference`, `DecoderKind`, `DecoderThreads`), and the stream
   description (`VideoInfo`, with its colour as a `FrameColor` and its `HdrMetadata`). The decoder
   runs outside the command FIFO.
 - `player` owns audio decoding (`AudioDecoder`) and playback (`AudioPlayer`)

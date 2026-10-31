@@ -9,7 +9,7 @@ import io.github.aftrolle.ffmpegkmp.bindings.NativePlayerVideoInfo
 import io.github.aftrolle.ffmpegkmp.bindings.createInMemoryPlayerBridge
 import io.github.aftrolle.ffmpegkmp.codec.ColorPrimaries
 import io.github.aftrolle.ffmpegkmp.codec.ColorTransfer
-import io.github.aftrolle.ffmpegkmp.codec.DecoderPreference
+import io.github.aftrolle.ffmpegkmp.codec.CodecPreference
 import io.github.aftrolle.ffmpegkmp.codec.MediaSource
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -46,7 +46,7 @@ class FFplayHdrPolicyTest {
         val (player, _) = hdrPlayer(
             FFplayConfiguration(
                 hdrPolicy = FFplayHdrPolicy.FORCE_SDR,
-                decoderPreference = DecoderPreference.REQUIRE_HARDWARE,
+                decoderPreference = CodecPreference.REQUIRE_HARDWARE,
             ),
         )
         player.attachOutput(HdrSurface())

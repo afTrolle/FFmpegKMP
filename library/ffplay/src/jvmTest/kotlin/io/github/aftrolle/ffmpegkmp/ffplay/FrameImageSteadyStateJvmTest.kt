@@ -8,7 +8,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.ui.Modifier
 import io.github.aftrolle.ffmpegkmp.bindings.NativeFrameStatistics
 import io.github.aftrolle.ffmpegkmp.bindings.nativeFrameStatistics
-import io.github.aftrolle.ffmpegkmp.codec.DecoderPreference
+import io.github.aftrolle.ffmpegkmp.codec.CodecPreference
 import io.github.aftrolle.ffmpegkmp.codec.FrameFormat
 import io.github.aftrolle.ffmpegkmp.codec.MediaSource
 import io.github.aftrolle.ffmpegkmp.codec.VideoDecoder
@@ -41,7 +41,7 @@ class FrameImageSteadyStateJvmTest {
         var warm: NativeFrameStatistics? = null
         var warmHeap = 0L
         var count = 0
-        VideoDecoder.open(MediaSource(clip), VideoOutput.Memory(FrameFormat.Rgba8), DecoderPreference.SOFTWARE).use { decoder ->
+        VideoDecoder.open(MediaSource(clip), VideoOutput.Memory(FrameFormat.Rgba8), CodecPreference.SOFTWARE).use { decoder ->
             // The ring may make its third buffer at any frame, whenever a hand-out comes before a close
             // that usually precedes it: make all three first.
             (0 until 3).map { index -> decoder.frameAt(1.seconds / 30 * index) }.forEach(VideoFrame::close)

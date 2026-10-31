@@ -44,7 +44,7 @@ The `library` modules provide the platform-neutral API:
 - `codec` holds the Compose-free frame model (`VideoFrame`, `FrameFormat`),
   frame-accurate decoding (`VideoDecoder`), and the source, decoder and stream
   types that the decoders and players share (`MediaSource`,
-  `DecoderPreference`, `DecoderThreads`, `VideoInfo`, …);
+  `CodecPreference`, `DecoderThreads`, `VideoInfo`, …);
 - `ffplay` owns a per-player lifecycle and Compose video-output contract, and
   draws frames with `VideoFrame.toImageBitmap()`;
 - `filters` provides the optional filter-graph DSL; and

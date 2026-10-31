@@ -89,9 +89,11 @@ struct ffmpegkmp_writer {
     int pending_count;
     int pending_capacity;
     atomic_bool aborted;
+    /* The track whose call holds the muxer, so its host writes stop at that call's deadline; NULL otherwise. */
+    ffmpegkmp_writer_track *muxing;
 };
 
-void ffmpegkmp_hdr_metadata_init(ffmpegkmp_hdr_metadata *metadata) {
+static void ffmpegkmp_hdr_metadata_init(ffmpegkmp_hdr_metadata *metadata) {
     if (!metadata)
         return;
     memset(metadata, 0, sizeof(*metadata));
@@ -130,9 +132,24 @@ void ffmpegkmp_writer_result_init(ffmpegkmp_writer_result *result) {
     result->bytes = -1;
 }
 
+static int ffmpegkmp_stopped(const ffmpegkmp_writer *writer, ffmpegkmp_writer_track *track);
+
+/* Muxer I/O runs under the lock, on the thread of the call that holds it, so `muxing` is that call's track. */
 static int ffmpegkmp_writer_interrupted(void *opaque) {
     const ffmpegkmp_writer *writer = opaque;
+    if (writer->muxing)
+        return ffmpegkmp_stopped(writer, writer->muxing) < 0;
     return atomic_load(&writer->aborted);
+}
+
+static void ffmpegkmp_lock_mux(ffmpegkmp_writer *writer, ffmpegkmp_writer_track *track) {
+    pthread_mutex_lock(&writer->mux);
+    writer->muxing = track;
+}
+
+static void ffmpegkmp_unlock_mux(ffmpegkmp_writer *writer) {
+    writer->muxing = NULL;
+    pthread_mutex_unlock(&writer->mux);
 }
 
 /* ---- Video encoders ---- */
@@ -587,7 +604,6 @@ ffmpegkmp_writer *ffmpegkmp_writer_create(
         void *io_opaque,
         int32_t *error) {
     ffmpegkmp_writer *writer;
-    const char prefix[] = "ffmpegkmp:";
     int result;
     if (error)
         *error = 0;
@@ -613,17 +629,8 @@ ffmpegkmp_writer *ffmpegkmp_writer_create(
     writer->host.opaque = io_opaque;
     writer->host.interrupted = ffmpegkmp_writer_interrupted;
     writer->host.interrupt_opaque = writer;
-    if (strncmp(output, prefix, sizeof(prefix) - 1) == 0) {
-        char *end = NULL;
-        writer->mounted = 1;
-        writer->resource_id = strtoll(output + sizeof(prefix) - 1, &end, 10);
-        if (writer->resource_id <= 0 || end == output + sizeof(prefix) - 1)
-            result = FFPLAYKMP_ERROR_INVALID_ARGUMENT;
-        else
-            result = 0;
-    } else {
-        result = 0;
-    }
+    result = ffplaykmp_parse_resource_id(output, &writer->resource_id);
+    writer->mounted = result > 0;
     if (result >= 0 && !(writer->url = av_strdup(output)))
         result = AVERROR(ENOMEM);
     if (result >= 0)
@@ -754,7 +761,7 @@ static int ffmpegkmp_mux(ffmpegkmp_writer *writer, ffmpegkmp_writer_track *track
         if (packet->pts + packet->duration > track->end_pts)
             track->end_pts = packet->pts + packet->duration;
     }
-    pthread_mutex_lock(&writer->mux);
+    ffmpegkmp_lock_mux(writer, track);
     if (writer->header_written) {
         result = ffmpegkmp_write_packet_locked(writer, packet, track->time_base);
     } else {
@@ -779,7 +786,7 @@ static int ffmpegkmp_mux(ffmpegkmp_writer *writer, ffmpegkmp_writer_track *track
             }
         }
     }
-    pthread_mutex_unlock(&writer->mux);
+    ffmpegkmp_unlock_mux(writer);
     av_packet_unref(packet);
     return result;
 }
@@ -1003,12 +1010,12 @@ static int ffmpegkmp_start_video_track(ffmpegkmp_writer *writer, ffmpegkmp_write
                 track, track->codec, &track->config, ffmpegkmp_global_header(writer), first)) < 0)
             return result;
     }
-    pthread_mutex_lock(&writer->mux);
+    ffmpegkmp_lock_mux(writer, track);
     if ((result = ffmpegkmp_start_track(writer, track)) >= 0) {
         track->started = 1;
         result = ffmpegkmp_write_header_locked(writer, 0);
     }
-    pthread_mutex_unlock(&writer->mux);
+    ffmpegkmp_unlock_mux(writer);
     return result;
 }
 
@@ -1215,7 +1222,7 @@ static int ffmpegkmp_start_packet_track(
     AVFrameSideData **side_data = NULL;
     int side_data_count = 0;
     int result = 0;
-    pthread_mutex_lock(&writer->mux);
+    ffmpegkmp_lock_mux(writer, track);
     parameters->codec_type = AVMEDIA_TYPE_VIDEO;
     parameters->codec_id = ffmpegkmp_codec_id(config->codec);
     parameters->width = config->width;
@@ -1248,7 +1255,7 @@ static int ffmpegkmp_start_packet_track(
         track->started = 1;
         result = ffmpegkmp_write_header_locked(writer, 0);
     }
-    pthread_mutex_unlock(&writer->mux);
+    ffmpegkmp_unlock_mux(writer);
     return result;
 }
 

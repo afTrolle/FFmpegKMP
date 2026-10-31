@@ -36,7 +36,7 @@ class FFplayBridgeAudioTest {
 
         output.setLevel(AudioLevel(volume = 0.5, muted = true))
         assertEquals(0f, native.lastMasterGain)
-        output.setTrackLevel(1, AudioLevel(volume = 0.25))
+        output.updateTrackLevel(1) { AudioLevel(volume = 0.25) }
         assertEquals(0.25f, native.trackGains[1])
         assertEquals(AudioLevel(volume = 0.25), output.trackLevels.value[1])
 

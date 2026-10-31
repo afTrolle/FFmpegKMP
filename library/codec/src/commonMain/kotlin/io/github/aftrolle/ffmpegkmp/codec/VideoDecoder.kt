@@ -55,9 +55,9 @@ public sealed interface VideoOutput {
      * copy in the source's colour. That is where Metal and VideoToolbox take frames without a copy.
      *
      * On Android MediaCodec decodes 8-bit sources straight into memory, as NV12 or YUV420P, with
-     * the software decoder as the [DecoderPreference.AUTO] fallback. Deeper sources decode in
+     * the software decoder as the [CodecPreference.AUTO] fallback. Deeper sources decode in
      * software, because MediaCodec's memory output would drop their precision, so
-     * [DecoderPreference.REQUIRE_HARDWARE] fails on them.
+     * [CodecPreference.REQUIRE_HARDWARE] fails on them.
      *
      * With a [size], the decoder's thread also scales each frame to it, bilinearly and in the same
      * pass as the conversion, so a 4K source shown as a 960x540 tile converts, and tone maps, at
@@ -111,7 +111,7 @@ public sealed interface VideoOutput {
      * buffer holds its PQ or HLG codes, which `FrameImage` draws as linear light with its own shader
      * (1.0 at 203 nits), so a canvas that keeps values above 1.0 shows the highlights.
      *
-     * Where no hardware decoder takes the source under [DecoderPreference.AUTO], frames come in
+     * Where no hardware decoder takes the source under [CodecPreference.AUTO], frames come in
      * memory as decoded instead, as with [Memory], and [VideoDecoder.decoderKind] reports
      * [DecoderKind.SOFTWARE]. Elsewhere and on earlier Android
      * versions, [VideoDecoder.open] fails with [IllegalArgumentException]; the browser fails it with
@@ -178,7 +178,7 @@ public class VideoDecoder private constructor(
     public val duration: Duration? = stream.durationMicros.takeIf { it >= 0 }?.microseconds
 
     /**
-     * The decoder that took the source. Under [DecoderPreference.AUTO] a hardware decoder that
+     * The decoder that took the source. Under [CodecPreference.AUTO] a hardware decoder that
      * fails or stalls before its first frame is replaced once by the software one, so this is then
      * [DecoderKind.SOFTWARE].
      */
@@ -314,7 +314,7 @@ public class VideoDecoder private constructor(
         public suspend fun open(
             source: MediaSource,
             output: VideoOutput = VideoOutput.Memory(),
-            decoder: DecoderPreference = DecoderPreference.AUTO,
+            decoder: CodecPreference = CodecPreference.AUTO,
             timeout: Duration = 10.seconds,
             threads: DecoderThreads = DecoderThreads.Auto,
         ): VideoDecoder {

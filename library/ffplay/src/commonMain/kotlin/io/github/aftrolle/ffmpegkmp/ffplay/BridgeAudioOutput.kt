@@ -13,6 +13,7 @@ import kotlin.time.Duration.Companion.microseconds
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.updateAndGet
 
 /** Audio the player bridge plays itself, presented as FFplay's audio output with AudioPlayer's states. */
 internal class BridgeAudioOutput(
@@ -73,10 +74,12 @@ internal class BridgeAudioOutput(
         native.setMasterGain(level.effectiveVolume.toFloat())
     }
 
-    override fun setTrackLevel(track: Int, level: AudioLevel) {
+    override fun updateTrackLevel(track: Int, transform: (AudioLevel) -> AudioLevel) {
         requireTrack(track)
+        val level = mutableTrackLevels.updateAndGet { current ->
+            current.toMutableList().also { it[track] = transform(it[track]) }
+        }[track]
         native.setTrackGain(track, level.effectiveVolume.toFloat())
-        mutableTrackLevels.value = mutableTrackLevels.value.toMutableList().also { it[track] = level }
     }
 
     override fun setTrackEnabled(track: Int, enabled: Boolean) {

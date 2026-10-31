@@ -8,10 +8,12 @@ import io.github.aftrolle.ffmpegkmp.bindings.NativePlayerDecoderPreference
 import io.github.aftrolle.ffmpegkmp.core.InternalFFmpegKmpApi
 
 /**
- * Which video decoder to open. [AUTO] prefers the platform's hardware decoder and falls back to
- * FFmpeg's software one; [REQUIRE_HARDWARE] fails where no hardware decoder takes the source.
+ * Which video decoder or encoder to open. [AUTO] prefers the platform's hardware codec and falls
+ * back to a software one: FFmpeg's decoders, or an encoder where the build has one for the codec
+ * (the default LGPL builds have none for H.264 or HEVC, since libx264 and libx265 are GPL).
+ * [REQUIRE_HARDWARE] and [SOFTWARE] take only their kind.
  */
-public enum class DecoderPreference { AUTO, REQUIRE_HARDWARE, SOFTWARE }
+public enum class CodecPreference { AUTO, REQUIRE_HARDWARE, SOFTWARE }
 
 /** The video decoder that actually took a source; [UNKNOWN] before one has opened. */
 public enum class DecoderKind { UNKNOWN, HARDWARE, SOFTWARE }
@@ -45,10 +47,10 @@ public sealed interface DecoderThreads {
 
 /** The preference as the bindings take it. */
 @InternalFFmpegKmpApi
-public fun DecoderPreference.toNative(): NativePlayerDecoderPreference = when (this) {
-    DecoderPreference.AUTO -> NativePlayerDecoderPreference.AUTO
-    DecoderPreference.REQUIRE_HARDWARE -> NativePlayerDecoderPreference.REQUIRE_HARDWARE
-    DecoderPreference.SOFTWARE -> NativePlayerDecoderPreference.SOFTWARE
+public fun CodecPreference.toNative(): NativePlayerDecoderPreference = when (this) {
+    CodecPreference.AUTO -> NativePlayerDecoderPreference.AUTO
+    CodecPreference.REQUIRE_HARDWARE -> NativePlayerDecoderPreference.REQUIRE_HARDWARE
+    CodecPreference.SOFTWARE -> NativePlayerDecoderPreference.SOFTWARE
 }
 
 /** `decoder_threads` in the bridge: 0 is FFmpeg's automatic count, capped there. */

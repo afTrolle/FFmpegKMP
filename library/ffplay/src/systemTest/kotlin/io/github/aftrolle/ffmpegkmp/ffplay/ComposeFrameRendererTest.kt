@@ -23,7 +23,7 @@ import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
-import io.github.aftrolle.ffmpegkmp.codec.DecoderPreference
+import io.github.aftrolle.ffmpegkmp.codec.CodecPreference
 import io.github.aftrolle.ffmpegkmp.codec.DynamicRange
 import io.github.aftrolle.ffmpegkmp.codec.FrameColor
 import io.github.aftrolle.ffmpegkmp.codec.FrameFormat
@@ -157,7 +157,7 @@ class ComposeFrameRendererTest {
             }
             assertEquals(10, writer.finish().videoFrames)
         }
-        VideoDecoder.open(MediaSource(output.toString()), VideoOutput.Memory(FrameFormat.RgbaF16), DecoderPreference.SOFTWARE).use { decoder ->
+        VideoDecoder.open(MediaSource(output.toString()), VideoOutput.Memory(FrameFormat.RgbaF16), CodecPreference.SOFTWARE).use { decoder ->
             decoder.frameAt(Duration.ZERO).use { frame ->
                 // Compose's white is SDR white, 1.0 in the canvas: 203 nits once encoded as PQ.
                 assertColour(frame, x = 8, y = 8, red = 1.0, green = 1.0, blue = 1.0, "white", tolerance = 0.06)
@@ -183,7 +183,7 @@ class ComposeFrameRendererTest {
             }
             assertEquals(10, writer.finish().videoFrames)
         }
-        VideoDecoder.open(MediaSource(output.toString()), VideoOutput.Memory(FrameFormat.Rgba8), DecoderPreference.SOFTWARE).use { decoder ->
+        VideoDecoder.open(MediaSource(output.toString()), VideoOutput.Memory(FrameFormat.Rgba8), CodecPreference.SOFTWARE).use { decoder ->
             assertEquals(10, decoder.info.bitDepth)
             decoder.frameAt(Duration.ZERO).use { frame ->
                 assertColour(frame, x = 8, y = 8, red = 1.0, green = 1.0, blue = 1.0, "white", tolerance = 0.03)

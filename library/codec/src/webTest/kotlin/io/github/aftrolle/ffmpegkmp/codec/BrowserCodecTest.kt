@@ -153,7 +153,7 @@ class BrowserCodecTest {
     fun formatsWebCodecsCannotCopyIntoAreRefused() = browserTest {
         if (!webCodecs()) return@browserTest
         assertFailsWith<VideoDecodingException> { open("cfr-30-h264.mp4", VideoOutput.Memory(FrameFormat.RgbaF16)) }
-        assertFailsWith<VideoDecodingException> { open("cfr-30-h264.mp4", decoder = DecoderPreference.REQUIRE_HARDWARE) }
+        assertFailsWith<VideoDecodingException> { open("cfr-30-h264.mp4", decoder = CodecPreference.REQUIRE_HARDWARE) }
         assertFailsWith<VideoDecodingException> { open("cfr-30-h264.mp4", VideoOutput.GpuBuffers) }
     }
 
@@ -233,7 +233,7 @@ class BrowserCodecTest {
     private suspend fun open(
         name: String,
         output: VideoOutput = VideoOutput.Memory(FrameFormat.Rgba8),
-        decoder: DecoderPreference = DecoderPreference.AUTO,
+        decoder: CodecPreference = CodecPreference.AUTO,
     ): VideoDecoder {
         val bytes = fetchBytes("/base/kotlin/video-decoder/$name")
         return VideoDecoder.open(MediaSource(name, CommandIo { input(name, Buffer().write(bytes)) }), output, decoder, timeout = 20.seconds)

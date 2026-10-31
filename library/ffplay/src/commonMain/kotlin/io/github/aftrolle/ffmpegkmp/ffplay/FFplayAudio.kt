@@ -27,6 +27,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.flow.updateAndGet
 import kotlinx.coroutines.launch
 
 /** Audio of the prepared source: its tracks and the levels the listener chose. */
@@ -51,7 +52,7 @@ internal interface FFplayAudioOutput : AutoCloseable {
     fun pause()
     fun seekTo(position: Duration)
     fun setLevel(level: AudioLevel)
-    fun setTrackLevel(track: Int, level: AudioLevel)
+    fun updateTrackLevel(track: Int, transform: (AudioLevel) -> AudioLevel)
     fun setTrackEnabled(track: Int, enabled: Boolean)
     fun selectTracks(selected: Set<Int>)
 }
@@ -150,14 +151,15 @@ internal class FFplayAudio(
         return position.inWholeMicroseconds
     }
 
-    fun setLevel(level: AudioLevel) {
+    /** Atomic, so a volume and a mute change from different threads never lose one another. */
+    fun updateLevel(transform: (AudioLevel) -> AudioLevel) {
+        val level = mutableState.updateAndGet { it.copy(level = transform(it.level)) }.level
         current.load()?.setLevel(level)
-        mutableState.update { it.copy(level = level) }
     }
 
-    fun setTrackLevel(track: Int, level: AudioLevel) {
+    fun updateTrackLevel(track: Int, transform: (AudioLevel) -> AudioLevel) {
         val audio = current.load() ?: return
-        audio.setTrackLevel(track, level)
+        audio.updateTrackLevel(track, transform)
         mutableState.update { it.copy(trackLevels = audio.trackLevels.value) }
     }
 
@@ -216,7 +218,8 @@ internal suspend fun openAudioPlayer(source: MediaSource): FFplayAudioOutput? {
         override fun pause() = player.pause()
         override fun seekTo(position: Duration) = player.seekTo(position)
         override fun setLevel(level: AudioLevel) = player.setLevel(level)
-        override fun setTrackLevel(track: Int, level: AudioLevel) = player.setTrackLevel(track, level)
+        override fun updateTrackLevel(track: Int, transform: (AudioLevel) -> AudioLevel) =
+            player.updateTrackLevel(track, transform)
         override fun setTrackEnabled(track: Int, enabled: Boolean) = player.setTrackEnabled(track, enabled)
         override fun selectTracks(selected: Set<Int>) = player.selectTracks(selected)
     }

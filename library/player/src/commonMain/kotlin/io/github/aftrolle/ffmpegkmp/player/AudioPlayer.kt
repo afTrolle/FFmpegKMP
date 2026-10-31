@@ -122,21 +122,26 @@ public class AudioPlayer internal constructor(
     }
 
     /** Atomic, so a volume and a mute change from different threads never lose one another. */
-    private fun updateLevel(transform: (AudioLevel) -> AudioLevel) {
+    public fun updateLevel(transform: (AudioLevel) -> AudioLevel) {
         decoder.level = mutableLevel.updateAndGet(transform)
     }
 
     public fun setTrackLevel(track: Int, level: AudioLevel) {
-        decoder.setTrackLevel(track, level)
-        mutableTrackLevels.value = decoder.trackLevels
+        updateTrackLevel(track) { level }
     }
 
     public fun setTrackVolume(track: Int, volume: Double) {
-        setTrackLevel(track, decoder.trackLevel(track).copy(volume = volume))
+        updateTrackLevel(track) { it.copy(volume = volume) }
     }
 
     public fun setTrackMuted(track: Int, muted: Boolean) {
-        setTrackLevel(track, decoder.trackLevel(track).copy(muted = muted))
+        updateTrackLevel(track) { it.copy(muted = muted) }
+    }
+
+    /** Atomic, like [updateLevel], for one track's level. */
+    public fun updateTrackLevel(track: Int, transform: (AudioLevel) -> AudioLevel) {
+        decoder.updateTrackLevel(track, transform)
+        mutableTrackLevels.value = decoder.trackLevels
     }
 
     /** Adds [track] to, or removes it from, the mix. */

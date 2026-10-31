@@ -3,7 +3,7 @@ package io.github.aftrolle.ffmpegkmp.ffplay
 
 import io.github.aftrolle.ffmpegkmp.codec.ColorPrimaries
 import io.github.aftrolle.ffmpegkmp.codec.DecoderKind
-import io.github.aftrolle.ffmpegkmp.codec.DecoderPreference
+import io.github.aftrolle.ffmpegkmp.codec.CodecPreference
 import io.github.aftrolle.ffmpegkmp.codec.DecoderThreads
 import io.github.aftrolle.ffmpegkmp.codec.VideoInfo
 import kotlin.time.Duration
@@ -28,13 +28,13 @@ public enum class FFplayHdrPolicy {
     /**
      * Always shows SDR. An HDR source that a direct surface would present as HDR is decoded to
      * software frames and tone mapped instead, so it fails under
-     * [DecoderPreference.REQUIRE_HARDWARE].
+     * [CodecPreference.REQUIRE_HARDWARE].
      */
     FORCE_SDR,
 }
 
 public data class FFplayConfiguration(
-    val decoderPreference: DecoderPreference = DecoderPreference.AUTO,
+    val decoderPreference: CodecPreference = CodecPreference.AUTO,
     val outputPreference: FFplayOutputPreference = FFplayOutputPreference.AUTO,
     val hdrPolicy: FFplayHdrPolicy = FFplayHdrPolicy.PRESERVE_OR_TONE_MAP,
     /**

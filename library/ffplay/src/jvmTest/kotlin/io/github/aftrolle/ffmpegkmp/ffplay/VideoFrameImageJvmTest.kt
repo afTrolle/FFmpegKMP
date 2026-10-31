@@ -5,7 +5,7 @@ package io.github.aftrolle.ffmpegkmp.ffplay
 
 import androidx.compose.ui.graphics.asSkiaBitmap
 import io.github.aftrolle.ffmpegkmp.bindings.nativeFrameStatistics
-import io.github.aftrolle.ffmpegkmp.codec.DecoderPreference
+import io.github.aftrolle.ffmpegkmp.codec.CodecPreference
 import io.github.aftrolle.ffmpegkmp.codec.FrameFormat
 import io.github.aftrolle.ffmpegkmp.codec.MediaSource
 import io.github.aftrolle.ffmpegkmp.codec.PixelLayout
@@ -34,7 +34,7 @@ class VideoFrameImageJvmTest {
 
     @Test
     fun a4kFramesPixelsAreInOneDecoderBufferAndOneBitmap() = runBlocking<Unit> {
-        VideoDecoder.open(MediaSource(uhdClip()), VideoOutput.Memory(), DecoderPreference.SOFTWARE).use { decoder ->
+        VideoDecoder.open(MediaSource(uhdClip()), VideoOutput.Memory(), CodecPreference.SOFTWARE).use { decoder ->
             repeat(3) { index ->
                 val before = nativeFrameStatistics()
                 val image = decoder.frameAt(1.seconds / 24 * index).use { frame ->
@@ -54,7 +54,7 @@ class VideoFrameImageJvmTest {
 
     @Test
     fun aConvertedFrameIsCopiedOnceIntoTheBitmap() = runBlocking<Unit> {
-        VideoDecoder.open(MediaSource(uhdClip()), VideoOutput.Memory(FrameFormat.Rgba8), DecoderPreference.SOFTWARE).use { decoder ->
+        VideoDecoder.open(MediaSource(uhdClip()), VideoOutput.Memory(FrameFormat.Rgba8), CodecPreference.SOFTWARE).use { decoder ->
             decoder.frameAt(Duration.ZERO).use { it.toImageBitmap() }
             val before = nativeFrameStatistics()
             // The pooled RGBA8 frame of the first call is reused, and the bitmap takes the one copy.

@@ -37,7 +37,7 @@ them in software.
 
 The source, decoder and stream types come from the Compose-free [`codec`](../codec/README.md)
 module, which `ffplay` exposes as an API dependency: `MediaSource` is what `prepare` takes,
-`DecoderPreference` and `DecoderThreads` configure the player, and `VideoInfo` and `DecoderKind`
+`CodecPreference` and `DecoderThreads` configure the player, and `VideoInfo` and `DecoderKind`
 describe what it plays. They live in `io.github.aftrolle.ffmpegkmp.codec`; binaries built against
 0.2 need recompiling.
 

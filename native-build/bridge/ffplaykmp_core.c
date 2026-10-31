@@ -238,7 +238,7 @@ void ffplaykmp_stream_timing(
             : AV_NOPTS_VALUE;
 }
 
-static int ffplaykmp_parse_resource_id(const char *input, int64_t *resource_id) {
+int ffplaykmp_parse_resource_id(const char *input, int64_t *resource_id) {
     const char prefix[] = "ffmpegkmp:";
     char *end = NULL;
     long long parsed;

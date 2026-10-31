@@ -11,7 +11,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.test.platform.app.InstrumentationRegistry
-import io.github.aftrolle.ffmpegkmp.codec.DecoderPreference
+import io.github.aftrolle.ffmpegkmp.codec.CodecPreference
 import io.github.aftrolle.ffmpegkmp.codec.DynamicRange
 import io.github.aftrolle.ffmpegkmp.codec.FrameRate
 import io.github.aftrolle.ffmpegkmp.codec.MediaOutput
@@ -70,7 +70,7 @@ class CompositeExportBudgetDeviceTest {
     /** One way of decoding the sources. */
     private class Case(
         val name: String,
-        val decoder: DecoderPreference = DecoderPreference.SOFTWARE,
+        val decoder: CodecPreference = CodecPreference.SOFTWARE,
         /** Draw into the encoder's input surface, with no copy, where the track allows it. */
         val surface: Boolean = false,
         val output: (VideoTrack) -> VideoOutput,
@@ -80,9 +80,9 @@ class CompositeExportBudgetDeviceTest {
         Case("Memory(canvasFormat)") { track -> VideoOutput.Memory(track.config.canvasFormat) },
         Case("Memory()") { VideoOutput.Memory() },
         // MediaCodec's frames, drawn from their HardwareBuffers.
-        Case("GpuBuffers", DecoderPreference.AUTO) { VideoOutput.GpuBuffers },
+        Case("GpuBuffers", CodecPreference.AUTO) { VideoOutput.GpuBuffers },
         // The same, drawn straight into the encoder's input surface: no copy, and `write` only queues the frame.
-        Case("GpuBuffersToSurface", DecoderPreference.AUTO, surface = true) { VideoOutput.GpuBuffers },
+        Case("GpuBuffersToSurface", CodecPreference.AUTO, surface = true) { VideoOutput.GpuBuffers },
     )
 
     /** Each frame's phases, in milliseconds. */

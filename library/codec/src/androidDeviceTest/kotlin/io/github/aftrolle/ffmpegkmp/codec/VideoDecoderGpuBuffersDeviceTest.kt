@@ -89,7 +89,7 @@ class VideoDecoderGpuBuffersDeviceTest {
     @Test
     fun theSoftwareDecoderGivesFramesInMemory() = runBlocking<Unit> {
         assumeGpuBuffers()
-        open("cfr-30-h264-128.mp4", DecoderPreference.SOFTWARE).use { decoder ->
+        open("cfr-30-h264-128.mp4", CodecPreference.SOFTWARE).use { decoder ->
             assertEquals(DecoderKind.SOFTWARE, decoder.decoderKind)
             decoder.frameAt(1.seconds).use { frame ->
                 assertNull(frame.hardwareBuffer)
@@ -127,7 +127,7 @@ class VideoDecoderGpuBuffersDeviceTest {
 
     private suspend fun open(
         name: String,
-        preference: DecoderPreference = DecoderPreference.AUTO,
+        preference: CodecPreference = CodecPreference.AUTO,
         timeout: Duration = 5.seconds,
     ): VideoDecoder {
         val bytes = checkNotNull(javaClass.getResourceAsStream("/video-decoder/$name")) { "Missing fixture $name" }

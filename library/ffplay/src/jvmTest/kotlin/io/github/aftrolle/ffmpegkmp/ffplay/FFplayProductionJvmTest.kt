@@ -3,7 +3,7 @@ package io.github.aftrolle.ffmpegkmp.ffplay
 
 import io.github.aftrolle.ffmpegkmp.bindings.InternalFFmpegKmpApi
 import io.github.aftrolle.ffmpegkmp.codec.DecoderKind
-import io.github.aftrolle.ffmpegkmp.codec.DecoderPreference
+import io.github.aftrolle.ffmpegkmp.codec.CodecPreference
 import io.github.aftrolle.ffmpegkmp.codec.MediaSource
 import io.github.aftrolle.ffmpegkmp.codec.VideoFrame
 import io.github.aftrolle.ffmpegkmp.codec.VideoInfo
@@ -28,7 +28,7 @@ class FFplayProductionJvmTest {
             "Missing shared playback fixture"
         }.use { it.readBytes() }
         val output = ProductionOutput()
-        val player = FFplayPlayer(FFplayConfiguration(decoderPreference = DecoderPreference.SOFTWARE))
+        val player = FFplayPlayer(FFplayConfiguration(decoderPreference = CodecPreference.SOFTWARE))
         player.attachOutput(output)
 
         try {

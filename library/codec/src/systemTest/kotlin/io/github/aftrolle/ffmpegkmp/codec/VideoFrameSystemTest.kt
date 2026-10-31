@@ -169,7 +169,7 @@ class VideoFrameSystemTest {
     @Test
     fun a4kFrameIsInOneBufferAsDecodedAndOnePooledOneConverted() = runBlocking<Unit> {
         val clip = uhdClip()
-        VideoDecoder.open(MediaSource(clip), decoder = DecoderPreference.SOFTWARE).use { decoder ->
+        VideoDecoder.open(MediaSource(clip), decoder = CodecPreference.SOFTWARE).use { decoder ->
             val before = nativeFrameStatistics().buffers
             decoder.frameAt(Duration.ZERO).use { frame ->
                 assertEquals(3840 to 2160, frame.width to frame.height)
@@ -181,7 +181,7 @@ class VideoFrameSystemTest {
                 }
             }
         }
-        VideoDecoder.open(MediaSource(clip), VideoOutput.Memory(FrameFormat.Rgba8), DecoderPreference.SOFTWARE).use { decoder ->
+        VideoDecoder.open(MediaSource(clip), VideoOutput.Memory(FrameFormat.Rgba8), CodecPreference.SOFTWARE).use { decoder ->
             val before = nativeFrameStatistics()
             decoder.frameAt(Duration.ZERO).close()
             val first = nativeFrameStatistics()
@@ -230,7 +230,7 @@ class VideoFrameSystemTest {
     ): VideoDecoder = VideoDecoder.open(
         MediaSource(name, CommandIo { input(name, Buffer().write(readVideoDecoderFixture(name))) }),
         output,
-        DecoderPreference.SOFTWARE,
+        CodecPreference.SOFTWARE,
         timeout,
     )
 }
