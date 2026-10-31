@@ -113,8 +113,12 @@ private class ComposeCanvasOutput : FFplayVideoOutput, AutoCloseable {
  */
 internal fun playerFrameImage(): FrameImage = FrameImage(bitmaps = 3)
 
-/** Draws [image] placed by [contentScale] in the whole canvas; nothing before its first frame. */
+/**
+ * Draws [image] placed by [contentScale] in the whole canvas; nothing before its first frame. Tells
+ * the image where it is drawn, so that the next frames are converted at the size they are drawn at.
+ */
 internal fun DrawScope.drawFrameImage(image: FrameImage, contentScale: ContentScale) {
+    image.drawnIn(size, contentScale)
     val destination = contentScale.place(image.displaySize, size)
     drawFrameImage(image, destination.topLeft, destination.size)
 }

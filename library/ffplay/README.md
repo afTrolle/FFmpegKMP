@@ -149,8 +149,10 @@ frame as decoded (hardware frames downloaded), and the canvas output converts it
 [`FrameImage`](#two-bitmaps-per-source) on the player's thread. Since that thread updates the image
 at the video's rate, which drawing does not pace, the player's image keeps three bitmaps rather
 than two. Android's Surface fallback draws each frame onto the surface before it takes the next,
-so it converts every frame into one reused bitmap. The browser's worker converts its frames into
-RGBA8 bytes before they cross to the page.
+so it converts every frame into one reused bitmap. Both convert straight to the size the frame is
+drawn at, not the source's (see [Bitmaps at the drawn size](#bitmaps-at-the-drawn-size)). The
+browser's worker converts its frames into RGBA8 bytes, at the source's size, before they cross to
+the page.
 
 `FFplayConfiguration(threads = …)` sets the software decoder's threads, as `VideoDecoder.open`
 does (see [`codec`](../codec/README.md#decoder-threads)). The player decodes with FFmpeg's frame and
@@ -194,6 +196,61 @@ Canvas(Modifier.fillMaxSize()) { drawFrameImage(image) }
 - FFmpeg reports rotation anticlockwise, as `av_display_rotation_get` does, so a frame with
   `rotationDegrees = 90.0` is drawn turned a quarter anticlockwise, as FFmpeg's own tools show
   it. The player's surfaces turn their frames the same way.
+- `targetSize` converts frames at the size the image is drawn at rather than their own; see below.
+
+### Bitmaps at the drawn size
+
+A bitmap at the source's size is wasted on a picture drawn smaller: a paused player keeps its
+bitmaps, so sixteen 4K players drawn as tiles held about 1.6 GB of bitmaps they drew at a sixteenth
+of their area. Frames are therefore converted straight to the size they are drawn at, in the same
+pass as the conversion to RGB, on whichever thread converts:
+
+- `FrameImage.targetSize` is the size, in pixels, the image is drawn at, upright as `displaySize`
+  is; null, the default, keeps the frame's own size. A player's Canvas surface sets nothing there:
+  as it draws, it records the canvas size and its `ContentScale` in two atomic fields (no snapshot
+  state, so drawing neither invalidates nor loops), and the next update places the frame there
+  itself. The first frame after a surface has drawn once is converted at its drawn size, even
+  before anything was shown. `targetSize`, when set, wins.
+- The size is not used raw: the bitmap is one of 16 steps of the frame's own size,
+  `size × step / 16`, the smallest that covers the drawn size on both axes after turning a quarter
+  turn back to the frame's orientation. So the aspect is the frame's, and the bitmap is never larger
+  than the frame. A larger step is taken at the next update; a smaller one only when it is two steps
+  or more below the current one, so a size wobbling about a step's edge never reallocates. A step
+  change replaces the three bitmaps one per update, through the usual reuse: three allocations per
+  change, none within a step.
+- `ContentScale.Crop` keeps the whole picture: the bitmap covers the placed frame, not only the
+  part inside the canvas, capped at the frame's size.
+- Layout never follows the bitmaps: `displaySize` comes from the frame's coded size, sample aspect
+  ratio and rotation, and `drawFrameImage` stretches the smaller bitmap into the same rectangle.
+- A paused player whose surface grows keeps showing its small bitmap, scaled up, until the next
+  frame: a play, a seek or a scrub converts at the new size. Re-converting the shown frame would
+  mean keeping a decoded frame per paused player, which is the memory this saves.
+- An `RgbaF16` frame is converted at its own size whatever the target: the converter takes a
+  half-float frame into a bitmap pixel for pixel, and refuses another size. On the web the worker
+  converts at the source's size and the page copies those bytes as they are, so there too frames
+  keep their size, for now.
+- Android's Surface fallback sizes its one bitmap the same way, from where it places the frame on
+  the surface.
+
+The bitmaps of one player's Canvas output, three in RGBA8, are then:
+
+| Drawn at | Bitmap | From 1080p | From 4K |
+|---|---|---|---|
+| source size | 1920 × 1080 / 3840 × 2160 | 24.9 MB | 99.5 MB |
+| 1920 × 1080 | step 16 / step 8 | 24.9 MB | 24.9 MB |
+| 960 × 540 tile | step 8 / step 4 | 6.2 MB | 6.2 MB |
+| 256 × 144 thumbnail | step 3 (360 × 203) / step 2 (480 × 270) | 0.88 MB | 1.56 MB |
+
+Sixteen paused 4K players therefore hold about 100 MB as tiles instead of 1.6 GB. RGBA F16 doubles
+each figure, and Android's Surface fallback holds one bitmap, a third of them. The converter's own
+HDR intermediate is made at the bitmap's size too, so it shrinks with them.
+
+What it does to the conversion's time depends on the route (`scripts/bench-video-decoder.sh convert`
+on an M4 Pro, which is noisy at this scale): a 4K PQ frame tone mapped into RGBA8 takes 3 to 8 ms at
+960 × 540 against 40 to 64 ms at its own size, since the tone map runs after the first scaling step.
+An SDR frame does not get faster: the same-size YUV to RGBA8 pass is swscale's unscaled fast path,
+0.1 to 0.3 ms at 1080p and 0.3 to 1.1 ms at 4K, and the scaled one takes 0.4 to 0.6 ms and 0.9 to
+1.6 ms. Below a millisecond either way, it buys the memory and a 16 times smaller upload per frame.
 - On Skiko the bitmaps stay mutable, and each write gives one a new generation: Skia draws a
   mutable bitmap from a copy of its pixels, and caches what it uploads by generation. That copy
   is small beside the drawing: on an M4 Pro a warm 4K render takes 8.3 ms drawing a `FrameImage`
@@ -356,9 +413,16 @@ ten pts convert ten times into the same two bitmaps in turn, that an update off 
 while a renderer draws gives the old frame or the new one, never a mix, and that two renderers
 drawing two `FrameImage`s updated from two coroutines each match their own source; it draws a
 rotated clip and synthesised anamorphic frames upright at their display aspect, and checks that a
-renderer drawing a `FrameImage` matches one drawing `toImageBitmap`. `FrameImageDeviceTest` does
+renderer drawing a `FrameImage` matches one drawing `toImageBitmap`. With 4K frames it checks that
+a target of 1920 × 1080, 960 × 540 and 256 × 144 gives bitmaps at the step that covers it, that a
+step change allocates three bitmaps and 100 updates within a step none, that a 60-frame shrink and
+grow sweep allocates at most three bitmaps per step change, that a player's image drawn by a
+`ContentScale.Fit` or `Crop` surface converts its first frame at the drawn size, that `displaySize`
+is the video's at every target, rotated and anamorphic frames included, and that an `RgbaF16` frame
+keeps its size. `FrameImageDeviceTest` does
 the same on both Android paths, the GPU and the software canvas, and draws `GpuBuffers` frames
-against the same frames from memory. With `hdrGpuCheck=true` it also runs the HDR checks: an HDR10
+against the same frames from memory; it checks a target size there too, and that the Surface
+fallback sizes its one bitmap from where it draws the frame. With `hdrGpuCheck=true` it also runs the HDR checks: an HDR10
 highlight reads 1000/203 on an F16 canvas through `GpuBuffers` as from memory, and a PQ ramp of 256
 grey steps four codes apart (`hdr10-pq-gradient.mp4`) stays within one PQ code of the memory path in
 every column, which shows the GPU's sampler keeps 10 bits, and saturated BT.2020 patches in PQ

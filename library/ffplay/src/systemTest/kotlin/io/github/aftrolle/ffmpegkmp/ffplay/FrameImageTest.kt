@@ -13,6 +13,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asSkiaBitmap
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.unit.IntSize
 import io.github.aftrolle.ffmpegkmp.bindings.NativeGpuBuffer
 import io.github.aftrolle.ffmpegkmp.codec.CodecPreference
 import io.github.aftrolle.ffmpegkmp.codec.FrameFormat
@@ -38,6 +40,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.flow.collectIndexed
 import kotlinx.coroutines.flow.take
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
@@ -267,6 +270,158 @@ class FrameImageTest {
         assertEquals(1, releases, "the image kept no reference to the frame")
     }
 
+    @Test
+    fun aTargetSizeConvertsFourKFramesAtTheStepOfSixteenThatCoversIt() = runBlocking<Unit> {
+        fourK().use { decoder ->
+            val targets = listOf(
+                IntSize(1920, 1080) to IntSize(1920, 1080),
+                IntSize(960, 540) to IntSize(960, 540),
+                // A step of 4K is 240 × 135, so a thumbnail takes the second.
+                IntSize(256, 144) to IntSize(480, 270),
+                IntSize(1, 1) to IntSize(240, 135),
+                // Never larger than the frame.
+                IntSize(7680, 4320) to IntSize(3840, 2160),
+            )
+            for ((target, expected) in targets) {
+                playerFrameImage().use { image ->
+                    image.targetSize = target
+                    for (index in 0 until 3) decoder.frameAt(index.seconds / 30).use { assertTrue(image.updateIfOpen(it)) }
+                    assertEquals(expected, shownSize(image), "target $target")
+                    assertEquals(fourKDisplay, image.displaySize, "target $target")
+                    assertEquals(3 to 3, image.allocations to image.conversions, "target $target")
+                }
+            }
+        }
+    }
+
+    @Test
+    fun aStepChangeAllocatesThreeBitmapsAndUpdatesWithinAStepNone() = runBlocking<Unit> {
+        fourK().use { decoder ->
+            playerFrameImage().use { image ->
+                // Within step 4 (721-960 wide) and one step below it, which is not enough to shrink.
+                val wobble = listOf(IntSize(960, 540), IntSize(800, 450), IntSize(700, 394))
+                decoder.frames().take(149).collectIndexed { index, frame ->
+                    image.targetSize = when {
+                        index < 103 -> wobble[index % wobble.size]
+                        index < 126 -> IntSize(1920, 1080)
+                        else -> IntSize(480, 270)
+                    }
+                    frame.use { assertTrue(image.updateIfOpen(it)) }
+                    when (index) {
+                        2 -> assertEquals(3, image.allocations, "the first three bitmaps")
+                        102 -> assertEquals(3, image.allocations, "100 updates within a step")
+                        105 -> assertEquals(6, image.allocations, "growing to step 8")
+                        125 -> assertEquals(6, image.allocations, "20 updates at step 8")
+                        128 -> assertEquals(9, image.allocations, "shrinking to step 2")
+                    }
+                    val expected = when {
+                        index < 103 -> IntSize(960, 540)
+                        index < 126 -> IntSize(1920, 1080)
+                        else -> IntSize(480, 270)
+                    }
+                    assertEquals(expected, shownSize(image), "update $index")
+                }
+                assertEquals(9 to 149, image.allocations to image.conversions)
+            }
+        }
+    }
+
+    @Test
+    fun aShrinkAndGrowSweepAllocatesThreeBitmapsPerStepChangeAtMost() = runBlocking<Unit> {
+        fourK().use { decoder ->
+            playerFrameImage().use { image ->
+                var changes = 0
+                var crossed = 0
+                var last: IntSize? = null
+                // 4K down to a thumbnail over 30 frames and back over 30.
+                decoder.frames().take(60).collectIndexed { index, frame ->
+                    val fraction = 1.0 - 0.95 * (if (index < 30) index / 29.0 else (59 - index) / 29.0)
+                    image.targetSize = IntSize((3840 * fraction).toInt(), (2160 * fraction).toInt())
+                    frame.use { assertTrue(image.updateIfOpen(it)) }
+                    val size = shownSize(image)
+                    last?.let {
+                        if (it != size) changes++
+                        crossed += abs(it.width - size.width) / 240
+                    }
+                    last = size
+                    assertEquals(fourKDisplay, image.displaySize)
+                }
+                assertEquals(IntSize(3840, 2160), last, "back at the full size")
+                assertTrue(changes < crossed, "$changes changes for $crossed steps crossed")
+                assertTrue(image.allocations <= 3 * (changes + 1), "${image.allocations} allocations for $changes changes")
+                assertTrue(image.allocations <= 3 * crossed, "${image.allocations} allocations for $crossed steps crossed")
+            }
+        }
+    }
+
+    @Test
+    fun theDisplaySizeIsTheVideosAtEveryTargetRotatedAndAnamorphicFramesIncluded() = runBlocking<Unit> {
+        val targets = listOf(null, IntSize(1, 1), IntSize(24, 16), IntSize(32, 48), IntSize(48, 32), IntSize(96, 64), IntSize(4000, 4000))
+        fun assertDisplay(frame: VideoFrame, display: Size) {
+            for (target in targets) {
+                FrameImage().use { image ->
+                    image.targetSize = target
+                    image.update(frame)
+                    assertEquals(display, image.displaySize, "$frame at $target")
+                }
+            }
+        }
+        decoder("rotated-90.mp4", VideoOutput.Memory()).use { decoder ->
+            decoder.frameAt(13.seconds / 30).use { frame ->
+                assertDisplay(frame, Size(64f, 96f))
+                // Drawn upright at 32 × 48: the frame's 96 × 64 pixels at step 8, turned back.
+                FrameImage().use { image ->
+                    image.targetSize = IntSize(32, 48)
+                    image.update(frame)
+                    assertEquals(IntSize(48, 32), shownSize(image))
+                }
+            }
+        }
+        decoder("cfr-30.mp4", VideoOutput.Memory()).use { decoder ->
+            decoder.frameAt(13.seconds / 30).use { frame ->
+                frame.withDisplay(rotationDegrees = 0.0, sampleAspectRatio = 2.0).use { assertDisplay(it, Size(192f, 64f)) }
+                frame.withDisplay(rotationDegrees = 90.0, sampleAspectRatio = 2.0).use { assertDisplay(it, Size(64f, 192f)) }
+                frame.withDisplay(rotationDegrees = -90.0, sampleAspectRatio = 1.0).use { assertDisplay(it, Size(64f, 96f)) }
+            }
+        }
+    }
+
+    @Test
+    fun anRgbaF16FrameKeepsItsOwnSize() = runBlocking<Unit> {
+        decoder("cfr-30.mp4", VideoOutput.Memory(FrameFormat.RgbaF16)).use { decoder ->
+            decoder.frameAt(Duration.ZERO).use { frame ->
+                FrameImage().use { image ->
+                    image.targetSize = IntSize(24, 16)
+                    image.update(frame)
+                    assertEquals(IntSize(96, 64), shownSize(image))
+                    assertEquals(ColorType.RGBA_F16, assertNotNull(image.shown).image.asSkiaBitmap().colorType)
+                }
+            }
+        }
+    }
+
+    @Test
+    fun aPlayersImageIsConvertedAtTheSizeItsSurfaceDrawsItAtFromTheFirstFrame() = runBlocking<Unit> {
+        fourK().use { decoder ->
+            // Fitted into 480 × 270, step 2; cropped into 480 × 480 the whole picture is 853 × 480, step 4.
+            for ((scale, expected) in listOf(ContentScale.Fit to IntSize(480, 270), ContentScale.Crop to IntSize(960, 540))) {
+                val height = if (scale == ContentScale.Fit) 270 else 480
+                playerFrameImage().use { image ->
+                    ComposeFrameRenderer<FrameImage>(480, height) { Canvas(Modifier.fillMaxSize()) { drawFrameImage(it, scale) } }.use { renderer ->
+                        // The surface draws before the first frame, which is then converted at the drawn size.
+                        renderer.render(Duration.ZERO, image).close()
+                        assertEquals(null, image.shown)
+                        decoder.frameAt(Duration.ZERO).use { assertTrue(image.updateIfOpen(it)) }
+                        assertEquals(expected, shownSize(image), "$scale")
+                        assertEquals(1, image.allocations)
+                        assertEquals(fourKDisplay, image.displaySize)
+                        renderer.render(Duration.ZERO, image).close()
+                    }
+                }
+            }
+        }
+    }
+
     /**
      * Draws [frame] through a [FrameImage] into a renderer of its display size, which must be
      * [display], and checks each drawn pixel against the frame pixel it shows: the frame turned
@@ -318,6 +473,15 @@ class FrameImageTest {
     private fun VideoFrame.withDisplay(rotationDegrees: Double, sampleAspectRatio: Double): VideoFrame = useNative { native ->
         VideoFrame.of(checkNotNull(native).retain(), pts, duration, width, height, rotationDegrees, sampleAspectRatio)
     }
+
+    /** cfr-30.mp4 scaled to 4K NV12, as a player decodes a 4K source. */
+    private suspend fun fourK(): VideoDecoder = decoder("cfr-30.mp4", VideoOutput.Memory(FrameFormat.Nv12, FrameSize(3840, 2160)))
+
+    /** [fourK]'s frames keep the clip's 3:2 picture through their sample aspect ratio, so they show at 3240 × 2160. */
+    private val fourKDisplay = Size(3240f, 2160f)
+
+    /** The size of the bitmap [image] shows. */
+    private fun shownSize(image: FrameImage): IntSize = assertNotNull(image.shown).image.let { IntSize(it.width, it.height) }
 
     private suspend fun decoder(name: String, output: VideoOutput): VideoDecoder = VideoDecoder.open(
         MediaSource(name, CommandIo { input(name, Buffer().write(readVideoDecoderFixture(name))) }),
