@@ -11,8 +11,6 @@ import io.github.aftrolle.ffmpegkmp.bindings.generated.bridge.ffmpegkmp_writer_r
 import io.github.aftrolle.ffmpegkmp.bindings.generated.bridge.ffplaykmp_io_callback
 import io.github.aftrolle.ffmpegkmp.bindings.generated.bridge.global.bridge
 import java.util.concurrent.ConcurrentHashMap
-import org.bytedeco.javacpp.BytePointer
-import org.bytedeco.javacpp.Pointer
 
 /** A writer on the JavaCPP bridge; [openEncoder] opens the platform's own encoder for [NativeMediaWriter.openInputSurface], where it has one. */
 internal fun createJavaCppMediaWriter(
@@ -23,19 +21,9 @@ internal fun createJavaCppMediaWriter(
     openEncoder: PacketEncoderFactory?,
 ): NativeMediaWriter {
     JavaCppBridgeLoader.load()
-    val resource = (output as? NativeWriterOutput.Mounted)?.let { MountedResource(it.resource) }
-    val ioCallback = resource?.let {
-        object : ffplaykmp_io_callback() {
-            override fun call(
-                opaque: Pointer?,
-                resourceId: Long,
-                operation: Int,
-                offset: Long,
-                data: BytePointer?,
-                size: Long,
-            ): Long = if (resourceId == 1L) it.dispatch(operation, offset, data, size) else -1L
-        }
-    }
+    val ioCallback = (output as? NativeWriterOutput.Mounted)
+        ?.let { MountTable(listOf(NativeMountedIo(it.name, it.resource))) }
+        ?.let { mounts -> mountedIoCallback { mounts } }
     val error = IntArray(1)
     val url = output.url()
     val writer = bridge.ffmpegkmp_writer_create(

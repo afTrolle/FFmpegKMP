@@ -3,10 +3,10 @@
 
 package io.github.aftrolle.ffmpegkmp.ffplay
 
-import io.github.aftrolle.ffmpegkmp.codec.MediaSource
 import io.github.aftrolle.ffmpegkmp.codec.VideoFrame
 import io.github.aftrolle.ffmpegkmp.codec.VideoInfo
 import io.github.aftrolle.ffmpegkmp.core.AudioLevel
+import io.github.aftrolle.ffmpegkmp.core.MediaSource
 import io.github.aftrolle.ffmpegkmp.player.AudioTrackInfo
 import io.github.aftrolle.ffmpegkmp.player.PlaybackState
 import io.github.aftrolle.ffmpegkmp.player.selectTrack

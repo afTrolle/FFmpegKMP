@@ -9,7 +9,6 @@ plain JVM server can decode video without depending on it:
 - `VideoDecoder`, frame-accurate pull decoding;
 - `MediaWriter`, encoding video and audio tracks into an MP4, with the export's
   `DynamicRange` (`SDR`, `HDR10` or `HLG`) deciding every format along the way;
-- `MediaSource`, a path, URL or mounted `CommandIo` input;
 - `CodecPreference` (`AUTO`, `REQUIRE_HARDWARE`, `SOFTWARE`), the `DecoderKind` that actually took
   a source, and `DecoderThreads`, the software decoder's threads;
 - `VideoInfo`, a stream's size, aspect ratio, rotation, pixel format, bit depth and its colour as
@@ -18,7 +17,8 @@ plain JVM server can decode video without depending on it:
   flags. Whether a stream is HDR, and which kind, follows from its `color.transfer` alone.
 
 `ffplay` depends on `codec` and adds `VideoFrame.toImageBitmap()` for Compose. It uses the
-`codec` types (`MediaSource`, `VideoInfo`, `CodecPreference`) as they are. Binaries built against
+`codec` types (`VideoInfo`, `CodecPreference`) as they are. `VideoDecoder.open` takes a `core`
+`MediaSource`: a path, URL or mounted `CommandIo` input. Binaries built against
 0.2 need recompiling.
 
 `codec` publishes every target the other library modules do, including tvOS and watchOS.

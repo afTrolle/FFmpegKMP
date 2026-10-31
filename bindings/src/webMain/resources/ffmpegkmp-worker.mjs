@@ -31,9 +31,13 @@ let playerMessageTail = Promise.resolve();
 
 // Audio of the prepared source, decoded here on demand and played by the page's AudioWorklet,
 // which it reaches directly through `port`. Chunks carry the seek epoch they belong to.
+// The engine reads the prepared input as mount 1, served from `resources` by `ioCallback`.
 const AUDIO_CHUNK_FRAMES = 2048;
 const AUDIO_BUFFER_SECONDS = 0.25;
 const audio = {
+  resources: null,
+  input: '',
+  ioCallback: 0,
   handle: 0,
   port: null,
   pcm: 0,
@@ -82,14 +86,42 @@ function pumpAudio(module) {
   }
 }
 
+/** Keeps the prepared input for the audio engine, which opens it as mount 1 as the player did. */
+function mountAudioInput(mount, extension) {
+  audio.resources = new Map([[1, {
+    access: 'read',
+    bytes: mount.bytes,
+    size: mount.bytes.length,
+    truncate: false,
+    truncated: false,
+    dirty: false,
+  }]]);
+  audio.input = extension ? `ffmpegkmp:1.${extension}` : 'ffmpegkmp:1';
+}
+
 function openAudio(module, data) {
   closeAudio(module);
+  if (!audio.resources) {
+    data.port.close();
+    audioFailure('Could not open the source\'s audio: no source is prepared');
+    return;
+  }
+  if (!audio.ioCallback) {
+    audio.ioCallback = module.addFunction(
+      (opaque, resourceId, operation, offset, bytes, size) =>
+        serveResource(module, audio.resources, resourceId, operation, offset, bytes, size),
+      'jijijij',
+    );
+  }
+  const inputPointer = module.stringToNewUTF8(audio.input);
   const errorPointer = module._malloc(4);
   let handle;
   let error;
   try {
-    handle = module._ffplaykmp_web_player_open_audio(
-      playerHandle,
+    handle = module._ffmpegkmp_player_open(
+      inputPointer,
+      audio.ioCallback,
+      0,
       data.sampleRate,
       data.channels,
       errorPointer,
@@ -97,6 +129,7 @@ function openAudio(module, data) {
     error = new Int32Array(module.HEAPU8.buffer, errorPointer, 1)[0];
   } finally {
     module._free(errorPointer);
+    module._free(inputPointer);
   }
   if (!handle) {
     data.port.close();
@@ -604,6 +637,7 @@ async function handlePlayerMessage(data) {
         throw new Error('Browser playback requires a non-empty mounted input');
       }
       const extension = mount.path.match(/\.([A-Za-z0-9]+)$/)?.[1] || '';
+      mountAudioInput(mount, extension);
       const extensionPointer = module.stringToNewUTF8(extension);
       const inputPointer = module._malloc(mount.bytes.length);
       try {
@@ -690,6 +724,7 @@ async function handlePlayerMessage(data) {
       }
     } else if (data.type === 'player-stop') {
       closeAudio(module);
+      audio.resources = null;
       resetWebCodecs(module, true);
       result = module._ffplaykmp_player_stop(playerHandle);
     }

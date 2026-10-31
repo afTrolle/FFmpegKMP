@@ -122,7 +122,7 @@ tools, so they run alongside `FFmpegClient` commands instead of queueing behind
 them. They are not available in the browser yet; there `FFplayPlayer` plays audio itself.
 
 ```kotlin
-val player = AudioPlayer.open("movie.mkv")
+val player = AudioPlayer.open(MediaSource("movie.mkv"))
 player.tracks          // codec, language, title, channels... per audio track
 player.selectTrack(1)  // switch language
 player.setTrackEnabled(2, true)   // or mix in commentary
@@ -157,9 +157,9 @@ codecs advertise P010 and the HDR10 profile.
 
 `codec` holds the Compose-free frame model (`VideoFrame`, `FrameFormat`),
 frame-accurate decoding (`VideoDecoder`, through WebCodecs in the browser), encoding
-(`MediaWriter`, SDR only in the browser), and the source,
-decoder and stream types (`MediaSource`, `DecoderThreads`, `VideoInfo`, …) that
-`ffplay` builds on and names with typealiases.
+(`MediaWriter`, SDR only in the browser), and the decoder and stream types
+(`CodecPreference`, `DecoderThreads`, `VideoInfo`, …) that `ffplay` builds on.
+The media source every decoder and player opens, `MediaSource`, is in `core`.
 
 `ffplay` excludes tvOS and watchOS because Compose UI artifacts are not
 published for those targets. `player` publishes JS and Wasm artifacts so shared

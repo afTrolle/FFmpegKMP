@@ -2,6 +2,7 @@
 package io.github.aftrolle.ffmpegkmp.codec
 
 import io.github.aftrolle.ffmpegkmp.core.CommandIo
+import io.github.aftrolle.ffmpegkmp.core.MediaSource
 import io.github.aftrolle.ffmpegkmp.ffmpeg.FFmpegClient
 import io.github.aftrolle.ffmpegkmp.ffprobe.FFprobeClient
 import io.github.aftrolle.ffmpegkmp.ffprobe.ProbeSideData

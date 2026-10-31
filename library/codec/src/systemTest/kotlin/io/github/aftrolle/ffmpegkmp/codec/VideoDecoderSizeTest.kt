@@ -2,6 +2,7 @@
 package io.github.aftrolle.ffmpegkmp.codec
 
 import io.github.aftrolle.ffmpegkmp.core.CommandIo
+import io.github.aftrolle.ffmpegkmp.core.MediaSource
 import io.github.aftrolle.ffmpegkmp.ffmpeg.FFmpegClient
 import kotlin.math.abs
 import kotlin.random.Random

@@ -317,7 +317,6 @@ int64_t ffplaykmp_avio_seek(void *opaque, int64_t offset, int whence) {
 }
 
 #define FFPLAYKMP_IO_BUFFER_SIZE 32768
-#define FFPLAYKMP_IO_CAP_SEEK 4
 
 void ffplaykmp_close_input(ffplaykmp_input *input) {
     avformat_close_input(&input->format);

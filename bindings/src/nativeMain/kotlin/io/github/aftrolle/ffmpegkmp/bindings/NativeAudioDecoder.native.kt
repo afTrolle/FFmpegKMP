@@ -12,7 +12,6 @@ import io.github.aftrolle.ffmpegkmp.bindings.cinterop.ffmpegkmp_player_abort
 import io.github.aftrolle.ffmpegkmp.bindings.cinterop.ffmpegkmp_player_close
 import io.github.aftrolle.ffmpegkmp.bindings.cinterop.ffmpegkmp_player_duration_us
 import io.github.aftrolle.ffmpegkmp.bindings.cinterop.ffmpegkmp_player_open
-import io.github.aftrolle.ffmpegkmp.bindings.cinterop.ffmpegkmp_player_open_io
 import io.github.aftrolle.ffmpegkmp.bindings.cinterop.ffmpegkmp_player_position_us
 import io.github.aftrolle.ffmpegkmp.bindings.cinterop.ffmpegkmp_player_read
 import io.github.aftrolle.ffmpegkmp.bindings.cinterop.ffmpegkmp_player_seek
@@ -29,75 +28,43 @@ import io.github.aftrolle.ffmpegkmp.bindings.cinterop.ffmpegkmp_player_track_lan
 import io.github.aftrolle.ffmpegkmp.bindings.cinterop.ffmpegkmp_player_track_sample_rate
 import io.github.aftrolle.ffmpegkmp.bindings.cinterop.ffmpegkmp_player_track_title
 import kotlinx.cinterop.ByteVar
-import kotlinx.cinterop.COpaquePointer
 import kotlinx.cinterop.CPointer
 import kotlinx.cinterop.IntVar
 import kotlinx.cinterop.StableRef
-import kotlinx.cinterop.UByteVar
 import kotlinx.cinterop.addressOf
 import kotlinx.cinterop.alloc
-import kotlinx.cinterop.asStableRef
-import kotlinx.cinterop.convert
 import kotlinx.cinterop.memScoped
 import kotlinx.cinterop.ptr
 import kotlinx.cinterop.staticCFunction
 import kotlinx.cinterop.toKString
 import kotlinx.cinterop.usePinned
 import kotlinx.cinterop.value
-import okio.FileHandle
-import platform.posix.memcpy
 
 @InternalFFmpegKmpApi
-public actual fun openPlatformAudioDecoder(url: String, sampleRate: Int, channels: Int): NativeAudioDecoder =
+public actual fun openPlatformAudioDecoder(source: NativePlayerSource, sampleRate: Int, channels: Int): NativeAudioDecoder =
     memScoped {
         val error = alloc<IntVar>()
-        val player = ffmpegkmp_player_open(url, sampleRate, channels, error.ptr)
-            ?: throw NativeAudioDecoderException("Could not open audio input '$url' (error ${error.value})", error.value)
-        GuardedAudioDecoder(CInteropAudioEngine(player, null), sampleRate, channels)
-    }
-
-@InternalFFmpegKmpApi
-public actual fun openPlatformAudioDecoder(fileHandle: FileHandle, sampleRate: Int, channels: Int): NativeAudioDecoder =
-    memScoped {
-        val error = alloc<IntVar>()
-        val reader = StableRef.create(FileHandleReader(fileHandle))
-        val player = ffmpegkmp_player_open_io(
-            staticCFunction(::receiveAudioIo),
-            reader.asCPointer(),
-            0L,
+        val mounts = StableRef.create(MountTable(source.mounts, replayableSources = true))
+        val player = ffmpegkmp_player_open(
+            source.protocolInput(),
+            staticCFunction(::receiveMountedIo),
+            mounts.asCPointer(),
             sampleRate,
             channels,
             error.ptr,
         ) ?: run {
-            reader.dispose()
-            throw NativeAudioDecoderException("Could not open the audio input (error ${error.value})", error.value)
+            mounts.dispose()
+            throw NativeAudioDecoderException(
+                "Could not open audio input '${source.input}' (error ${error.value})",
+                error.value,
+            )
         }
-        GuardedAudioDecoder(CInteropAudioEngine(player, reader), sampleRate, channels)
+        GuardedAudioDecoder(CInteropAudioEngine(player, mounts), sampleRate, channels)
     }
-
-private fun receiveAudioIo(
-    opaque: COpaquePointer?,
-    resourceId: Long,
-    operation: Int,
-    offset: Long,
-    data: CPointer<UByteVar>?,
-    size: ULong,
-): Long {
-    val reader = opaque?.asStableRef<FileHandleReader>()?.get() ?: return -1L
-    return when (operation) {
-        AUDIO_IO_READ -> if (data == null || size > Int.MAX_VALUE.toULong()) -1L else {
-            reader.read(offset, size.toInt()) { bytes, count ->
-                bytes.usePinned { pinned -> memcpy(data, pinned.addressOf(0), count.convert()) }
-            }
-        }
-        AUDIO_IO_SIZE -> reader.size()
-        else -> -1L
-    }
-}
 
 private class CInteropAudioEngine(
     private val player: CPointer<ffmpegkmp_player>,
-    private val reader: StableRef<FileHandleReader>?,
+    private val mounts: StableRef<MountTable>,
 ) : AudioEngineCalls {
     override fun trackCount() = ffmpegkmp_player_track_count(player)
     override fun trackCodec(track: Int) = ffmpegkmp_player_track_codec(player, track).text()
@@ -124,7 +91,7 @@ private class CInteropAudioEngine(
 
     override fun release() {
         ffmpegkmp_player_close(player)
-        reader?.dispose()
+        mounts.dispose()
     }
 }
 

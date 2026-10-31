@@ -8,6 +8,7 @@ package io.github.aftrolle.ffmpegkmp.codec
 
 import io.github.aftrolle.ffmpegkmp.bindings.NativePlayerDecoderKind
 import io.github.aftrolle.ffmpegkmp.bindings.NativePlayerDecoderPreference
+import io.github.aftrolle.ffmpegkmp.core.MediaSource
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith

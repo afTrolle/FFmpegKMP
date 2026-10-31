@@ -1178,7 +1178,7 @@ static int64_t ffplaykmp_web_io(
     if (!callbacks || resource_id != 1)
         return -1;
     if (operation == FFPLAYKMP_IO_OPEN)
-        return 1 | 4; /* read + seek */
+        return FFPLAYKMP_IO_CAP_READ | FFPLAYKMP_IO_CAP_SEEK;
     if (operation == FFPLAYKMP_IO_SIZE)
         return callbacks->input_size;
     if (operation == FFPLAYKMP_IO_CLOSE)
@@ -1418,44 +1418,6 @@ int ffplaykmp_web_player_prepare_bytes(
             safe_extension);
     return ffplaykmp_player_prepare(player, input, source_flags);
 }
-
-#if defined(__EMSCRIPTEN__)
-FFPLAYKMP_EXPORT ffmpegkmp_player *ffplaykmp_web_player_open_audio(
-        ffplaykmp_player *player,
-        int sample_rate,
-        int channels,
-        int *error);
-
-static int64_t ffplaykmp_web_audio_io(
-        void *opaque,
-        int64_t resource_id,
-        int operation,
-        int64_t offset,
-        uint8_t *data,
-        uint64_t size) {
-    return ffplaykmp_web_io(opaque, resource_id, (uint32_t)operation, offset, data, size);
-}
-
-/*
- * Opens the prepared input's audio in the ffmpegkmp_player audio engine, for the browser
- * worker only (so it is not in the header the other bindings generate from). It reads the
- * bytes this player holds, so close it before preparing again or destroying the player.
- */
-FFPLAYKMP_EXPORT ffmpegkmp_player *ffplaykmp_web_player_open_audio(
-        ffplaykmp_player *player,
-        int sample_rate,
-        int channels,
-        int *error) {
-    ffplaykmp_web_callbacks *callbacks = player ? player->opaque : NULL;
-    if (!callbacks || !callbacks->input) {
-        if (error)
-            *error = FFPLAYKMP_ERROR_INVALID_STATE;
-        return NULL;
-    }
-    return ffmpegkmp_player_open_io(
-            ffplaykmp_web_audio_io, callbacks, 1, sample_rate, channels, error);
-}
-#endif
 
 int ffplaykmp_web_player_set_output(
         ffplaykmp_player *player,

@@ -11,9 +11,12 @@ import io.github.aftrolle.ffmpegkmp.bindings.DecoderThread
 import io.github.aftrolle.ffmpegkmp.bindings.NativeAudioDecoder
 import io.github.aftrolle.ffmpegkmp.bindings.NativeAudioDecoderException
 import io.github.aftrolle.ffmpegkmp.bindings.NativeBridgeUnavailableException
+import io.github.aftrolle.ffmpegkmp.bindings.NativePlayerSource
 import io.github.aftrolle.ffmpegkmp.bindings.openPlatformAudioDecoder
 import io.github.aftrolle.ffmpegkmp.core.AudioLevel
 import io.github.aftrolle.ffmpegkmp.core.FFmpegKmpException
+import io.github.aftrolle.ffmpegkmp.core.MediaSource
+import io.github.aftrolle.ffmpegkmp.core.toNativeMounts
 import kotlin.concurrent.atomics.AtomicBoolean
 import kotlin.coroutines.cancellation.CancellationException
 import kotlin.time.Duration
@@ -25,7 +28,6 @@ import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
-import okio.FileHandle
 
 /** Interleaved 32-bit float PCM, the format [AudioDecoder] produces and [AudioPlayer] plays. */
 public data class PcmFormat(
@@ -148,25 +150,19 @@ public class AudioDecoder internal constructor(
 
     public companion object {
         /**
-         * Opens [url] — a file path or any URL the FFmpeg build's protocols accept — for audio
-         * decoding, probing the input on the decoder's thread.
-         */
-        public suspend fun open(url: String, format: PcmFormat = PcmFormat.Default): AudioDecoder {
-            require(url.isNotBlank()) { "Audio URL must not be blank" }
-            return open("open '$url'") { openPlatformAudioDecoder(url, format.sampleRate, format.channels) }
-        }
-
-        /**
-         * Opens a random-access [fileHandle] — for example an Android content URI, or media
-         * already in memory. The decoder reads it on demand and does not close it.
-         */
-        public suspend fun open(fileHandle: FileHandle, format: PcmFormat = PcmFormat.Default): AudioDecoder =
-            open("open the file handle") { openPlatformAudioDecoder(fileHandle, format.sampleRate, format.channels) }
-
-        /**
+         * Opens [source] for audio decoding, probing the input on the decoder's thread: a file
+         * path, any URL the FFmpeg build's protocols accept, or an input mounted in its `io`, such
+         * as an Android content URI or media in memory. A mount is read on demand (a `Source`
+         * through a cache, so the decoder can seek it) and is not closed.
+         *
          * Probing cannot be interrupted, so it runs to completion; if the caller was cancelled
          * meanwhile, the decoder it opened is closed instead of leaked.
          */
+        public suspend fun open(source: MediaSource, format: PcmFormat = PcmFormat.Default): AudioDecoder {
+            val native = NativePlayerSource(source.input, source.io.toNativeMounts())
+            return open("open '${source.input}'") { openPlatformAudioDecoder(native, format.sampleRate, format.channels) }
+        }
+
         private suspend fun open(action: String, create: () -> NativeAudioDecoder): AudioDecoder {
             val thread = DecoderThread("FFmpegKMP AudioDecoder")
             val native = try {

@@ -14,11 +14,11 @@ import io.github.aftrolle.ffmpegkmp.bindings.NativePlayerState
 import io.github.aftrolle.ffmpegkmp.bindings.NativeVideoFrame
 import io.github.aftrolle.ffmpegkmp.bindings.createPlatformPlayerBridge
 import io.github.aftrolle.ffmpegkmp.codec.CodecPreference
-import io.github.aftrolle.ffmpegkmp.codec.MediaSource
 import io.github.aftrolle.ffmpegkmp.codec.VideoFrame
 import io.github.aftrolle.ffmpegkmp.codec.VideoInfo
 import io.github.aftrolle.ffmpegkmp.core.AudioLevel
 import io.github.aftrolle.ffmpegkmp.core.CommandIo
+import io.github.aftrolle.ffmpegkmp.core.MediaSource
 import io.github.aftrolle.ffmpegkmp.core.toNativeMounts
 import io.github.aftrolle.ffmpegkmp.ffmpeg.FFmpegClient
 import io.github.aftrolle.ffmpegkmp.player.setTrackMuted

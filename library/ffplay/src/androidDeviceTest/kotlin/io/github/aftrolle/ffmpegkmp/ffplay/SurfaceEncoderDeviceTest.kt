@@ -26,7 +26,6 @@ import io.github.aftrolle.ffmpegkmp.codec.FrameRate
 import io.github.aftrolle.ffmpegkmp.codec.HdrMetadata
 import io.github.aftrolle.ffmpegkmp.codec.MasteringDisplay
 import io.github.aftrolle.ffmpegkmp.codec.MediaOutput
-import io.github.aftrolle.ffmpegkmp.codec.MediaSource
 import io.github.aftrolle.ffmpegkmp.codec.MediaWriter
 import io.github.aftrolle.ffmpegkmp.codec.MediaWritingException
 import io.github.aftrolle.ffmpegkmp.codec.VideoCodec
@@ -37,6 +36,7 @@ import io.github.aftrolle.ffmpegkmp.codec.VideoInfo
 import io.github.aftrolle.ffmpegkmp.codec.VideoOutput
 import io.github.aftrolle.ffmpegkmp.codec.hardwareBuffer
 import io.github.aftrolle.ffmpegkmp.codec.hardwareBufferCrop
+import io.github.aftrolle.ffmpegkmp.core.MediaSource
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import kotlin.math.abs

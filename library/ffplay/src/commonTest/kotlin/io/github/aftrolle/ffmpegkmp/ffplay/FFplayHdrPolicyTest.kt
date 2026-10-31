@@ -10,9 +10,9 @@ import io.github.aftrolle.ffmpegkmp.bindings.createInMemoryPlayerBridge
 import io.github.aftrolle.ffmpegkmp.codec.CodecPreference
 import io.github.aftrolle.ffmpegkmp.codec.ColorPrimaries
 import io.github.aftrolle.ffmpegkmp.codec.ColorTransfer
-import io.github.aftrolle.ffmpegkmp.codec.MediaSource
 import io.github.aftrolle.ffmpegkmp.codec.VideoFrame
 import io.github.aftrolle.ffmpegkmp.codec.VideoInfo
+import io.github.aftrolle.ffmpegkmp.core.MediaSource
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse

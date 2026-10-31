@@ -21,6 +21,7 @@ import io.github.aftrolle.ffmpegkmp.bindings.NativeVideoStream
 import io.github.aftrolle.ffmpegkmp.bindings.createPlatformVideoDecoder
 import io.github.aftrolle.ffmpegkmp.bindings.openOnDecoderThread
 import io.github.aftrolle.ffmpegkmp.core.FFmpegKmpException
+import io.github.aftrolle.ffmpegkmp.core.MediaSource
 import io.github.aftrolle.ffmpegkmp.core.toNativeMounts
 import kotlin.concurrent.Volatile
 import kotlin.concurrent.atomics.AtomicBoolean

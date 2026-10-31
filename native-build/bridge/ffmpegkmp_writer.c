@@ -26,8 +26,6 @@
 #define FFMPEGKMP_MICROSECONDS ((AVRational){ 1, 1000000 })
 /* Timestamps of a variable frame rate, as MPEG-TS counts them. */
 #define FFMPEGKMP_VFR_TIME_BASE ((AVRational){ 1, 90000 })
-#define FFMPEGKMP_IO_CAP_WRITE 2
-#define FFMPEGKMP_IO_CAP_SEEK 4
 
 typedef struct ffmpegkmp_writer_track {
     enum AVMediaType type;
@@ -547,10 +545,10 @@ static int ffmpegkmp_open_output(ffmpegkmp_writer *writer) {
         return AVERROR(ENOSYS);
     capabilities = writer->host.callback(
             writer->host.opaque, writer->resource_id, FFPLAYKMP_IO_OPEN, AVIO_FLAG_WRITE, NULL, 0);
-    if (capabilities < 0 || !(capabilities & FFMPEGKMP_IO_CAP_WRITE))
+    if (capabilities < 0 || !(capabilities & FFPLAYKMP_IO_CAP_WRITE))
         return AVERROR(EACCES);
     writer->resource_opened = 1;
-    seekable = (capabilities & FFMPEGKMP_IO_CAP_SEEK) != 0;
+    seekable = (capabilities & FFPLAYKMP_IO_CAP_SEEK) != 0;
     /* MP4 goes back to write its index; only a seekable output takes it unfragmented. */
     if (!seekable && writer->container == FFMPEGKMP_CONTAINER_MP4)
         return FFPLAYKMP_ERROR_UNSUPPORTED;

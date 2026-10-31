@@ -5,6 +5,7 @@ package io.github.aftrolle.ffmpegkmp.codec
 
 import io.github.aftrolle.ffmpegkmp.bindings.nativeFrameStatistics
 import io.github.aftrolle.ffmpegkmp.core.CommandIo
+import io.github.aftrolle.ffmpegkmp.core.MediaSource
 import kotlin.math.abs
 import kotlin.random.Random
 import kotlin.test.AfterTest

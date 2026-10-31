@@ -7,11 +7,11 @@ import androidx.compose.ui.graphics.asSkiaBitmap
 import io.github.aftrolle.ffmpegkmp.bindings.nativeFrameStatistics
 import io.github.aftrolle.ffmpegkmp.codec.CodecPreference
 import io.github.aftrolle.ffmpegkmp.codec.FrameFormat
-import io.github.aftrolle.ffmpegkmp.codec.MediaSource
 import io.github.aftrolle.ffmpegkmp.codec.PixelLayout
 import io.github.aftrolle.ffmpegkmp.codec.VideoDecoder
 import io.github.aftrolle.ffmpegkmp.codec.VideoOutput
 import io.github.aftrolle.ffmpegkmp.core.CommandIo
+import io.github.aftrolle.ffmpegkmp.core.MediaSource
 import io.github.aftrolle.ffmpegkmp.ffmpeg.FFmpegClient
 import kotlin.io.path.createTempDirectory
 import kotlin.test.AfterTest

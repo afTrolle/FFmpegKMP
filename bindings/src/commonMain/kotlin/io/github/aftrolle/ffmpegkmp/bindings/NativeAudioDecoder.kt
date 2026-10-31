@@ -3,8 +3,6 @@
 
 package io.github.aftrolle.ffmpegkmp.bindings
 
-import okio.FileHandle
-
 @InternalFFmpegKmpApi
 public data class NativeAudioTrackInfo(
     /** Audio-relative index (`a:N`), the index every other decoder call takes. */
@@ -64,13 +62,13 @@ public class NativeAudioDecoderException(
     public val errorCode: Int,
 ) : IllegalStateException(message)
 
-/** Opens [url] (a path or any URL this build's FFmpeg protocols accept) for audio decoding. */
+/**
+ * Opens [source] for audio decoding: a path or any URL this build's FFmpeg protocols accept, or a
+ * mount, read on demand (a Source through a replay cache, so it can seek). The decoder does not
+ * close the mounts.
+ */
 @InternalFFmpegKmpApi
-public expect fun openPlatformAudioDecoder(url: String, sampleRate: Int, channels: Int): NativeAudioDecoder
-
-/** Opens a random-access [fileHandle], read on demand; the decoder does not close it. */
-@InternalFFmpegKmpApi
-public expect fun openPlatformAudioDecoder(fileHandle: FileHandle, sampleRate: Int, channels: Int): NativeAudioDecoder
+public expect fun openPlatformAudioDecoder(source: NativePlayerSource, sampleRate: Int, channels: Int): NativeAudioDecoder
 
 /**
  * Raw `ffmpegkmp_player_*` calls for one open player, implemented per platform binding. Results
@@ -157,30 +155,6 @@ internal class GuardedAudioDecoder(
 internal fun requireSuccess(result: Int, action: String) {
     if (result < 0) throw NativeAudioDecoderException("Could not $action (error $result)", result)
 }
-
-/** Serves the engine's READ/SIZE callbacks from an Okio file handle, reusing one buffer. */
-internal class FileHandleReader(private val fileHandle: FileHandle) {
-    private var buffer = ByteArray(0)
-
-    /** Returns the byte count handed to [copyOut], 0 at end of file, or -1 on failure. */
-    fun read(offset: Long, size: Int, copyOut: (ByteArray, Int) -> Unit): Long = try {
-        if (buffer.size < size) buffer = ByteArray(size)
-        val count = fileHandle.read(offset, buffer, 0, size)
-        if (count > 0) copyOut(buffer, count)
-        if (count < 0) 0L else count.toLong()
-    } catch (_: Throwable) {
-        -1L
-    }
-
-    fun size(): Long = try {
-        fileHandle.size()
-    } catch (_: Throwable) {
-        -1L
-    }
-}
-
-internal const val AUDIO_IO_READ: Int = 1
-internal const val AUDIO_IO_SIZE: Int = 3
 
 internal fun requireReadArguments(destination: FloatArray, offset: Int, frames: Int, channels: Int) {
     require(frames >= 0) { "Frame count must not be negative" }

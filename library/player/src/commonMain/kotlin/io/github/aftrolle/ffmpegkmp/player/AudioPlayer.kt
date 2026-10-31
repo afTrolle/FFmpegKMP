@@ -3,6 +3,7 @@
 
 package io.github.aftrolle.ffmpegkmp.player
 
+import io.github.aftrolle.ffmpegkmp.core.MediaSource
 import kotlin.concurrent.atomics.AtomicBoolean
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.microseconds
@@ -23,7 +24,6 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.yield
-import okio.FileHandle
 
 public enum class PlaybackState {
     /** Ready to play; the initial state, and the state after [AudioPlayer.pause]. */
@@ -187,21 +187,12 @@ public class AudioPlayer internal constructor(
 
     public companion object {
         /**
-         * Opens [url] (a file path or any URL the FFmpeg build's protocols accept) and prepares an
-         * audio device for [format]. The player starts [PlaybackState.PAUSED]; call [play].
+         * Opens [source] as [AudioDecoder.open] does (a path, a URL, or an input mounted in its
+         * `io`, read on demand and not closed) and prepares an audio device for [format]. The
+         * player starts [PlaybackState.PAUSED]; call [play].
          */
-        public suspend fun open(url: String, format: PcmFormat = PcmFormat.Default): AudioPlayer =
-            open(format) { AudioDecoder.open(url, format) }
-
-        /**
-         * Opens a random-access [fileHandle], e.g. an Android content URI or media in memory. The
-         * player reads it on demand and does not close it.
-         */
-        public suspend fun open(fileHandle: FileHandle, format: PcmFormat = PcmFormat.Default): AudioPlayer =
-            open(format) { AudioDecoder.open(fileHandle, format) }
-
-        private suspend fun open(format: PcmFormat, openDecoder: suspend () -> AudioDecoder): AudioPlayer =
-            openWith(openDecoder, { createPlatformAudioOutput(format) })
+        public suspend fun open(source: MediaSource, format: PcmFormat = PcmFormat.Default): AudioPlayer =
+            openWith({ AudioDecoder.open(source, format) }, { createPlatformAudioOutput(format) })
 
         /**
          * Opening blocks in native code and cannot be interrupted, so it runs to completion; if the

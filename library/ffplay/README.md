@@ -35,11 +35,11 @@ them in software.
 
 ## Types from `codec`
 
-The source, decoder and stream types come from the Compose-free [`codec`](../codec/README.md)
-module, which `ffplay` exposes as an API dependency: `MediaSource` is what `prepare` takes,
-`CodecPreference` and `DecoderThreads` configure the player, and `VideoInfo` and `DecoderKind`
-describe what it plays. They live in `io.github.aftrolle.ffmpegkmp.codec`; binaries built against
-0.2 need recompiling.
+The decoder and stream types come from the Compose-free [`codec`](../codec/README.md) module,
+which `ffplay` exposes as an API dependency: `CodecPreference` and `DecoderThreads` configure the
+player, and `VideoInfo` and `DecoderKind` describe what it plays. They live in
+`io.github.aftrolle.ffmpegkmp.codec`. What `prepare` takes, `MediaSource`, is in
+`io.github.aftrolle.ffmpegkmp.core`; binaries built against 0.2 need recompiling.
 
 ## Platforms
 
@@ -90,8 +90,8 @@ rule that CDM-decoded pixels may be unavailable to Canvas APIs.
 ## Audio
 
 FFplay plays the source's audio in sync with its video. Audio is decoded and mixed by the `player`
-module's engine (`ffmpegkmp_player.c`) from the same input — a path/URL, or a mounted `FileHandle`
-(mount a seekable handle rather than a `Source` so the audio can read it too). The audible position
+module's engine (`ffmpegkmp_player.c`) from the same input: a path or URL, or a mounted `FileHandle`
+or `Source`, whose bytes the video and the audio share through one replay cache. The audible position
 is reported to the video worker through `ffplaykmp_player_set_master_clock`, so audio is the master
 clock: frames are scheduled against what the listener hears, and late frames are dropped. When the
 audio ends before the video, scheduling continues on the wall clock from that point.

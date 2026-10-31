@@ -3,6 +3,7 @@ package io.github.aftrolle.ffmpegkmp.player
 
 import io.github.aftrolle.ffmpegkmp.core.AudioLevel
 import io.github.aftrolle.ffmpegkmp.core.CommandIo
+import io.github.aftrolle.ffmpegkmp.core.MediaSource
 import io.github.aftrolle.ffmpegkmp.ffmpeg.FFmpegClient
 import io.github.aftrolle.ffmpegkmp.ffmpeg.FFmpegCommand
 import kotlin.math.abs
@@ -177,14 +178,35 @@ class AudioDecoderIntegrationTest {
     }
 
     @Test
+    fun mountedInputsAreReadOnDemandAndSeek() = runBlocking {
+        val handle = fileSystem.openReadOnly(media)
+        try {
+            val bytes = fileSystem.read(media) { readByteString() }
+            // A FileHandle seeks natively; a Source seeks through the mount's replay cache.
+            val mounts = listOf(CommandIo { input(MOUNTED, handle) }, CommandIo { input(MOUNTED, Buffer().write(bytes)) })
+            mounts.forEach { io ->
+                AudioDecoder.open(MediaSource(MOUNTED, io), PcmFormat(SAMPLE_RATE, CHANNELS)).use { decoder ->
+                    assertEquals(listOf("eng", "fra"), decoder.tracks.map(AudioTrackInfo::language))
+                    decoder.seek(600.milliseconds)
+                    assertAll(read(decoder, 1_000), 0.4f)
+                    decoder.seek(0.milliseconds)
+                    assertAll(read(decoder, 1_000), 0.2f)
+                }
+            }
+        } finally {
+            handle.close()
+        }
+    }
+
+    @Test
     fun reportsUnreadableInputs() = runBlocking<Unit> {
         assertFailsWith<AudioDecodingException> {
-            AudioDecoder.open((directory / "missing.nut").toString())
+            AudioDecoder.open(MediaSource((directory / "missing.nut").toString()))
         }
     }
 
     private fun decoder(block: suspend (AudioDecoder) -> Unit) = runBlocking {
-        AudioDecoder.open(media.toString(), PcmFormat(SAMPLE_RATE, CHANNELS)).use { block(it) }
+        AudioDecoder.open(MediaSource(media.toString()), PcmFormat(SAMPLE_RATE, CHANNELS)).use { block(it) }
     }
 
     private suspend fun read(decoder: AudioDecoder, frames: Int): FloatArray {
@@ -237,4 +259,5 @@ private const val SAMPLE_RATE = 48_000
 private const val CHANNELS = 2
 private const val FIRST_INPUT = "first.f32"
 private const val SECOND_INPUT = "second.f32"
+private const val MOUNTED = "mounted.nut"
 private const val OUTPUT = "two-tracks.nut"

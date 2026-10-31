@@ -3,6 +3,7 @@ package io.github.aftrolle.ffmpegkmp.codec
 
 import android.os.Build
 import io.github.aftrolle.ffmpegkmp.core.CommandIo
+import io.github.aftrolle.ffmpegkmp.core.MediaSource
 import kotlin.random.Random
 import kotlin.test.AfterTest
 import kotlin.test.Test

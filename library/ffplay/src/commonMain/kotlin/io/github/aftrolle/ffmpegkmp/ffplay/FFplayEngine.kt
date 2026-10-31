@@ -20,12 +20,12 @@ import io.github.aftrolle.ffmpegkmp.bindings.createPlatformPlayerBridge
 import io.github.aftrolle.ffmpegkmp.codec.ColorPrimaries
 import io.github.aftrolle.ffmpegkmp.codec.ColorTransfer
 import io.github.aftrolle.ffmpegkmp.codec.CodecPreference
-import io.github.aftrolle.ffmpegkmp.codec.MediaSource
 import io.github.aftrolle.ffmpegkmp.codec.VideoFrame
 import io.github.aftrolle.ffmpegkmp.codec.VideoInfo
 import io.github.aftrolle.ffmpegkmp.codec.toNative
 import io.github.aftrolle.ffmpegkmp.codec.toPublic
 import io.github.aftrolle.ffmpegkmp.codec.toPublicVideoInfo
+import io.github.aftrolle.ffmpegkmp.core.MediaSource
 import io.github.aftrolle.ffmpegkmp.core.toNativeMounts
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.microseconds

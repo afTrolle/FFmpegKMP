@@ -64,9 +64,9 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import io.github.aftrolle.ffmpegkmp.codec.MediaSource
 import io.github.aftrolle.ffmpegkmp.core.AudioLevel
 import io.github.aftrolle.ffmpegkmp.core.CommandIo
+import io.github.aftrolle.ffmpegkmp.core.MediaSource
 import io.github.aftrolle.ffmpegkmp.ffplay.FFplayState
 import io.github.aftrolle.ffmpegkmp.ffplay.FFplaySurface
 import io.github.aftrolle.ffmpegkmp.ffplay.rememberFFplayPlayer

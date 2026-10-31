@@ -7,9 +7,9 @@ import io.github.aftrolle.ffmpegkmp.bindings.NativePlayerBridge
 import io.github.aftrolle.ffmpegkmp.bindings.NativePlayerError
 import io.github.aftrolle.ffmpegkmp.bindings.NativePlayerSource
 import io.github.aftrolle.ffmpegkmp.bindings.createInMemoryPlayerBridge
-import io.github.aftrolle.ffmpegkmp.codec.MediaSource
 import io.github.aftrolle.ffmpegkmp.codec.VideoFrame
 import io.github.aftrolle.ffmpegkmp.codec.VideoInfo
+import io.github.aftrolle.ffmpegkmp.core.MediaSource
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith

@@ -1,11 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
-package io.github.aftrolle.ffmpegkmp.codec
-
-import io.github.aftrolle.ffmpegkmp.core.CommandIo
+package io.github.aftrolle.ffmpegkmp.core
 
 /**
- * A media input for the decoders and players: a path, a URL, or the path of an input mounted in
- * [io], as for an `ffmpeg -i` argument.
+ * A media input for the decoders and players (`VideoDecoder`, `AudioDecoder`, `AudioPlayer` and
+ * `FFplayPlayer`): a path, a URL, or the path of an input mounted in [io], as for an `ffmpeg -i`
+ * argument.
  */
 public data class MediaSource(
     val input: String,

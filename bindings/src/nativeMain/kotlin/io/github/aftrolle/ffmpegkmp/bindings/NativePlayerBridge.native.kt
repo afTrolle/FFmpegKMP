@@ -97,9 +97,7 @@ private class NativeCInteropPlayerEngine(
     }
 
     override fun mount(mounts: List<NativeMountedIo>) {
-        callbackState.mounts = mounts.mapIndexed { index, mount ->
-            index.toLong() + 1L to NativeMountedResource(resource = mount.resource, replayableSource = true)
-        }.toMap()
+        callbackState.mounts = MountTable(mounts, replayableSources = true)
     }
 
     override fun prepare(input: String, requireSecurePath: Boolean): Int = ffplaykmp_player_prepare(
@@ -150,7 +148,7 @@ private class NativePlayerCallbackState(
     val guard = NativeHandleGuard()
 
     @kotlin.concurrent.Volatile
-    var mounts: Map<Long, NativeMountedResource> = emptyMap()
+    var mounts = MountTable.Empty
 }
 
 /**
@@ -228,7 +226,7 @@ private fun receiveNativePlayerIo(
     data: CPointer<UByteVar>?,
     size: ULong,
 ): Long = opaque.withCallbackState(-1L) { state ->
-    state.mounts[resourceId]?.dispatch(operation.toInt(), offset, data, size) ?: -1L
+    state.mounts.dispatch(resourceId, operation.toInt(), offset, data, size)
 }
 
 internal fun ffplaykmp_snapshot.toNativeSnapshot(): NativePlayerSnapshot = nativePlayerSnapshot(

@@ -26,15 +26,12 @@ import io.github.aftrolle.ffmpegkmp.bindings.cinterop.ffmpegkmp_writer_result
 import io.github.aftrolle.ffmpegkmp.bindings.cinterop.ffmpegkmp_writer_result_init
 import io.github.aftrolle.ffmpegkmp.bindings.cinterop.ffmpegkmp_writer_write_audio
 import io.github.aftrolle.ffmpegkmp.bindings.cinterop.ffmpegkmp_writer_write_video
-import kotlinx.cinterop.COpaquePointer
 import kotlinx.cinterop.CPointer
 import kotlinx.cinterop.IntVar
 import kotlinx.cinterop.MemScope
 import kotlinx.cinterop.StableRef
-import kotlinx.cinterop.UByteVar
 import kotlinx.cinterop.addressOf
 import kotlinx.cinterop.alloc
-import kotlinx.cinterop.asStableRef
 import kotlinx.cinterop.get
 import kotlinx.cinterop.memScoped
 import kotlinx.cinterop.ptr
@@ -51,7 +48,8 @@ public actual suspend fun createPlatformMediaWriter(
     fastStart: Boolean,
     timeoutMicros: Long,
 ): NativeMediaWriter {
-    val resource = (output as? NativeWriterOutput.Mounted)?.let { StableRef.create(NativeMountedResource(it.resource)) }
+    val resource = (output as? NativeWriterOutput.Mounted)
+        ?.let { StableRef.create(MountTable(listOf(NativeMountedIo(it.name, it.resource)))) }
     val url = output.url()
     val writer = memScoped {
         val error = alloc<IntVar>()
@@ -60,7 +58,7 @@ public actual suspend fun createPlatformMediaWriter(
             container.ordinal,
             if (fastStart) 1 else 0,
             timeoutMicros,
-            resource?.let { staticCFunction(::receiveMediaWriterIo) },
+            resource?.let { staticCFunction(::receiveMountedIo) },
             resource?.asCPointer(),
             error.ptr,
         ) ?: run {
@@ -79,21 +77,9 @@ public actual suspend fun platformVideoEncoderFor(config: NativeVideoEncoderConf
     if (result == 0) null else info.toNative()
 }
 
-private fun receiveMediaWriterIo(
-    opaque: COpaquePointer?,
-    resourceId: Long,
-    operation: UInt,
-    offset: Long,
-    data: CPointer<UByteVar>?,
-    size: ULong,
-): Long = runCatching {
-    if (resourceId != 1L) return@runCatching null
-    opaque?.asStableRef<NativeMountedResource>()?.get()?.dispatch(operation.toInt(), offset, data, size)
-}.getOrNull() ?: -1L
-
 private class CInteropMediaWriterEngine(
     private val writer: CPointer<ffmpegkmp_writer>,
-    private val resource: StableRef<NativeMountedResource>?,
+    private val resource: StableRef<MountTable>?,
 ) : MediaWriterEngineCalls {
     override fun addVideoTrack(config: NativeVideoEncoderConfig): NativeAddedVideoTrack = memScoped {
         val info = alloc<ffmpegkmp_video_track_info>().also { ffmpegkmp_video_track_info_init(it.ptr) }

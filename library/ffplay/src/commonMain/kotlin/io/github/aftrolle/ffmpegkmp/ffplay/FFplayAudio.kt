@@ -9,11 +9,9 @@ package io.github.aftrolle.ffmpegkmp.ffplay
 
 import io.github.aftrolle.ffmpegkmp.bindings.NativeAudioMixer
 import io.github.aftrolle.ffmpegkmp.bindings.NativeAudioTrackInfo
-import io.github.aftrolle.ffmpegkmp.bindings.NativeFileResource
-import io.github.aftrolle.ffmpegkmp.codec.MediaSource
 import io.github.aftrolle.ffmpegkmp.core.AudioLevel
+import io.github.aftrolle.ffmpegkmp.core.MediaSource
 import io.github.aftrolle.ffmpegkmp.core.applyLatest
-import io.github.aftrolle.ffmpegkmp.core.toNativeMounts
 import io.github.aftrolle.ffmpegkmp.player.AudioMix
 import io.github.aftrolle.ffmpegkmp.player.AudioMixControls
 import io.github.aftrolle.ffmpegkmp.player.AudioPlayer
@@ -171,14 +169,9 @@ internal class FFplayAudio(
     }
 }
 
-/** Plays a path/URL input, or a mounted file handle; other mounts can't be re-read for audio. */
-internal suspend fun openAudioPlayer(source: MediaSource): FFplayAudioOutput? {
-    val mount = source.io.toNativeMounts().firstOrNull { it.path == source.input }
-    val player = when (val resource = mount?.resource) {
-        null -> AudioPlayer.open(source.input)
-        is NativeFileResource -> AudioPlayer.open(resource.fileHandle)
-        else -> throw IllegalArgumentException("Audio needs a seekable input; mount ${source.input} as a FileHandle")
-    }
+/** Plays [source]'s audio with the `player` engine, which reads the same input as the video. */
+internal suspend fun openAudioPlayer(source: MediaSource): FFplayAudioOutput {
+    val player = AudioPlayer.open(source)
     return object : FFplayAudioOutput, AudioMixControls by player, AutoCloseable by player {
         override val state get() = player.state
         override val position get() = player.position

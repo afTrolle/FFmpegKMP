@@ -179,6 +179,19 @@ typedef enum ffplaykmp_io_operation {
     FFPLAYKMP_IO_CLOSE = 4,
 } ffplaykmp_io_operation;
 
+typedef enum ffplaykmp_io_capability {
+    FFPLAYKMP_IO_CAP_READ = 1,
+    FFPLAYKMP_IO_CAP_WRITE = 2,
+    FFPLAYKMP_IO_CAP_SEEK = 4,
+} ffplaykmp_io_capability;
+
+/**
+ * Serves `ffmpegkmp:<id>` resources to every engine in the bridge: the command
+ * tools' URL protocol, the players, the decoders and the writer. OPEN receives
+ * FFmpeg's AVIO access flags in `offset` and returns a capability mask;
+ * READ/WRITE return a byte count; SIZE returns the current size; CLOSE returns
+ * zero. Any negative value is an I/O failure.
+ */
 typedef int64_t (*ffplaykmp_io_callback)(
         void *opaque,
         int64_t resource_id,

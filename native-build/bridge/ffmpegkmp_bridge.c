@@ -86,7 +86,7 @@ void android_binder_threadpool_init_if_required(void) {
 
 struct ffmpegkmp_context {
     ffmpegkmp_event_callback callback;
-    ffmpegkmp_io_callback io_callback;
+    ffplaykmp_io_callback io_callback;
     void *opaque;
     atomic_bool cancelled;
 };
@@ -101,7 +101,7 @@ static _Thread_local int requested_exit_status;
 
 /* Implemented by the custom libavformat ffmpegkmp: protocol. */
 extern void av_ffmpegkmp_protocol_set_callback(
-        ffmpegkmp_io_callback callback,
+        ffplaykmp_io_callback callback,
         void *opaque);
 
 #if defined(__EMSCRIPTEN__)
@@ -162,7 +162,7 @@ void ffmpegkmp_context_destroy(ffmpegkmp_context *context) {
 
 void ffmpegkmp_context_set_io_callback(
         ffmpegkmp_context *context,
-        ffmpegkmp_io_callback callback) {
+        ffplaykmp_io_callback callback) {
     if (context)
         context->io_callback = callback;
 }

@@ -5,7 +5,7 @@ package io.github.aftrolle.ffmpegkmp.bindings
 
 import io.github.aftrolle.ffmpegkmp.bindings.generated.bridge.ffmpegkmp_context
 import io.github.aftrolle.ffmpegkmp.bindings.generated.bridge.ffmpegkmp_event_callback
-import io.github.aftrolle.ffmpegkmp.bindings.generated.bridge.ffmpegkmp_io_callback
+import io.github.aftrolle.ffmpegkmp.bindings.generated.bridge.ffplaykmp_io_callback
 import io.github.aftrolle.ffmpegkmp.bindings.generated.bridge.global.bridge
 import java.io.File
 import kotlinx.coroutines.Dispatchers
@@ -23,10 +23,10 @@ private class JavaCppCommandEngine : CommandEngineCalls {
     private var eventConsumer: ((NativeExecutionEvent) -> Unit)? = null
 
     private val callback: ffmpegkmp_event_callback
-    private val ioCallback: ffmpegkmp_io_callback
+    private val ioCallback: ffplaykmp_io_callback
     private val context: ffmpegkmp_context
     @Volatile
-    private var mountedResources: Map<Long, MountedResource> = emptyMap()
+    private var mounts = MountTable.Empty
 
     init {
         JavaCppBridgeLoader.load()
@@ -46,18 +46,7 @@ private class JavaCppCommandEngine : CommandEngineCalls {
                 )
             }
         }
-        ioCallback = object : ffmpegkmp_io_callback() {
-            override fun call(
-                opaque: Pointer?,
-                resourceId: Long,
-                operation: Int,
-                offset: Long,
-                data: BytePointer?,
-                size: Long,
-            ): Long = mountedResources[resourceId]
-                ?.dispatch(operation, offset, data, size)
-                ?: IO_FAILURE
-        }
+        ioCallback = mountedIoCallback { mounts }
         context = bridge.ffmpegkmp_context_create(callback, null)
             ?: throw NativeBridgeUnavailableException("FFmpegKMP JavaCPP context allocation failed")
         bridge.ffmpegkmp_context_set_io_callback(context, ioCallback)
@@ -70,14 +59,13 @@ private class JavaCppCommandEngine : CommandEngineCalls {
     }
 
     override fun attach(mounts: List<NativeMountedIo>, emit: (NativeExecutionEvent) -> Unit) {
-        mountedResources = mounts.mapIndexed { index, mount -> index.toLong() + 1L to MountedResource(mount.resource) }
-            .toMap()
+        this.mounts = MountTable(mounts)
         eventConsumer = emit
     }
 
     override fun detach() {
         eventConsumer = null
-        mountedResources = emptyMap()
+        mounts = MountTable.Empty
     }
 
     override fun resetCancel() = bridge.ffmpegkmp_context_reset_cancel(context)
@@ -153,45 +141,28 @@ internal object JavaCppBridgeLoader {
     }
 }
 
+/** Serves one `ffplaykmp_io_callback` call, moving bytes between [data] and the table's resources. */
+internal fun MountTable.dispatch(resourceId: Long, operation: Int, offset: Long, data: BytePointer?, size: Long): Long =
+    dispatch(
+        resourceId,
+        operation,
+        offset,
+        size,
+        copyOut = { bytes, count -> checkNotNull(data).put(bytes, 0, count) },
+        copyIn = { bytes, count -> checkNotNull(data).get(bytes, 0, count) },
+    )
 
-/** Moves `ffmpegkmp:` protocol bytes between JavaCPP pointers and a [MountedIo]. */
-internal class MountedResource(resource: NativeIoResource, replayableSource: Boolean = false) {
-    private val io = MountedIo(resource, replayableSource)
-    private var scratch = ByteArray(0)
-
-    @Synchronized
-    fun dispatch(operation: Int, offset: Long, data: BytePointer?, size: Long): Long = try {
-        when (operation) {
-            IO_OPEN -> io.open(offset.toInt())
-            IO_READ -> {
-                val bytes = scratch(size.checkedSize())
-                val count = io.read(offset, bytes, bytes.size.coerceAtMost(size.toInt()))
-                if (count > 0) (data ?: return IO_FAILURE).put(bytes, 0, count)
-                count.toLong()
-            }
-            IO_WRITE -> {
-                val length = size.checkedSize()
-                val bytes = scratch(length)
-                (data ?: return IO_FAILURE).get(bytes, 0, length)
-                if (io.write(offset, bytes, length)) length.toLong() else IO_FAILURE
-            }
-            IO_SIZE -> io.size()
-            IO_CLOSE -> io.close()
-            else -> IO_FAILURE
-        }
-    } catch (_: Throwable) {
-        IO_FAILURE
-    }
-
-    /** Reused across calls: FFmpeg reads in similar-sized blocks. */
-    private fun scratch(size: Int): ByteArray {
-        if (scratch.size < size) scratch = ByteArray(size)
-        return scratch
-    }
+/**
+ * A callback serving the table [mounts] returns at each call. Native code calls it until the engine
+ * holding it is freed; close it after that.
+ */
+internal fun mountedIoCallback(mounts: () -> MountTable): ffplaykmp_io_callback = object : ffplaykmp_io_callback() {
+    override fun call(
+        opaque: Pointer?,
+        resourceId: Long,
+        operation: Int,
+        offset: Long,
+        data: BytePointer?,
+        size: Long,
+    ): Long = mounts().dispatch(resourceId, operation, offset, data, size)
 }
-
-private fun Long.checkedSize(): Int {
-    require(this in 0..Int.MAX_VALUE.toLong()) { "Invalid native I/O size: $this" }
-    return toInt()
-}
-
