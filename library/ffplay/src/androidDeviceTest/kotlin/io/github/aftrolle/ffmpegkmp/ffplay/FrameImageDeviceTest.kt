@@ -6,6 +6,8 @@
 
 package io.github.aftrolle.ffmpegkmp.ffplay
 
+import android.graphics.PixelFormat
+import android.media.ImageReader
 import android.os.Build
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
@@ -14,6 +16,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asAndroidBitmap
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.Density
 import androidx.test.platform.app.InstrumentationRegistry
 import io.github.aftrolle.ffmpegkmp.codec.DecoderKind
@@ -113,6 +117,56 @@ class FrameImageDeviceTest {
                 assertEquals(2 to 10, image.allocations to image.conversions)
                 assertEquals(10, generations.size)
             }
+        }
+    }
+
+    @Test
+    fun aTargetSizeConvertsFourKFramesIntoBitmapsAtTheStepThatCoversIt() = runBlocking<Unit> {
+        open("cfr-30.mp4", VideoOutput.Memory(FrameFormat.Nv12, FrameSize(3840, 2160))).use { decoder ->
+            playerFrameImage().use { image ->
+                image.targetSize = IntSize(960, 540)
+                for (index in 0 until 3) decoder.frameAt(index.seconds / 30).use { assertTrue(image.updateIfOpen(it)) }
+                val shown = assertNotNull(image.shown).image.asAndroidBitmap()
+                assertEquals(IntSize(960, 540), IntSize(shown.width, shown.height))
+                assertEquals(Size(3840f, 2160f), image.displaySize)
+                // A thumbnail: a step of 4K is 240 × 135, and shrinking two steps or more reallocates.
+                image.targetSize = IntSize(256, 144)
+                for (index in 3 until 6) decoder.frameAt(index.seconds / 30).use { assertTrue(image.updateIfOpen(it)) }
+                val small = assertNotNull(image.shown).image.asAndroidBitmap()
+                assertEquals(IntSize(480, 270), IntSize(small.width, small.height))
+                assertEquals(6 to 6, image.allocations to image.conversions)
+            }
+        }
+    }
+
+    @Test
+    fun theSurfaceFallbackConvertsIntoOneBitmapAtTheSizeItDrawsAt() = runBlocking<Unit> {
+        val reader = ImageReader.newInstance(480, 270, PixelFormat.RGBA_8888, 2)
+        val output = AndroidSurfaceOutput(ContentScale.Fit, 0)
+        try {
+            output.attachSurface(reader.surface, 480, 270)
+            open("cfr-30.mp4", VideoOutput.Memory(FrameFormat.Nv12, FrameSize(3840, 2160))).use { decoder ->
+                suspend fun submit(index: Int) {
+                    decoder.frameAt(index.seconds / 30).use { assertTrue(output.submitNative(it.retain(), null)) }
+                    reader.acquireLatestImage()?.close()
+                }
+                submit(0)
+                assertEquals(IntSize(480, 270), output.bitmapSize, "fitted into 480 × 270")
+                // Laid out larger: the next frame grows the bitmap at once.
+                output.resize(1920, 1080)
+                submit(1)
+                assertEquals(IntSize(1920, 1080), output.bitmapSize)
+                // One step smaller is not enough to shrink; two are.
+                output.resize(1600, 900)
+                submit(2)
+                assertEquals(IntSize(1920, 1080), output.bitmapSize)
+                output.resize(1400, 788)
+                submit(3)
+                assertEquals(IntSize(1440, 810), output.bitmapSize)
+            }
+        } finally {
+            output.detachSurface()
+            reader.close()
         }
     }
 

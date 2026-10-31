@@ -8,6 +8,9 @@ import io.github.aftrolle.ffmpegkmp.codec.VideoFrame
 import org.jetbrains.skia.Bitmap
 import org.jetbrains.skia.ImageInfo
 
+/** The browser copies frames of the bitmap's size only; its worker would have to convert at the drawn size. */
+internal actual val bitmapsScale: Boolean = false
+
 /**
  * The browser's frames are RGBA8 in Kotlin memory, the bytes the FFmpeg worker transferred, and
  * Skia's are in its own heap: [Bitmap.installPixels] copies them across once, into new pixels

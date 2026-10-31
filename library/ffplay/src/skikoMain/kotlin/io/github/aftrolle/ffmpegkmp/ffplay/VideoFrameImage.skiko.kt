@@ -20,7 +20,7 @@ import org.jetbrains.skia.ColorType
 import org.jetbrains.skia.ImageInfo
 
 public actual fun VideoFrame.toImageBitmap(): ImageBitmap {
-    val bitmap = SkiaFrameBitmap(this, bitmapFormat())
+    val bitmap = SkiaFrameBitmap(this, bitmapFormat(), IntSize(width, height))
     // Never written again, so Skia may draw its pixels in place rather than from a copy.
     bitmap.pixels.setImmutable()
     return bitmap.image
@@ -28,7 +28,7 @@ public actual fun VideoFrame.toImageBitmap(): ImageBitmap {
 
 internal actual fun VideoFrame.bitmapFormat(): FrameFormat = imageFormat { it.skiaColorSpace() != null }
 
-internal actual fun VideoFrame.toFrameBitmap(format: FrameFormat): FrameBitmap = SkiaFrameBitmap(this, format)
+internal actual fun VideoFrame.toFrameBitmap(format: FrameFormat, size: IntSize): FrameBitmap = SkiaFrameBitmap(this, format, size)
 
 internal actual fun gpuFrameWraps(): GpuFrameWraps = NoGpuFrameWraps
 
@@ -52,13 +52,13 @@ private object NoGpuFrameWraps : GpuFrameWraps {
 }
 
 /**
- * A Skia bitmap holding [frame], converted into it. It stays mutable for [write]: Skia draws a
- * mutable bitmap from a copy of its pixels and caches what it drew by the bitmap's generation, so
- * each write gives it a new one.
+ * A Skia bitmap of [size] holding [frame], converted into it. It stays mutable for [write]: Skia
+ * draws a mutable bitmap from a copy of its pixels and caches what it drew by the bitmap's
+ * generation, so each write gives it a new one.
  */
-private class SkiaFrameBitmap(frame: VideoFrame, override val format: FrameFormat) : FrameBitmap {
-    override val width = frame.width
-    override val height = frame.height
+private class SkiaFrameBitmap(frame: VideoFrame, override val format: FrameFormat, size: IntSize) : FrameBitmap {
+    override val width = size.width
+    override val height = size.height
     private val info = ImageInfo(width, height, format.skiaColorType(), ColorAlphaType.UNPREMUL, format.skiaColorSpace())
     val pixels = Bitmap()
 

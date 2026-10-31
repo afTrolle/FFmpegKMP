@@ -21,12 +21,14 @@ import androidx.compose.ui.graphics.toAndroidRectF
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.unit.IntSize
 import io.github.aftrolle.ffmpegkmp.codec.ColorPrimaries
 import io.github.aftrolle.ffmpegkmp.codec.ColorTransfer
 import io.github.aftrolle.ffmpegkmp.codec.VideoFrame
 import io.github.aftrolle.ffmpegkmp.codec.VideoInfo
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
+import kotlin.math.roundToInt
 
 @Composable
 internal actual fun PlatformFFplaySurface(
@@ -91,7 +93,7 @@ internal actual fun PlatformFFplaySurface(
  * Android's native-surface tier. MediaCodec frames are presented directly by the native player;
  * CPU-readable frames arrive here only when automatic negotiation selected the software fallback.
  */
-private class AndroidSurfaceOutput(
+internal class AndroidSurfaceOutput(
     contentScale: ContentScale,
     backgroundArgb: Int,
 ) : FFplayVideoOutput {
@@ -106,8 +108,13 @@ private class AndroidSurfaceOutput(
     private var displayColorSpaces: Set<ColorPrimaries> = setOf(ColorPrimaries.BT709)
     private val paint = Paint(Paint.FILTER_BITMAP_FLAG)
 
-    /** The bitmap each software frame is converted into before it is drawn onto [surface]. */
+    /** The bitmap each software frame is converted into before it is drawn onto [surface], at the size it is drawn at. */
     private var bitmap: FrameBitmap? = null
+    private val sizing = BitmapSizing()
+
+    /** The size of [bitmap], for tests; null before the first software frame. */
+    internal val bitmapSize: IntSize?
+        get() = synchronized(lock) { bitmap?.let { IntSize(it.width, it.height) } }
 
     override val kind: FFplayRendererKind = FFplayRendererKind.NATIVE_SURFACE
     override val capabilities: FFplayOutputCapabilities
@@ -182,17 +189,18 @@ private class AndroidSurfaceOutput(
     private fun draw(frame: VideoFrame): Boolean {
         val target = surface?.takeIf(Surface::isValid) ?: return false
         if (width <= 0 || height <= 0) return false
+        val display = displaySize(frame.width, frame.height, frame.sampleAspectRatio, frame.rotationDegrees)
+        val destination = contentScale.place(display, Size(width.toFloat(), height.toFloat()))
+        val size = sizing.sizeFor(frame, IntSize(destination.width.roundToInt(), destination.height.roundToInt()))
         // The frame is drawn before this returns, so one bitmap serves every frame of its size and format.
         val format = frame.bitmapFormat()
-        val converted = bitmap?.takeIf { it.width == frame.width && it.height == frame.height && it.format == format }
+        val converted = bitmap?.takeIf { it.width == size.width && it.height == size.height && it.format == format }
             ?.apply { write(frame) }
-            ?: frame.toFrameBitmap(format).also {
+            ?: frame.toFrameBitmap(format, size).also {
                 bitmap?.close()
                 bitmap = it
             }
         val pixels = converted.image.asAndroidBitmap()
-        val display = displaySize(pixels.width, pixels.height, frame.sampleAspectRatio, frame.rotationDegrees)
-        val destination = contentScale.place(display, Size(width.toFloat(), height.toFloat()))
         val turn = uprightTurn(frame.rotationDegrees)
         val canvas = try {
             target.lockCanvas(null)
