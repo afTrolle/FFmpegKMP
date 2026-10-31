@@ -161,6 +161,15 @@ slice threads, as `ffplay` does, since it shows one video in real time. A `Video
 threads only, keeping one frame in progress: HEVC with wavefront rows keeps most of its speed there,
 single-slice H.264 decodes as if on one thread, and hardware decoders and libaom are unaffected.
 
+The player keeps its video decoder between seeks, pauses and plays, and releases it once it has had
+nothing to decode for `FFplayConfiguration(releaseDecoderWhenPaused = …)`, 2 s by default: paused,
+ended, waiting for an output, or showing a seek's frame. A scrub, or a play soon after a pause, uses
+the decoder it has and goes on from the frame on screen; a play or seek after the release opens one
+and decodes from the keyframe before the position, as the first seek did. The released decoder's
+frames and threads are freed (a paused 4K software decoder holds about 315 MB of them), and so is a
+MediaCodec instance; the frame on screen stays. `Duration.ZERO` releases it as soon as a decode
+ends, and null keeps it until the source, the output or its Surface changes.
+
 ### Two bitmaps per source
 
 `toImageBitmap` allocates a bitmap for every frame, which only the garbage collector frees: four

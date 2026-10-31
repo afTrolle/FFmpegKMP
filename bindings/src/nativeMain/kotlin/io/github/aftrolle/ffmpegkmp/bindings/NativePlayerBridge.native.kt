@@ -71,6 +71,7 @@ private class NativeCInteropPlayerEngine(
         ffplaykmp_configuration_default(nativeConfiguration.ptr)
         nativeConfiguration.decoder_preference = configuration.decoderPreference.ordinal.toUInt()
         nativeConfiguration.decoder_threads = configuration.decoderThreads
+        nativeConfiguration.codec_release_delay_us = configuration.codecReleaseDelayUs
         ffplaykmp_player_create(
             nativeConfiguration.ptr,
             staticCFunction(::receiveNativePlayerState),
@@ -279,5 +280,6 @@ public actual fun nativePlayerStatistics(): NativePlayerStatistics = memScoped {
         codecOpens = statistics.codec_opens.toLong(),
         videoPackets = statistics.video_packets.toLong(),
         downloads = statistics.downloads.toLong(),
+        codecCloses = statistics.codec_closes.toLong(),
     )
 }

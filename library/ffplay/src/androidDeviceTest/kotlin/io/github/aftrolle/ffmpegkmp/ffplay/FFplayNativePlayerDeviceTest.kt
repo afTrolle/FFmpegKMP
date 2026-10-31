@@ -312,7 +312,8 @@ class FFplayNativePlayerDeviceTest {
      */
     private suspend fun playThroughTheLifecycle(preference: CodecPreference, attachFirst: Boolean) {
         val started = System.nanoTime()
-        Playing(preference).use { playing ->
+        // The decoder is kept, so that the codecs counted are the ones the transitions open.
+        Playing(preference, releaseDecoder = null).use { playing ->
             val player = playing.player
             if (attachFirst) {
                 // Before prepare the stream is unknown; the output offers MediaCodec the Surface all the same.
@@ -397,10 +398,10 @@ class FFplayNativePlayerDeviceTest {
     /**
      * Destroys the Surface and attaches a new one, as `AndroidExternalSurface` does, while playing and while paused. A
      * MediaCodec renders to its Surface, so each new one takes a codec; a software codec draws through the canvas of
-     * whichever Surface there is, and stays.
+     * whichever Surface there is, and stays (the player keeps it here rather than release it while paused).
      */
     private suspend fun swapSurfaces(preference: CodecPreference) {
-        Playing(preference).use { playing ->
+        Playing(preference, releaseDecoder = null).use { playing ->
             val player = playing.player
             playing.prepareAndShow()
             val perSurface = if (player.snapshot.value.output?.decoder == DecoderKind.HARDWARE) 1L else 0L
@@ -481,6 +482,65 @@ class FFplayNativePlayerDeviceTest {
         }
     }
 
+    /**
+     * A paused player keeps its decoder through the grace and releases it after, MediaCodec included, while the
+     * Surface keeps the paused frame. Play then opens one decoder on the same Surface and goes on from the paused
+     * frame, and a seek after the next release shows its exact frame.
+     */
+    @Test
+    fun aPausedPlayerReleasesItsDecoderAfterTheGraceAndPlaysOnOnTheSameSurface() = runBlocking {
+        val grace = 1.seconds
+        for (preference in listOf(CodecPreference.AUTO, CodecPreference.SOFTWARE)) {
+            Playing(preference, releaseDecoder = grace).use { playing ->
+                val player = playing.player
+                playing.prepareAndShow()
+                val opens = nativePlayerStatistics().codecOpens
+                within("play") { player.play() }
+                player.await("playback") { it.position >= 0.5.seconds }
+                within("pause") { player.pause() }
+                within("play at once") { player.play() }
+                player.await("playback past 1s") { it.position >= 1.seconds }
+                within("pause again") { player.pause() }
+                assertEquals(opens, nativePlayerStatistics().codecOpens, "codecs opened within the grace")
+
+                val closes = nativePlayerStatistics().codecCloses
+                val paused = player.snapshot.value.position
+                val held = playing.surface.settled()
+                awaitCodecClose(closes, "the paused player's decoder")
+                assertEquals(opens, nativePlayerStatistics().codecOpens)
+                assertEquals(held, playing.surface.frames.value, "no frame reaches the Surface as the decoder goes")
+                assertEquals(FFplayState.PAUSED, player.snapshot.value.state)
+                assertEquals(paused, player.snapshot.value.position)
+
+                within("play after the grace") { player.play() }
+                val resumed = playing.surface.await("a frame after the release") { it.count > held.count }
+                assertTrue(resumed.number in held.number..held.number + 3, "resumed on ${resumed.number}, paused on ${held.number}")
+                player.await("playback past ${paused + 0.5.seconds}") { it.position >= paused + 0.5.seconds }
+                playing.surface.await("frames past ${frameAt(paused + 0.5.seconds)}") { it.number >= frameAt(paused + 0.5.seconds) }
+                assertEquals(opens + 1, nativePlayerStatistics().codecOpens, "codecs opened to play after the grace")
+                assertExpectedDecoder(preference, player.snapshot.value.output?.decoder)
+
+                within("pause before the seek") { player.pause() }
+                awaitCodecClose(nativePlayerStatistics().codecCloses, "the decoder after playback")
+                val target = 1.55.seconds
+                within("seek after the grace") { player.seekTo(target) }
+                player.await("the seek") { it.state == FFplayState.PAUSED }
+                playing.surface.await("frame ${frameAt(target)}") { it.number == frameAt(target) }
+                assertEquals(opens + 2, nativePlayerStatistics().codecOpens, "codecs opened to seek after the grace")
+                assertExpectedDecoder(preference, player.snapshot.value.output?.decoder)
+                playing.check()
+                playing.assertNoDecoderFallback()
+            }
+        }
+    }
+
+    /** Waits for a codec to close after [closes] had, as the grace of a paused player's decoder runs out. */
+    private suspend fun awaitCodecClose(closes: Long, what: String) {
+        withTimeoutOrNull(5.seconds) {
+            while (nativePlayerStatistics().codecCloses == closes) delay(20)
+        } ?: fail("$what did not close within 5 s")
+    }
+
     private suspend fun closeWhilePlaying(preference: CodecPreference) {
         for (played in listOf(0.milliseconds, 300.milliseconds, 1.5.seconds)) {
             val playing = Playing(preference)
@@ -526,8 +586,14 @@ class FFplayNativePlayerDeviceTest {
     }
 
     /** One player and the Surface it shows on, wired as `PlatformFFplaySurface` wires them. */
-    private inner class Playing(val preference: CodecPreference, val clipName: String = CLIP) : AutoCloseable {
-        val player = FFplayPlayer(FFplayConfiguration(decoderPreference = preference, audio = false))
+    private inner class Playing(
+        val preference: CodecPreference,
+        val clipName: String = CLIP,
+        releaseDecoder: Duration? = FFplayConfiguration().releaseDecoderWhenPaused,
+    ) : AutoCloseable {
+        val player = FFplayPlayer(
+            FFplayConfiguration(decoderPreference = preference, audio = false, releaseDecoderWhenPaused = releaseDecoder),
+        )
         val output = AndroidSurfaceOutput(ContentScale.Fit, 0)
         var surface = SurfaceReader()
             private set

@@ -114,7 +114,7 @@ class NativePlayerBridgeJvmTest {
         if (!System.getProperty("os.name").contains("Mac", ignoreCase = true)) return
         val frames = mutableListOf<NativeVideoFrame>()
         createPlatformPlayerBridge(
-            NativePlayerConfiguration(NativePlayerDecoderPreference.AUTO),
+            NativePlayerConfiguration(NativePlayerDecoderPreference.AUTO, codecReleaseDelayUs = KEEP),
             update = {},
             frame = frames::add,
         ).use { bridge ->
@@ -179,7 +179,7 @@ class NativePlayerBridgeJvmTest {
     fun theCodecIsKeptAcrossSeeksPausePlayAndOutputs() {
         val played = CountDownLatch(3)
         createPlatformPlayerBridge(
-            NativePlayerConfiguration(NativePlayerDecoderPreference.SOFTWARE),
+            NativePlayerConfiguration(NativePlayerDecoderPreference.SOFTWARE, codecReleaseDelayUs = KEEP),
             update = {},
             frame = { frame ->
                 frame.frame.close()
@@ -210,6 +210,90 @@ class NativePlayerBridgeJvmTest {
     }
 
     /**
+     * A player with nothing to decode keeps its codec for the release delay, then closes it while
+     * it stays paused: a seek or play within the delay opens none, a play after it opens exactly
+     * one and starts at the paused frame, and a seek after it shows its exact frame.
+     */
+    @Test
+    fun anIdlePlayerReleasesItsCodecAfterTheDelay() {
+        val frames = CopyOnWriteArrayList<NativeVideoFrame>()
+        createPlatformPlayerBridge(
+            NativePlayerConfiguration(NativePlayerDecoderPreference.SOFTWARE, codecReleaseDelayUs = 500_000),
+            update = {},
+            frame = frames::add,
+        ).use { bridge ->
+            assertEquals(0, bridge.setOutput(NativePlayerOutputCapabilities()))
+            assertEquals(0, bridge.prepare(clearVideoSource()))
+            val prepared = nativePlayerStatistics()
+            assertEquals(0, bridge.seek(200_000))
+            assertEquals(0, bridge.play())
+            frames.awaitPast(300_000)
+            assertEquals(0, bridge.pause())
+            // Play at once after the pause.
+            assertEquals(0, bridge.play())
+            assertEquals(0, bridge.pause())
+            assertEquals(prepared.codecOpens, nativePlayerStatistics().codecOpens, "a codec opened within the delay")
+            assertEquals(prepared.codecCloses, nativePlayerStatistics().codecCloses, "the codec closed within the delay")
+
+            val paused = bridge.snapshot().positionUs
+            frames.closeAll()
+            awaitCodecClose(prepared)
+            assertEquals(prepared.codecOpens, nativePlayerStatistics().codecOpens)
+            assertTrue(frames.isEmpty(), "a released codec presented ${frames.map { it.presentationTimeUs }}")
+            assertEquals(NativePlayerState.PAUSED, bridge.snapshot().state)
+            assertEquals(paused, bridge.snapshot().positionUs)
+
+            assertEquals(0, bridge.play())
+            frames.awaitPast(paused)
+            assertEquals(0, bridge.pause())
+            assertEquals(paused, frames.first().presentationTimeUs, "the first frame played after the release")
+            assertEquals(prepared.codecOpens + 1, nativePlayerStatistics().codecOpens, "codecs opened to play after the delay")
+
+            val played = nativePlayerStatistics()
+            awaitCodecClose(played)
+            frames.closeAll()
+            // 0.32 s is between the keyframes at 0 and 0.48 s, ahead of the frame on screen.
+            assertEquals(0, bridge.seek(320_000))
+            assertEquals(listOf(320_000L), frames.map { it.presentationTimeUs })
+            assertEquals(played.codecOpens + 1, nativePlayerStatistics().codecOpens, "codecs opened to seek after the delay")
+            frames.closeAll()
+        }
+    }
+
+    /** With no delay the codec goes as each decode ends, and every seek and play still shows its exact frame. */
+    @Test
+    fun aZeroDelayReleasesTheCodecAfterEachDecode() {
+        val frames = CopyOnWriteArrayList<NativeVideoFrame>()
+        createPlatformPlayerBridge(
+            NativePlayerConfiguration(NativePlayerDecoderPreference.SOFTWARE, codecReleaseDelayUs = 0),
+            update = {},
+            frame = frames::add,
+        ).use { bridge ->
+            val before = nativePlayerStatistics()
+            assertEquals(0, bridge.setOutput(NativePlayerOutputCapabilities()))
+            assertEquals(0, bridge.prepare(clearVideoSource()))
+            val targets = listOf(300_000L, 320_000L, 360_000L, 990_000L)
+            for (target in targets) {
+                frames.closeAll()
+                assertEquals(0, bridge.seek(target))
+                assertEquals(listOf(target), frames.map { it.presentationTimeUs }, "the frame shown after seeking to ${target}us")
+            }
+            frames.closeAll()
+            assertEquals(0, bridge.seek(100_000))
+            frames.closeAll()
+            assertEquals(0, bridge.play())
+            frames.awaitPast(200_000)
+            assertEquals(0, bridge.pause())
+            assertEquals(100_000L, frames.first().presentationTimeUs, "the first frame played")
+            frames.closeAll()
+            // The preview, each seek and the play opened a codec, and each one closed as it ended.
+            val opened = 1 + targets.size + 1 + 1
+            awaitCodecClose(before, opened.toLong())
+            assertEquals(before.codecOpens + opened, nativePlayerStatistics().codecOpens)
+        }
+    }
+
+    /**
      * Stepping forward a frame at a time while paused goes on from the frame on screen: each step
      * reads about one packet and decodes one frame, where a seek would decode from the keyframe.
      */
@@ -217,7 +301,7 @@ class NativePlayerBridgeJvmTest {
     fun aForwardScrubDecodesEachFrameOnce() {
         val frames = CopyOnWriteArrayList<NativeVideoFrame>()
         createPlatformPlayerBridge(
-            NativePlayerConfiguration(NativePlayerDecoderPreference.SOFTWARE),
+            NativePlayerConfiguration(NativePlayerDecoderPreference.SOFTWARE, codecReleaseDelayUs = KEEP),
             update = {},
             frame = frames::add,
         ).use { bridge ->
@@ -596,6 +680,33 @@ class NativePlayerBridgeJvmTest {
             assertTrue(bridge.play() < 0)
         }
     }
+}
+
+/** Keeps an idle player's codec, as the tests that count codec opens need. */
+private const val KEEP = -1L
+
+/** Waits for [count] more codecs to close than had at [before]. */
+private fun awaitCodecClose(before: NativePlayerStatistics, count: Long = 1) {
+    val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5)
+    while (nativePlayerStatistics().codecCloses < before.codecCloses + count) {
+        assertTrue(System.nanoTime() < deadline, "no codec closed within 5 s")
+        Thread.sleep(10)
+    }
+    assertEquals(before.codecCloses + count, nativePlayerStatistics().codecCloses)
+}
+
+/** Waits until a frame past [positionUs] has been presented. */
+private fun List<NativeVideoFrame>.awaitPast(positionUs: Long) {
+    val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(3)
+    while (none { it.presentationTimeUs > positionUs }) {
+        assertTrue(System.nanoTime() < deadline, "no frame past ${positionUs}us within 3 s: ${map { it.presentationTimeUs }}")
+        Thread.sleep(5)
+    }
+}
+
+private fun MutableList<NativeVideoFrame>.closeAll() {
+    forEach { it.frame.close() }
+    clear()
 }
 
 private fun NativePlayerBridgeJvmTest.decodePreview(resourceName: String): NativeFrame {

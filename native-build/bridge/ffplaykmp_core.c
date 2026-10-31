@@ -22,6 +22,7 @@
 #include <libavutil/pixdesc.h>
 
 static _Atomic uint64_t ffplaykmp_codec_opens;
+static _Atomic uint64_t ffplaykmp_codec_closes;
 static _Atomic uint64_t ffplaykmp_video_packets;
 static _Atomic uint64_t ffplaykmp_downloads;
 
@@ -36,6 +37,7 @@ void ffplaykmp_get_statistics(ffplaykmp_statistics *statistics) {
     if (!statistics || statistics->size < sizeof(*statistics))
         return;
     statistics->codec_opens = atomic_load(&ffplaykmp_codec_opens);
+    statistics->codec_closes = atomic_load(&ffplaykmp_codec_closes);
     statistics->video_packets = atomic_load(&ffplaykmp_video_packets);
     statistics->downloads = atomic_load(&ffplaykmp_downloads);
 }
@@ -570,6 +572,8 @@ int ffplaykmp_video_codec_frame_is_hardware(const ffplaykmp_video_codec *codec, 
 }
 
 void ffplaykmp_video_codec_close(ffplaykmp_video_codec *codec) {
+    if (codec->decoder)
+        atomic_fetch_add(&ffplaykmp_codec_closes, 1);
 #if defined(__ANDROID__)
     if (codec->decoder && codec->mediacodec_context)
         av_mediacodec_default_free(codec->decoder);

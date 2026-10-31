@@ -81,4 +81,4 @@ public actual fun nativeFrameStatistics(): NativeFrameStatistics = NativeFrameSt
 
 @InternalFFmpegKmpApi
 public actual fun nativePlayerStatistics(): NativePlayerStatistics =
-    NativePlayerStatistics(codecOpens = 0, videoPackets = 0, downloads = 0)
+    NativePlayerStatistics(codecOpens = 0, videoPackets = 0, downloads = 0, codecCloses = 0)

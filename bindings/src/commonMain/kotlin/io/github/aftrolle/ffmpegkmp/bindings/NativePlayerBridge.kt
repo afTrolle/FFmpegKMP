@@ -74,6 +74,11 @@ public data class NativePlayerConfiguration(
     val decoderPreference: NativePlayerDecoderPreference = NativePlayerDecoderPreference.AUTO,
     /** The software decoder's threads, 0 for FFmpeg's automatic count capped at 8. */
     val decoderThreads: Int = 0,
+    /**
+     * How long an idle player keeps its video decoder, in microseconds: 0 releases it as soon as
+     * nothing is decoding, a negative value keeps it. `ffplaykmp_configuration.codec_release_delay_us`.
+     */
+    val codecReleaseDelayUs: Long = 2_000_000,
 )
 
 @InternalFFmpegKmpApi
@@ -161,11 +166,16 @@ public class NativePlayerException(message: String, errorCode: Int) : NativeCall
 
 /**
  * What the native players and decoders of the process have done since it started, mirroring
- * `ffplaykmp_statistics`, for tests and benchmarks: the video decoders opened, the video packets the
- * players read, and the hardware frames downloaded into memory. Always zero in the browser.
+ * `ffplaykmp_statistics`, for tests and benchmarks: the video decoders opened and closed, the video
+ * packets the players read, and the hardware frames downloaded into memory. Always zero in the browser.
  */
 @InternalFFmpegKmpApi
-public data class NativePlayerStatistics(val codecOpens: Long, val videoPackets: Long, val downloads: Long)
+public data class NativePlayerStatistics(
+    val codecOpens: Long,
+    val videoPackets: Long,
+    val downloads: Long,
+    val codecCloses: Long,
+)
 
 @InternalFFmpegKmpApi
 public expect fun nativePlayerStatistics(): NativePlayerStatistics

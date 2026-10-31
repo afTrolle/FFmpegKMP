@@ -2,6 +2,7 @@
 package io.github.aftrolle.ffmpegkmp.ffplay
 
 import io.github.aftrolle.ffmpegkmp.bindings.InternalFFmpegKmpApi
+import io.github.aftrolle.ffmpegkmp.bindings.nativePlayerStatistics
 import io.github.aftrolle.ffmpegkmp.codec.DecoderFallbackReason
 import io.github.aftrolle.ffmpegkmp.codec.DecoderKind
 import io.github.aftrolle.ffmpegkmp.codec.CodecPreference
@@ -17,10 +18,12 @@ import kotlin.test.assertFailsWith
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
+import kotlin.time.Duration
 import kotlin.time.Duration.Companion.milliseconds
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.filterIsInstance
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
@@ -88,6 +91,45 @@ class FFplayProductionJvmTest {
         }
     }
 
+    /**
+     * A paused player releases its decoder after the configured delay and keeps showing its frame;
+     * play then opens one decoder and starts at the paused frame.
+     */
+    @Test
+    fun aPausedPlayerReleasesItsDecoderAndPlaysOnFromThePausedFrame() = runBlocking {
+        val output = ProductionOutput()
+        val player = FFplayPlayer(
+            FFplayConfiguration(
+                decoderPreference = CodecPreference.SOFTWARE,
+                audio = false,
+                releaseDecoderWhenPaused = 300.milliseconds,
+            ),
+        )
+        player.attachOutput(output)
+        try {
+            player.prepare(fixtureSource("playback-color-patches-1s.mp4"))
+            player.play()
+            withTimeout(3_000) { player.snapshot.first { it.position >= 300.milliseconds } }
+            player.pause()
+            val paused = player.snapshot.value.position
+            val opens = nativePlayerStatistics().codecOpens
+            val closes = nativePlayerStatistics().codecCloses
+            val shown = output.presented.size
+            withTimeout(3_000) { while (nativePlayerStatistics().codecCloses == closes) delay(10) }
+            assertEquals(shown, output.presented.size, "frames presented while paused")
+            assertEquals(FFplayState.PAUSED, player.snapshot.value.state)
+
+            player.play()
+            withTimeout(3_000) { player.snapshot.first { it.position > paused } }
+            player.pause()
+            assertEquals(paused, output.presented[shown], "the first frame played after the release")
+            assertEquals(opens + 1, nativePlayerStatistics().codecOpens)
+            assertEquals(DecoderKind.SOFTWARE, player.snapshot.value.output?.decoder)
+        } finally {
+            player.close()
+        }
+    }
+
     private fun fixtureSource(name: String): MediaSource {
         val bytes = checkNotNull(javaClass.getResourceAsStream("/$name")) { "Missing fixture $name" }.use { it.readBytes() }
         return MediaSource(name, CommandIo { input(name, Buffer().write(bytes)) })
@@ -150,7 +192,11 @@ private class ProductionOutput : FFplayVideoOutput {
     var framesReceived = 0
         private set
 
+    /** Each frame's presentation time, in order. */
+    val presented: MutableList<Duration> = java.util.concurrent.CopyOnWriteArrayList()
+
     override fun submitNative(frame: VideoFrame, video: VideoInfo?): Boolean {
+        presented += frame.pts
         frame.close()
         framesReceived++
         return true

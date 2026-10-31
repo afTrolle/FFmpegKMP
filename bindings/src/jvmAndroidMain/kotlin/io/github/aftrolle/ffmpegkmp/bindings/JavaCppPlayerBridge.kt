@@ -104,6 +104,7 @@ private class JavaCppPlayerEngine(
         bridge.ffplaykmp_configuration_default(nativeConfiguration)
         nativeConfiguration.decoder_preference(configuration.decoderPreference.ordinal)
         nativeConfiguration.decoder_threads(configuration.decoderThreads)
+        nativeConfiguration.codec_release_delay_us(configuration.codecReleaseDelayUs)
         player = bridge.ffplaykmp_player_create(nativeConfiguration, stateCallback, null)
             ?: run {
                 nativeConfiguration.close()
@@ -227,6 +228,7 @@ public actual fun nativePlayerStatistics(): NativePlayerStatistics {
             codecOpens = statistics.codec_opens(),
             videoPackets = statistics.video_packets(),
             downloads = statistics.downloads(),
+            codecCloses = statistics.codec_closes(),
         )
     } finally {
         statistics.close()

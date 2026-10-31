@@ -651,6 +651,8 @@ async function handlePlayerMessage(data) {
         data.decoderPreference,
         // The software decoder's threads; 0, FFmpeg's automatic count, when a caller sends none.
         data.decoderThreads ?? 0,
+        // How long an idle player keeps its decoder; 2 s, ffplaykmp_configuration_default's, when a caller sends none.
+        BigInt(data.codecReleaseDelayUs ?? 2000000),
         playerStateCallback,
         playerFrameCallback,
         0,
@@ -812,7 +814,8 @@ function openPacketReader(module, bytes, extension, onPacket) {
       });
     }, 'viiijjiijj'),
   ];
-  reader.handle = module._ffplaykmp_web_player_create(0, 0, reader.callbacks[0], 0, 0);
+  // A demuxer only: it never opens a decoder, so the release delay (-1, keep) does not apply.
+  reader.handle = module._ffplaykmp_web_player_create(0, 0, -1n, reader.callbacks[0], 0, 0);
   if (!reader.handle) throw new Error('FFmpegKMP demuxer allocation failed');
   const extensionPointer = module.stringToNewUTF8(extension || '');
   const inputPointer = module._malloc(bytes.length);

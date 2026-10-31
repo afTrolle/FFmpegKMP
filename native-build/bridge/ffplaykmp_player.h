@@ -103,6 +103,16 @@ typedef struct ffplaykmp_configuration {
      * for FFmpeg's automatic count capped at 8. Hardware decoders ignore it.
      */
     int32_t decoder_threads;
+    /*
+     * How long the player keeps its video decoder once it has nothing to
+     * decode (paused, ended, waiting for an output, or after a preview), so
+     * that a play or seek soon after needs no new one: 0 releases it as soon as
+     * the player is idle, a negative value keeps it until the source, the
+     * output's decoder or the Surface changes. ffplaykmp_configuration_default
+     * sets 2 s. The decoder that is released frees its frames and threads; the
+     * next play or seek opens one and decodes from the keyframe.
+     */
+    int64_t codec_release_delay_us;
 } ffplaykmp_configuration;
 
 typedef struct ffplaykmp_output_capabilities {
@@ -299,6 +309,8 @@ typedef struct ffplaykmp_statistics {
     uint32_t size;
     /* Video decoders opened, hardware and software, by players and decoders alike. */
     uint64_t codec_opens;
+    /* Of those, the ones closed again. */
+    uint64_t codec_closes;
     /* Video packets the players read from their inputs. */
     uint64_t video_packets;
     /* Hardware frames downloaded into memory. */
@@ -347,9 +359,11 @@ typedef void (*ffplaykmp_web_encoded_packet_callback)(
         int64_t pts,
         int64_t duration);
 
+/* `decoder_threads` and `codec_release_delay_us` are ffplaykmp_configuration's. */
 FFPLAYKMP_EXPORT ffplaykmp_player *ffplaykmp_web_player_create(
         int32_t decoder_preference,
         int32_t decoder_threads,
+        int64_t codec_release_delay_us,
         ffplaykmp_web_state_callback state_callback,
         ffplaykmp_web_video_frame_callback frame_callback,
         void *opaque);

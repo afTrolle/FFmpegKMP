@@ -140,6 +140,38 @@ class BrowserNativePlayerTest {
         }
     }
 
+    /**
+     * With no release delay the decoder goes, its frame threads back to the worker's pool, whenever the player is
+     * idle: play after a pause starts again at the paused frame, decoded from the keyframe, where a kept decoder
+     * goes on to the next one, and every seek still shows its exact frame.
+     */
+    @Test
+    fun softwareReleasesItsDecoderWhenPausedAndPlaysOnFromThePausedFrame() = playerTest("release when paused") {
+        Playing("released when idle", codecReleaseDelayUs = 0).use { playing ->
+            val bridge = playing.bridge
+            playing.prepareAndShow()
+            playing.seekWhilePaused(1_550_000L)
+            assertEquals(0, bridge.play())
+            playing.await("playback past 2s") { it.positionUs >= 2_000_000L }
+            assertEquals(0, bridge.pause())
+            playing.await("paused") { it.state == NativePlayerState.PAUSED }
+            val held = playing.settled()
+            val paused = playing.snapshot.value.positionUs
+            delay(300)
+            assertEquals(held, playing.shown.value, "no frame arrives as the decoder goes")
+
+            assertEquals(0, bridge.play())
+            playing.await("playback past ${paused + 300_000L}us") { it.positionUs >= paused + 300_000L }
+            val numbers = playing.numbersSince(held.count)
+            assertEquals(held.number, numbers.first(), "the first frame played after the release, of $numbers")
+            assertEquals(numbers.sorted().distinct(), numbers, "frames in order")
+            assertEquals(0, bridge.pause())
+            playing.await("paused again") { it.state == NativePlayerState.PAUSED }
+            listOf(700_000L, 733_334L, 4_000_000L).forEach { playing.seekWhilePaused(it) }
+            playing.check()
+        }
+    }
+
     /** Close ends the worker wherever playback is; the next player starts afresh in a worker of its own. */
     @Test
     fun closeWhilePlayingReturns() = playerTest("close while playing") {
@@ -295,6 +327,7 @@ class BrowserNativePlayerTest {
         decoderThreads: Int = 0,
         val webCodecs: Boolean = false,
         val index: Int = 0,
+        codecReleaseDelayUs: Long = 2_000_000,
     ) {
         val snapshot = MutableStateFlow(NativePlayerSnapshot())
         val shown = MutableStateFlow(Shown())
@@ -304,7 +337,7 @@ class BrowserNativePlayerTest {
         var softwareFrames = 0
             private set
         val bridge: NativePlayerBridge = createPlatformPlayerBridge(
-            configuration = NativePlayerConfiguration(preference, decoderThreads),
+            configuration = NativePlayerConfiguration(preference, decoderThreads, codecReleaseDelayUs),
             update = { update ->
                 if (update.state == NativePlayerState.FAILED) failures += update
                 snapshot.value = update

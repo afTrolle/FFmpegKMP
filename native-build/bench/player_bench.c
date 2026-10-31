@@ -5,7 +5,8 @@
  * paused and while playing, and play after pause. The input is served through
  * bench_io, so every row also says how many times the transition opened the
  * input and how much it read, and from ffplaykmp_get_statistics how many
- * codecs it opened and video packets it demuxed. Frames are converted into one
+ * codecs it opened and video packets it demuxed. The players release an idle
+ * codec after the default grace, 2 s. Frames are converted into one
  * reused RGBA8 bitmap at their own size, as a Canvas output's FrameImage does.
  * scripts/bench-player.sh builds and runs it.
  *
@@ -142,6 +143,7 @@ static ffplaykmp_statistics statistics_now(void) {
 static ffplaykmp_statistics statistics_since(ffplaykmp_statistics before) {
     ffplaykmp_statistics now = statistics_now();
     now.codec_opens -= before.codec_opens;
+    now.codec_closes -= before.codec_closes;
     now.video_packets -= before.video_packets;
     now.downloads -= before.downloads;
     return now;
@@ -157,6 +159,17 @@ static void report(const char *what, double took_ms, int calls, bench_io_counts 
             (double)codec.codec_opens / calls, (double)codec.video_packets / calls, (double)frames / calls);
 }
 
+/* Waits up to `timeout_ms` for a codec to close after `before`; returns ms waited, negative on timeout. */
+static double wait_codec_close(ffplaykmp_statistics before, double timeout_ms) {
+    double start = now_ms();
+    while (statistics_since(before).codec_closes == 0) {
+        if (now_ms() - start > timeout_ms)
+            return -1;
+        av_usleep(1000);
+    }
+    return now_ms() - start;
+}
+
 /* Seek targets as fractions of the clip, jumping back and forth as a timeline scrub does. */
 static const double seek_targets[] = { 0.5, 0.1, 0.9, 0.3, 0.7, 0.2, 0.8, 0.4, 0.6, 0.15 };
 #define SEEK_TARGETS ((int)(sizeof(seek_targets) / sizeof(seek_targets[0])))
@@ -164,7 +177,8 @@ static const double seek_targets[] = { 0.5, 0.1, 0.9, 0.3, 0.7, 0.2, 0.8, 0.4, 0
 /*
  * Every transition FFplayPlayer makes, in the order an editor makes them:
  * prepare before the surface exists, then attach it, scrub while paused, step
- * forward a frame at a time, play and pause, and seek while playing.
+ * forward a frame at a time, play and pause, seek while playing, and play
+ * once a pause has lasted long enough for the codec to go.
  */
 static void bench_transitions(const char *path, int preference) {
     bench_player bench;
@@ -265,6 +279,31 @@ static void bench_transitions(const char *path, int preference) {
             atomic_load(&bench.frames) - frames);
     ffplaykmp_player_pause(bench.player);
 
+    /* The paused player releases its codec after the grace; play then opens one and decodes from the keyframe. */
+    counted = statistics_now();
+    took = wait_codec_close(counted, 10000);
+    printf("  %-26s %8.1f ms after pause\n", "codec released", took);
+    /* Counted over the three plays; pausing and the release between them read nothing and open no codec. */
+    before = bench_io_now(&bench.io);
+    counted = statistics_now();
+    first_frame = 0;
+    for (index = 0; index < 3; index++) {
+        double waited;
+        if (index > 0) {
+            ffplaykmp_player_pause(bench.player);
+            wait_codec_close(statistics_now(), 10000);
+        }
+        frames = atomic_load(&bench.frames);
+        start = now_ms();
+        ffplaykmp_player_play(bench.player);
+        waited = wait_frames(&bench, frames, 1, 5000);
+        first_frame += waited < 0 ? 5000 : now_ms() - start;
+        wait_frames(&bench, frames, 5, 5000);
+    }
+    /* The time is to the first frame; the frames, those presented within it. */
+    report("play after the grace", first_frame, 3, bench_io_since(&bench.io, before), statistics_since(counted), 3);
+    ffplaykmp_player_pause(bench.player);
+
     snapshot = bench_snapshot(&bench);
     process_usage(&threads, &footprint_mb);
     printf("  decoder %s, %d frames converted at %.2f ms each, %d threads, %d MB footprint\n",
@@ -321,7 +360,8 @@ static void *bench_parallel_main(void *opaque) {
  * attaches a Canvas output, plays for two seconds and pauses. Reports how
  * long prepare took, frames a second each, how many got a hardware decoder,
  * and the process's threads and footprint while all of them are paused,
- * which is what a timeline of paused players holds.
+ * which is what a timeline of paused players holds, at once and once their
+ * codecs' grace has passed.
  */
 static void bench_parallel(const char *path, int preference, int count) {
     bench_parallel_job jobs[32];
@@ -333,6 +373,8 @@ static void bench_parallel(const char *path, int preference, int count) {
     int idle_footprint_mb;
     int paused_threads;
     int paused_footprint_mb;
+    int released_threads;
+    int released_footprint_mb;
     int index;
     process_usage(&idle_threads, &idle_footprint_mb);
     for (index = 0; index < count; index++) {
@@ -348,11 +390,15 @@ static void bench_parallel(const char *path, int preference, int count) {
         hardware += jobs[index].decoder == FFPLAYKMP_DECODER_HARDWARE;
     }
     process_usage(&paused_threads, &paused_footprint_mb);
+    /* Past the default 2 s grace, every paused player has released its codec. */
+    av_usleep(3000000);
+    process_usage(&released_threads, &released_footprint_mb);
     printf("%-22s %-8s players=%-2d | prepare %6.1f ms | %5.1f frames/s each | %2d hw | paused: %3d threads, "
-            "%5d MB (%4d MB each)\n",
+            "%5d MB (%4d MB each) | after the grace: %3d threads, %5d MB (%4d MB each)\n",
             file_name(path), preference == FFPLAYKMP_DECODER_AUTO ? "AUTO" : "SOFTWARE", count, prepare_ms / count,
             played / 2.0 / count, hardware, paused_threads, paused_footprint_mb,
-            (paused_footprint_mb - idle_footprint_mb) / count);
+            (paused_footprint_mb - idle_footprint_mb) / count, released_threads, released_footprint_mb,
+            (released_footprint_mb - idle_footprint_mb) / count);
     for (index = 0; index < count; index++)
         bench_player_close(&jobs[index].bench);
 }

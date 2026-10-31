@@ -49,6 +49,7 @@ internal fun startBrowserPlayerWorker(
         startPlayerWorker(
             configuration.decoderPreference.ordinal,
             configuration.decoderThreads,
+            configuration.codecReleaseDelayUs.toDouble(),
             onSnapshot,
             onFrame,
             onPlatformFrame,
@@ -112,6 +113,7 @@ private fun pushMount(mounts: JsAny, path: String, bytes: JsAny): Unit = js("mou
 private fun startPlayerWorker(
     decoderPreference: Int,
     decoderThreads: Int,
+    codecReleaseDelayUs: Double,
     onSnapshot: (String) -> Unit,
     onFrame: (JsAny) -> Unit,
     onPlatformFrame: (JsAny) -> Boolean,
@@ -159,7 +161,7 @@ private fun startPlayerWorker(
       worker.onerror = event => {
         onFailure(event.message || `Could not load the FFmpegKMP player worker at ${'$'}{workerUrl}`);
       };
-      controller.post({ type: 'player-init', decoderPreference, decoderThreads });
+      controller.post({ type: 'player-init', decoderPreference, decoderThreads, codecReleaseDelayUs });
       return controller;
     })()
     """,

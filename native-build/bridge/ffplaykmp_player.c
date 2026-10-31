@@ -11,6 +11,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 
 #include <libavcodec/avcodec.h>
 #if defined(__ANDROID__)
@@ -25,7 +26,8 @@
  * by prepare, and kept until stop, destroy, reset_cancel or the next prepare.
  * The codec is opened by the first run that needs it and kept for the runs
  * after it while it suits them: its key is whether the output wanted a
- * hardware decoder, the Surface it renders to and the input it decodes. Only
+ * hardware decoder, the Surface it renders to and the input it decodes, and
+ * released once the player has been idle for codec_release_delay_us. Only
  * the session thread opens, uses and closes it. The packet and frames are the
  * player's, allocated once with it. A run holds session_mutex throughout, so
  * one runs at a time, and so does anything that opens or closes the input.
@@ -87,6 +89,11 @@ typedef enum ffplaykmp_job_kind {
     FFPLAYKMP_JOB_PLAY,
     /* Closes a codec that renders to a Surface; the poster waits for it. */
     FFPLAYKMP_JOB_RELEASE,
+    /*
+     * The session thread's own, never posted: closes the codec of a player
+     * idle for its configuration's codec_release_delay_us.
+     */
+    FFPLAYKMP_JOB_RELEASE_IDLE,
     FFPLAYKMP_JOB_EXIT,
 } ffplaykmp_job_kind;
 
@@ -112,7 +119,11 @@ struct ffplaykmp_player {
     pthread_mutex_t mutex;
     pthread_mutex_t session_mutex;
     ffplaykmp_session session;
-    /* Desktop hardware frames are downloaded into its two buffers while one is free (ffmpegkmp_frame_set_download_pool). */
+    /*
+     * Desktop hardware frames are downloaded into its two buffers while one is
+     * free (ffmpegkmp_frame_set_download_pool). Only the session thread uses
+     * it, and replaces it with an empty one as it releases an idle codec.
+     */
     ffmpegkmp_frame_pool *download_pool;
     /*
      * The session thread runs every decode, previews included, so a codec kept
@@ -918,6 +929,25 @@ static void ffplaykmp_run_release_job(ffplaykmp_player *player) {
 #endif
 
 /*
+ * Closes an idle player's codec, on the session thread, with what holds its
+ * memory: the frame on screen, the frames decoded ahead and the packet not yet
+ * taken, which also ends going on from the frame on screen, so the next run
+ * seeks and decodes from the keyframe. The download buffers go too; frames
+ * still out keep theirs.
+ */
+static void ffplaykmp_run_release_idle_job(ffplaykmp_player *player) {
+    ffmpegkmp_frame_pool *download_pool;
+    pthread_mutex_lock(&player->session_mutex);
+    ffplaykmp_session_close_codec(&player->session);
+    pthread_mutex_unlock(&player->session_mutex);
+    download_pool = ffmpegkmp_frame_pool_alloc(2);
+    if (download_pool) {
+        ffmpegkmp_frame_pool_free(player->download_pool);
+        player->download_pool = download_pool;
+    }
+}
+
+/*
  * Opens and probes the input, reads its container and stream headers, and keeps
  * it open for the runs that follow. This keeps prepare independent from an
  * output target and never crosses the decoded-pixel boundary for protected
@@ -950,6 +980,7 @@ void ffplaykmp_configuration_default(ffplaykmp_configuration *configuration) {
     memset(configuration, 0, sizeof(*configuration));
     configuration->size = sizeof(*configuration);
     configuration->decoder_preference = FFPLAYKMP_DECODER_AUTO;
+    configuration->codec_release_delay_us = 2000000;
 }
 
 void ffplaykmp_output_capabilities_init(ffplaykmp_output_capabilities *capabilities) {
@@ -1032,23 +1063,62 @@ static int ffplaykmp_run_preview_job(ffplaykmp_player *player, int64_t start_pos
     return ffplaykmp_run_job(player, input, start_position_us, 0, presents);
 }
 
+/*
+ * When the session thread, idle since `idle_since_us` on the wall clock,
+ * releases its codec: codec_release_delay_us later, or never (INT64_MAX) with
+ * no codec open or a negative delay. Read on the session thread, the only one
+ * that opens and closes the codec, with job_mutex held; whatever else should
+ * make an idle codec go sooner decides here, and signals job_cond.
+ */
+static int64_t ffplaykmp_idle_release_us(const ffplaykmp_player *player, int64_t idle_since_us) {
+    const int64_t delay_us = player->configuration.codec_release_delay_us;
+    if (!player->session.codec_open || delay_us < 0)
+        return INT64_MAX;
+    return delay_us > INT64_MAX - idle_since_us ? INT64_MAX : idle_since_us + delay_us;
+}
+
+/*
+ * Waits, with job_mutex held, for the next job: a posted one, or
+ * FFPLAYKMP_JOB_RELEASE_IDLE once the player has been idle for its codec's
+ * release delay. Takes the job off the mailbox.
+ */
+static ffplaykmp_job_kind ffplaykmp_next_job(ffplaykmp_player *player, int64_t idle_since_us) {
+    ffplaykmp_job_kind kind;
+    while (player->job == FFPLAYKMP_JOB_NONE) {
+        /* The wall clock, which pthread_cond_timedwait measures by default. */
+        const int64_t release_us = ffplaykmp_idle_release_us(player, idle_since_us);
+        struct timespec until;
+        if (release_us == INT64_MAX) {
+            pthread_cond_wait(&player->job_cond, &player->job_mutex);
+            continue;
+        }
+        if (av_gettime() >= release_us)
+            return FFPLAYKMP_JOB_RELEASE_IDLE;
+        until.tv_sec = (time_t)(release_us / 1000000);
+        until.tv_nsec = (long)(release_us % 1000000) * 1000;
+        pthread_cond_timedwait(&player->job_cond, &player->job_mutex, &until);
+    }
+    kind = player->job;
+    player->job = FFPLAYKMP_JOB_NONE;
+    return kind;
+}
+
 static void *ffplaykmp_session_main(void *opaque) {
     ffplaykmp_player *player = opaque;
+    int64_t idle_since_us = av_gettime();
     pthread_mutex_lock(&player->job_mutex);
     for (;;) {
-        ffplaykmp_job_kind kind;
-        ffplaykmp_job_ticket *ticket;
-        int64_t start_us;
+        ffplaykmp_job_kind kind = ffplaykmp_next_job(player, idle_since_us);
+        ffplaykmp_job_ticket *ticket = NULL;
+        int64_t start_us = 0;
         int result = 0;
-        while (player->job == FFPLAYKMP_JOB_NONE)
-            pthread_cond_wait(&player->job_cond, &player->job_mutex);
-        kind = player->job;
-        player->job = FFPLAYKMP_JOB_NONE;
         if (kind == FFPLAYKMP_JOB_EXIT)
             break;
-        start_us = player->job_start_us;
-        ticket = player->job_ticket;
-        player->job_ticket = NULL;
+        if (kind != FFPLAYKMP_JOB_RELEASE_IDLE) {
+            start_us = player->job_start_us;
+            ticket = player->job_ticket;
+            player->job_ticket = NULL;
+        }
         player->job_running = kind;
         pthread_mutex_unlock(&player->job_mutex);
         if (kind == FFPLAYKMP_JOB_PREVIEW || kind == FFPLAYKMP_JOB_OUTPUT_PREVIEW)
@@ -1057,10 +1127,13 @@ static void *ffplaykmp_session_main(void *opaque) {
         else if (kind == FFPLAYKMP_JOB_RELEASE)
             ffplaykmp_run_release_job(player);
 #endif
+        else if (kind == FFPLAYKMP_JOB_RELEASE_IDLE)
+            ffplaykmp_run_release_idle_job(player);
         else
             ffplaykmp_run_play_job(player);
         pthread_mutex_lock(&player->job_mutex);
         player->job_running = FFPLAYKMP_JOB_NONE;
+        idle_since_us = av_gettime();
         /* An abort meant for this job must not reach the next one. */
         atomic_store(&player->worker_abort, 0);
         if (ticket) {
@@ -1920,6 +1993,7 @@ static void ffplaykmp_web_frame(
 ffplaykmp_player *ffplaykmp_web_player_create(
         int32_t decoder_preference,
         int32_t decoder_threads,
+        int64_t codec_release_delay_us,
         ffplaykmp_web_state_callback state_callback,
         ffplaykmp_web_video_frame_callback frame_callback,
         void *opaque) {
@@ -1942,6 +2016,7 @@ ffplaykmp_player *ffplaykmp_web_player_create(
     ffplaykmp_configuration_default(&configuration);
     configuration.decoder_preference = decoder_preference;
     configuration.decoder_threads = decoder_threads;
+    configuration.codec_release_delay_us = codec_release_delay_us;
     player = ffplaykmp_player_create(
             &configuration,
             ffplaykmp_web_publish,

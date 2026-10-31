@@ -1,9 +1,9 @@
 # One open per source in the FFplay player
 
-Status: phases 1, 1b, 2, 3 and 4 are built on `feature/ffplay-reopen`; phase
-2's web packet reader reuse moved to phase 7. Phase 0's macOS native baselines
-are measured (2b); its Android, JVM and browser measurements are not. Phases
-5–8 are not built. The audio-cleanup and small-cleanups work this plan builds
+Status: phases 1, 1b, 2, 3, 4 and 5 are built on `feature/ffplay-reopen`;
+phase 2's web packet reader reuse moved to phase 7. Phase 0's macOS native
+baselines are measured (2b); its Android, JVM and browser measurements are not.
+Phases 6–8 are not built. The audio-cleanup and small-cleanups work this plan builds
 on is merged into main as of f9f92c1.
 
 `FFplayPlayer` opens and probes its input again on nearly every transition:
@@ -347,6 +347,90 @@ Departures from section 4 and decisions it left open:
   software only.
 - `requireNative` is public (internal API) so that `FFplayEngine` can use it;
   `NativePlayerException` lives in `bindings` with the other call exceptions.
+
+### Phase 5 results
+
+A player releases its codec once it has had nothing to decode for
+`ffplaykmp_configuration.codec_release_delay_us` (`FFplayConfiguration(
+releaseDecoderWhenPaused: Duration? = 2.seconds)`; 0 releases as each decode
+ends, null, -1 in C, keeps it). Idle is any time between jobs, not only pause:
+after prepare's preview, a paused seek, the end of the input, or while waiting
+for an output. The session thread waits for its next job with a timed wait and,
+when the delay passes with no job, runs `FFPLAYKMP_JOB_RELEASE_IDLE`, its own
+job (never posted, so posters wait for it as for any job): it closes the codec
+together with everything that pins its memory, the frame on screen, the frame
+decoded ahead, the held frame, the packet not yet taken and the drain state,
+and replaces the desktop download ring with an empty one (frames still out
+keep the old ring's buffers). With `in_sync` and `showing` cleared, the next
+play or seek seeks and decodes from the keyframe, so its frame is exact; the
+frame on screen stays where it was drawn (Canvas bitmap, Surface).
+`ffplaykmp_statistics.codec_closes` (`NativePlayerStatistics.codecCloses`)
+counts closes for the tests and the bench. `ffplaykmp_idle_release_us` is the one place that decides when an idle
+codec goes; phase 6's "release a hardware codec at once when the budget has a
+waiter" goes there, with the budget signalling `job_cond`.
+
+macOS player bench, same clips. Every transition within the grace is phase
+4's (no codec open; within noise). Play after the grace, three times per clip
+at about 0.7 of the clip, to the first frame:
+
+| | 1080p SW | 4K H.264 SW | 4K H.264 AUTO | 4K HEVC PQ SW | 4K HEVC PQ AUTO |
+|---|---|---|---|---|---|
+| play 0 s after pause (phase 4) | 3.2 ms | 17 ms | 16 ms | 25 ms | 25 ms |
+| play after the grace | 78 ms | 296 ms | 655 ms | 827 ms | 509 ms |
+| codec opens per play after the grace | 1.0 | 1.0 | 1.0 | 1.0 | 1.0 |
+
+The codec closed 2.00–2.01 s after pause in every case. Play after the grace
+pays a codec open plus the decode from the keyframe (the clips have one
+keyframe, so 42–187 packets), as every play did before phase 4.
+
+Many players (4K H.264, 10 s), paused at once and 3 s later, past the grace:
+
+| Players | AUTO paused → after grace | SW paused → after grace | SW threads paused → after grace |
+|---|---|---|---|
+| 1 | 95 → 93 MB | 320 → 319 MB | 23 → 14 |
+| 4 | 353 → 349 MB | 1270 → 1269 MB | 62 → 29 |
+| 8 | 694 → 684 MB | 2530 → 2208 MB | 122 → 57 |
+| 16 | 1378 → 1362 MB | 5036 → 2527 MB | 193 → 65 |
+
+Sixteen paused software players fall from phase 4's 5044 MB to 2527 MB, under
+phase 3's 3279 MB floor measured at the pause, and to phase 3's 65 threads.
+At 1 and 4 players the footprint does not fall although the threads do: the
+allocator keeps freed memory in the process's footprint, as 2b notes, and
+returns it only under pressure (at 16 it is returned). AUTO footprint barely
+moves: about 86 MB a player, of which the bench's 4K RGBA bitmap is 33 MB, and
+what the closed VideoToolbox sessions free does not show in it. VideoToolbox at 16 players stays collapsed (2.3
+frames/s each; phase 6).
+
+Verified: JVM bindings 43, codec 78, ffplay 93; macOS bindings 8, ffplay 82;
+iOS simulator 8 and 82; js and wasm bindings 24 each (worker relinked), ffplay
+56 each; Samsung SM-S938B ffplay device suite with `hdrGpuCheck=true` 97 tests,
+96 pass, `CompositeExportBudgetDeviceTest.measure` gated. New checks: within a
+500 ms delay a seek and play straight after pause open no codec and close none,
+past it the paused codec closes with nothing presented, play opens exactly one
+and starts at the paused frame, and a seek after the next release shows its
+exact frame (JVM bridge); with no delay every preview, seek and play opens and
+closes one codec and shows its exact frame (JVM bridge, and in the browser,
+where play after pause starts again at the paused frame); `FFplayPlayer`
+releases after a 300 ms `releaseDecoderWhenPaused` and plays on from the
+paused frame (JVM), and maps the setting to the bridge (common); on the device,
+under AUTO (MediaCodec) and SOFTWARE, the decoder is kept through a 1 s grace,
+closes after it with no frame reaching the Surface, play opens one decoder on
+the same Surface and goes on from the paused frame, and a seek after the next
+release shows its exact frame.
+
+Decisions the plan left open:
+- Open question 3: the grace is 2 s, and every idle player releases, visible
+  or not: there is no priority before phase 6, the frame on screen stays, and
+  a visible paused player that plays again pays one codec open.
+- Release on idle covers every idle point, not only pause, so 16 prepared or
+  ended players hold no codec after the grace either.
+- The C default comes from `ffplaykmp_configuration_default` (2 s), since a
+  zeroed configuration would mean "at once"; `ffplaykmp_web_player_create`
+  takes the delay as a parameter. A negative `releaseDecoderWhenPaused` is
+  rejected; null is the "keep" value.
+- The tests that count codec opens across transitions (phase 4's JVM tests and
+  the device lifecycle and Surface-swap tests) now keep the codec, so a slow
+  run cannot release it between their steps.
 
 ## 3. Design options (behaviour at 1 / 4 / 16 concurrent sources)
 

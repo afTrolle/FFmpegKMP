@@ -495,7 +495,12 @@ private class FFplayBridgeEngine(
 
 internal fun VideoInfo?.sampleAspectRatioValue(): Double = this?.sampleAspectRatio ?: 1.0
 
-private fun FFplayConfiguration.toNative() = NativePlayerConfiguration(decoderPreference.toNative(), threads.toNative())
+private fun FFplayConfiguration.toNative() = NativePlayerConfiguration(
+    decoderPreference.toNative(),
+    threads.toNative(),
+    // -1 keeps the decoder.
+    codecReleaseDelayUs = releaseDecoderWhenPaused?.inWholeMicroseconds ?: -1,
+)
 
 private fun FFplayOutputCapabilities.toNative() = NativePlayerOutputCapabilities(
     hardwareFrameImport = hardwareFrameImport,
