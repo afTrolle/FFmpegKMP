@@ -6,6 +6,7 @@
  * for the API and its threading contract.
  */
 #include "ffmpegkmp_bridge.h"
+#include "ffplaykmp_core.h"
 
 #include <stdatomic.h>
 #include <stdio.h>
@@ -21,8 +22,6 @@
 /* Memory bound on decoded audio one track may queue while another starves.
  * Past it the mix stops waiting and plays the starved track as silence. */
 #define FFMPEGKMP_PLAYER_MAX_BUFFERED_SECONDS 10
-
-#define FFMPEGKMP_PLAYER_IO_BUFFER 65536
 
 typedef struct player_track {
     int stream_index;
@@ -52,7 +51,8 @@ typedef struct player_track {
 } player_track;
 
 struct ffmpegkmp_player {
-    AVFormatContext *format;
+    /* Opened by ffplaykmp_open_input, whose interrupt callback checks abort_requested. */
+    ffplaykmp_input input;
     int output_rate;
     int output_channels;
     AVChannelLayout output_layout;
@@ -67,13 +67,6 @@ struct ffmpegkmp_player {
 
     atomic_uint master_gain_bits;
     atomic_int abort_requested;
-
-    /* Custom input (ffmpegkmp_player_open_io); NULL when opened by URL. */
-    AVIOContext *io;
-    ffmpegkmp_io_callback io_callback;
-    void *io_opaque;
-    int64_t io_resource;
-    int64_t io_position;
 
     /* Read/seek thread state. */
     AVPacket *packet;
@@ -123,7 +116,7 @@ static void deactivate_track(player_track *track) {
 }
 
 static int activate_track(ffmpegkmp_player *player, player_track *track) {
-    AVStream *stream = player->format->streams[track->stream_index];
+    AVStream *stream = player->input.format->streams[track->stream_index];
     int result;
     if (!track->codec)
         return AVERROR_DECODER_NOT_FOUND;
@@ -172,7 +165,7 @@ static void apply_track_requests(ffmpegkmp_player *player) {
         } else if (!wanted && track->active) {
             deactivate_track(track);
         }
-        player->format->streams[track->stream_index]->discard =
+        player->input.format->streams[track->stream_index]->discard =
                 track->active ? AVDISCARD_DEFAULT : AVDISCARD_ALL;
     }
 }
@@ -245,7 +238,7 @@ static int queue_frame(ffmpegkmp_player *player, player_track *track, const AVFr
     int64_t offset = 0;
     if (!track->aligned && frame) {
         if (frame->best_effort_timestamp != AV_NOPTS_VALUE) {
-            AVStream *stream = player->format->streams[track->stream_index];
+            AVStream *stream = player->input.format->streams[track->stream_index];
             int64_t frame_us = av_rescale_q(frame->best_effort_timestamp, stream->time_base, AV_TIME_BASE_Q) -
                     player->start_time_us;
             int64_t queued_until_us = playback_position_us(player) +
@@ -291,47 +284,6 @@ static int drain_decoder(ffmpegkmp_player *player, player_track *track) {
     return result == AVERROR(EAGAIN) || result == AVERROR_EOF ? 0 : result;
 }
 
-static int io_read(void *opaque, uint8_t *buffer, int size) {
-    ffmpegkmp_player *player = opaque;
-    int64_t count;
-    /* Custom I/O bypasses the interrupt callback, so honour abort here. */
-    if (atomic_load(&player->abort_requested))
-        return AVERROR_EXIT;
-    count = player->io_callback(
-            player->io_opaque, player->io_resource, FFMPEGKMP_IO_READ,
-            player->io_position, buffer, (uint64_t) size);
-    if (count < 0 || count > size)
-        return AVERROR(EIO);
-    if (count == 0)
-        return AVERROR_EOF;
-    player->io_position += count;
-    return (int) count;
-}
-
-static int64_t io_seek(void *opaque, int64_t offset, int whence) {
-    ffmpegkmp_player *player = opaque;
-    int64_t size;
-    switch (whence & ~AVSEEK_FORCE) {
-    case AVSEEK_SIZE:
-        return player->io_callback(player->io_opaque, player->io_resource, FFMPEGKMP_IO_SIZE, 0, NULL, 0);
-    case SEEK_SET:
-        player->io_position = offset;
-        break;
-    case SEEK_CUR:
-        player->io_position += offset;
-        break;
-    case SEEK_END:
-        size = player->io_callback(player->io_opaque, player->io_resource, FFMPEGKMP_IO_SIZE, 0, NULL, 0);
-        if (size < 0)
-            return AVERROR(ESPIPE);
-        player->io_position = size + offset;
-        break;
-    default:
-        return AVERROR(EINVAL);
-    }
-    return player->io_position;
-}
-
 static player_track *track_for_stream(ffmpegkmp_player *player, int stream_index) {
     for (int i = 0; i < player->track_count; i++) {
         if (player->tracks[i].stream_index == stream_index)
@@ -358,7 +310,7 @@ static int finish_input(ffmpegkmp_player *player) {
 
 /* Reads one packet and feeds it to its track's decoder. */
 static int pump(ffmpegkmp_player *player) {
-    int result = av_read_frame(player->format, player->packet);
+    int result = av_read_frame(player->input.format, player->packet);
     if (result == AVERROR_EOF)
         return finish_input(player);
     if (result < 0)
@@ -389,29 +341,29 @@ static ffmpegkmp_player *player_create(int output_sample_rate, int output_channe
     av_channel_layout_default(&player->output_layout, output_channels);
     atomic_init(&player->master_gain_bits, float_bits(1.0f));
     atomic_init(&player->abort_requested, 0);
-    player->format = avformat_alloc_context();
-    if (!player->format) {
-        av_free(player);
-        *result = AVERROR(ENOMEM);
-        return NULL;
-    }
-    player->format->interrupt_callback.callback = interrupt_requested;
-    player->format->interrupt_callback.opaque = player;
     *result = 0;
     return player;
 }
 
-/* Probes the opened input and sets up its audio tracks. */
-static int player_prepare(ffmpegkmp_player *player, const char *url) {
-    int result;
-    if ((result = avformat_open_input(&player->format, url, NULL, NULL)) < 0)
+/* Opens and probes the input and sets up its audio tracks. */
+static int player_prepare(
+        ffmpegkmp_player *player,
+        const char *input,
+        ffplaykmp_io_callback io_callback,
+        void *io_opaque) {
+    const ffplaykmp_io_host host = {
+        .callback = io_callback,
+        .opaque = io_opaque,
+        .interrupted = interrupt_requested,
+        .interrupt_opaque = player,
+    };
+    int result = ffplaykmp_open_input(&host, input, &player->input);
+    if (result < 0)
         return result;
-    if ((result = avformat_find_stream_info(player->format, NULL)) < 0)
-        return result;
-    player->start_time_us = player->format->start_time == AV_NOPTS_VALUE ? 0 : player->format->start_time;
+    player->start_time_us = ffplaykmp_media_start_us(player->input.format);
 
-    for (unsigned i = 0; i < player->format->nb_streams; i++) {
-        if (player->format->streams[i]->codecpar->codec_type == AVMEDIA_TYPE_AUDIO)
+    for (unsigned i = 0; i < player->input.format->nb_streams; i++) {
+        if (player->input.format->streams[i]->codecpar->codec_type == AVMEDIA_TYPE_AUDIO)
             player->track_count++;
     }
     player->tracks = av_calloc(FFMAX(player->track_count, 1), sizeof(*player->tracks));
@@ -420,10 +372,10 @@ static int player_prepare(ffmpegkmp_player *player, const char *url) {
     if (!player->tracks || !player->packet || !player->frame)
         return AVERROR(ENOMEM);
 
-    int best = av_find_best_stream(player->format, AVMEDIA_TYPE_AUDIO, -1, -1, NULL, 0);
+    int best = av_find_best_stream(player->input.format, AVMEDIA_TYPE_AUDIO, -1, -1, NULL, 0);
     player->clock_track = -1;
-    for (unsigned i = 0, track_index = 0; i < player->format->nb_streams; i++) {
-        AVStream *stream = player->format->streams[i];
+    for (unsigned i = 0, track_index = 0; i < player->input.format->nb_streams; i++) {
+        AVStream *stream = player->input.format->streams[i];
         if (stream->codecpar->codec_type != AVMEDIA_TYPE_AUDIO) {
             stream->discard = AVDISCARD_ALL;
             continue;
@@ -446,49 +398,17 @@ static int player_prepare(ffmpegkmp_player *player, const char *url) {
 }
 
 ffmpegkmp_player *ffmpegkmp_player_open(
-        const char *url,
+        const char *input,
+        ffplaykmp_io_callback io_callback,
+        void *io_opaque,
         int output_sample_rate,
         int output_channels,
         int *error) {
     int result = AVERROR(EINVAL);
-    ffmpegkmp_player *player = url ? player_create(output_sample_rate, output_channels, &result) : NULL;
-    if (player && (result = player_prepare(player, url)) < 0) {
+    ffmpegkmp_player *player = input ? player_create(output_sample_rate, output_channels, &result) : NULL;
+    if (player && (result = player_prepare(player, input, io_callback, io_opaque)) < 0) {
         ffmpegkmp_player_close(player);
         player = NULL;
-    }
-    if (error)
-        *error = player ? 0 : result;
-    return player;
-}
-
-ffmpegkmp_player *ffmpegkmp_player_open_io(
-        ffmpegkmp_io_callback callback,
-        void *opaque,
-        int64_t resource_id,
-        int output_sample_rate,
-        int output_channels,
-        int *error) {
-    int result = AVERROR(EINVAL);
-    ffmpegkmp_player *player = callback ? player_create(output_sample_rate, output_channels, &result) : NULL;
-    if (player) {
-        uint8_t *buffer = av_malloc(FFMPEGKMP_PLAYER_IO_BUFFER);
-        player->io_callback = callback;
-        player->io_opaque = opaque;
-        player->io_resource = resource_id;
-        player->io = buffer ? avio_alloc_context(
-                buffer, FFMPEGKMP_PLAYER_IO_BUFFER, 0, player, io_read, NULL, io_seek) : NULL;
-        if (!player->io) {
-            av_free(buffer);
-            result = AVERROR(ENOMEM);
-        } else {
-            player->format->pb = player->io;
-            player->format->flags |= AVFMT_FLAG_CUSTOM_IO;
-            result = player_prepare(player, "");
-        }
-        if (result < 0) {
-            ffmpegkmp_player_close(player);
-            player = NULL;
-        }
     }
     if (error)
         *error = player ? 0 : result;
@@ -511,11 +431,7 @@ void ffmpegkmp_player_close(ffmpegkmp_player *player) {
     av_freep(&player->convert_buffer);
     av_freep(&player->mix_buffer);
     av_channel_layout_uninit(&player->output_layout);
-    avformat_close_input(&player->format);
-    if (player->io) {
-        av_freep(&player->io->buffer);
-        avio_context_free(&player->io);
-    }
+    ffplaykmp_close_input(&player->input);
     av_free(player);
 }
 
@@ -527,19 +443,23 @@ static const player_track *track_at(const ffmpegkmp_player *player, int track) {
     return player && track >= 0 && track < player->track_count ? &player->tracks[track] : NULL;
 }
 
+static const AVCodecParameters *track_parameters(const ffmpegkmp_player *player, const player_track *track) {
+    return player->input.format->streams[track->stream_index]->codecpar;
+}
+
 int ffmpegkmp_player_track_channels(const ffmpegkmp_player *player, int track) {
     const player_track *info = track_at(player, track);
-    return info ? player->format->streams[info->stream_index]->codecpar->ch_layout.nb_channels : AVERROR(EINVAL);
+    return info ? track_parameters(player, info)->ch_layout.nb_channels : AVERROR(EINVAL);
 }
 
 int ffmpegkmp_player_track_sample_rate(const ffmpegkmp_player *player, int track) {
     const player_track *info = track_at(player, track);
-    return info ? player->format->streams[info->stream_index]->codecpar->sample_rate : AVERROR(EINVAL);
+    return info ? track_parameters(player, info)->sample_rate : AVERROR(EINVAL);
 }
 
 const char *ffmpegkmp_player_track_codec(const ffmpegkmp_player *player, int track) {
     const player_track *info = track_at(player, track);
-    return info ? avcodec_get_name(player->format->streams[info->stream_index]->codecpar->codec_id) : "";
+    return info ? avcodec_get_name(track_parameters(player, info)->codec_id) : "";
 }
 
 const char *ffmpegkmp_player_track_language(const ffmpegkmp_player *player, int track) {
@@ -593,7 +513,7 @@ int ffmpegkmp_player_set_master_gain(ffmpegkmp_player *player, float gain) {
 }
 
 int64_t ffmpegkmp_player_duration_us(const ffmpegkmp_player *player) {
-    return player && player->format->duration != AV_NOPTS_VALUE ? player->format->duration : -1;
+    return player && player->input.format->duration != AV_NOPTS_VALUE ? player->input.format->duration : -1;
 }
 
 int64_t ffmpegkmp_player_position_us(const ffmpegkmp_player *player) {
@@ -608,7 +528,7 @@ int ffmpegkmp_player_seek(ffmpegkmp_player *player, int64_t position_us) {
      * seek is demuxed from the new position instead of joining late. */
     apply_track_requests(player);
     result = avformat_seek_file(
-            player->format, -1,
+            player->input.format, -1,
             INT64_MIN, player->start_time_us + position_us, player->start_time_us + position_us,
             0);
     if (result < 0)

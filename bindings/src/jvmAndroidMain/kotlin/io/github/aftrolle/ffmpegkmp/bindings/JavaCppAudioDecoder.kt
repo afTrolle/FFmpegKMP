@@ -3,58 +3,31 @@
 
 package io.github.aftrolle.ffmpegkmp.bindings
 
-import io.github.aftrolle.ffmpegkmp.bindings.generated.bridge.ffmpegkmp_io_callback
 import io.github.aftrolle.ffmpegkmp.bindings.generated.bridge.ffmpegkmp_player
+import io.github.aftrolle.ffmpegkmp.bindings.generated.bridge.ffplaykmp_io_callback
 import io.github.aftrolle.ffmpegkmp.bindings.generated.bridge.global.bridge
-import okio.FileHandle
 import org.bytedeco.javacpp.BytePointer
 import org.bytedeco.javacpp.FloatPointer
-import org.bytedeco.javacpp.Pointer
 
 @InternalFFmpegKmpApi
-public actual fun openPlatformAudioDecoder(url: String, sampleRate: Int, channels: Int): NativeAudioDecoder {
+public actual fun openPlatformAudioDecoder(source: NativePlayerSource, sampleRate: Int, channels: Int): NativeAudioDecoder {
     JavaCppBridgeLoader.load()
+    val mounts = MountTable(source.mounts, replayableSources = true)
+    val ioCallback = mountedIoCallback { mounts }
     val error = IntArray(1)
-    val player = bridge.ffmpegkmp_player_open(url, sampleRate, channels, error)
-        ?.takeUnless(ffmpegkmp_player::isNull)
-        ?: throw NativeAudioDecoderException("Could not open audio input '$url' (error ${error[0]})", error[0])
-    return GuardedAudioDecoder(JavaCppAudioEngine(player, null, channels), sampleRate, channels)
-}
-
-@InternalFFmpegKmpApi
-public actual fun openPlatformAudioDecoder(fileHandle: FileHandle, sampleRate: Int, channels: Int): NativeAudioDecoder {
-    JavaCppBridgeLoader.load()
-    val reader = FileHandleReader(fileHandle)
-    val callback = object : ffmpegkmp_io_callback() {
-        override fun call(
-            opaque: Pointer?,
-            resourceId: Long,
-            operation: Int,
-            offset: Long,
-            data: BytePointer?,
-            size: Long,
-        ): Long = when (operation) {
-            AUDIO_IO_READ -> if (data == null || size !in 0..Int.MAX_VALUE) -1L else {
-                reader.read(offset, size.toInt()) { bytes, count -> data.put(bytes, 0, count) }
-            }
-            AUDIO_IO_SIZE -> reader.size()
-            else -> -1L
-        }
-    }
-    val error = IntArray(1)
-    val player = bridge.ffmpegkmp_player_open_io(callback, null, 0L, sampleRate, channels, error)
+    val player = bridge.ffmpegkmp_player_open(source.protocolInput(), ioCallback, null, sampleRate, channels, error)
         ?.takeUnless(ffmpegkmp_player::isNull)
     if (player == null) {
-        callback.close()
-        throw NativeAudioDecoderException("Could not open the audio input (error ${error[0]})", error[0])
+        ioCallback.close()
+        throw NativeAudioDecoderException("Could not open audio input '${source.input}' (error ${error[0]})", error[0])
     }
-    return GuardedAudioDecoder(JavaCppAudioEngine(player, callback, channels), sampleRate, channels)
+    return GuardedAudioDecoder(JavaCppAudioEngine(player, ioCallback, channels), sampleRate, channels)
 }
 
 private class JavaCppAudioEngine(
     private val player: ffmpegkmp_player,
     /** Kept reachable for the player's lifetime: native code calls back into it. */
-    private val ioCallback: ffmpegkmp_io_callback?,
+    private val ioCallback: ffplaykmp_io_callback,
     private val channels: Int,
 ) : AudioEngineCalls {
     /** Reused across reads so steady-state decoding allocates nothing off-heap. */
@@ -93,7 +66,7 @@ private class JavaCppAudioEngine(
     override fun release() {
         bridge.ffmpegkmp_player_close(player)
         pcm.close()
-        ioCallback?.close()
+        ioCallback.close()
     }
 }
 

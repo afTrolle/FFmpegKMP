@@ -75,8 +75,6 @@ private class WebCanvasOutput : FFplayVideoOutput {
     var scaleMode: String = "fit"
     var background: String = "rgba(0,0,0,1)"
 
-    override fun submit(frame: FFplayFrame): Boolean = false
-
     override fun submitNative(frame: VideoFrame, video: VideoInfo?): Boolean = frame.use {
         // The worker's RGBA8 bytes, packed, straight into ImageData.
         it.usePlanes { planes ->

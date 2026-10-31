@@ -5,7 +5,6 @@
 )
 package io.github.aftrolle.ffmpegkmp.ffplay
 
-import androidx.compose.ui.graphics.ImageBitmap
 import io.github.aftrolle.ffmpegkmp.bindings.NativePlayerError
 import io.github.aftrolle.ffmpegkmp.bindings.NativePlayerBridge
 import io.github.aftrolle.ffmpegkmp.bindings.NativePlayerConfiguration
@@ -21,22 +20,15 @@ import io.github.aftrolle.ffmpegkmp.bindings.createPlatformPlayerBridge
 import io.github.aftrolle.ffmpegkmp.codec.ColorPrimaries
 import io.github.aftrolle.ffmpegkmp.codec.ColorTransfer
 import io.github.aftrolle.ffmpegkmp.codec.CodecPreference
-import io.github.aftrolle.ffmpegkmp.codec.MediaSource
 import io.github.aftrolle.ffmpegkmp.codec.VideoFrame
 import io.github.aftrolle.ffmpegkmp.codec.VideoInfo
 import io.github.aftrolle.ffmpegkmp.codec.toNative
 import io.github.aftrolle.ffmpegkmp.codec.toPublic
 import io.github.aftrolle.ffmpegkmp.codec.toPublicVideoInfo
+import io.github.aftrolle.ffmpegkmp.core.MediaSource
 import io.github.aftrolle.ffmpegkmp.core.toNativeMounts
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.microseconds
-
-internal data class FFplayFrame(
-    val image: ImageBitmap,
-    val presentationTime: Duration,
-    val sampleAspectRatio: Double = 1.0,
-    val rotationDegrees: Double = 0.0,
-)
 
 internal interface FFplayVideoOutput {
     val kind: FFplayRendererKind
@@ -45,22 +37,12 @@ internal interface FFplayVideoOutput {
     val platformTarget: Any? get() = null
     val securePlatformTarget: Boolean get() = false
 
-    /** Takes ownership of a scheduled frame. Returns false when it cannot be presented. */
-    fun submit(frame: FFplayFrame): Boolean
-
     /**
-     * Accepts a decoded frame at the renderer boundary and takes its reference. Native outputs may
-     * override this to draw the frame's memory themselves; Canvas outputs use the default, which
-     * converts it once into a Compose bitmap with [toImageBitmap].
+     * Accepts a decoded frame at the renderer boundary and takes its reference, on the player's
+     * native thread. Returns false when it cannot be presented. Canvas outputs convert it into a
+     * [FrameImage], which reuses its bitmaps.
      */
-    fun submitNative(frame: VideoFrame, video: VideoInfo?): Boolean = submit(
-        FFplayFrame(
-            image = frame.use { it.toImageBitmap() },
-            presentationTime = frame.pts,
-            sampleAspectRatio = frame.sampleAspectRatio,
-            rotationDegrees = frame.rotationDegrees,
-        ),
-    )
+    fun submitNative(frame: VideoFrame, video: VideoInfo?): Boolean
 
     /** Accepts a borrowed platform hardware frame synchronously. */
     fun submitPlatform(frame: NativePlatformVideoFrame, video: VideoInfo?): Boolean = false

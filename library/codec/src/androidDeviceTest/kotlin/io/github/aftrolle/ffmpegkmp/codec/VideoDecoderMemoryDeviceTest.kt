@@ -3,6 +3,7 @@ package io.github.aftrolle.ffmpegkmp.codec
 
 import android.os.Build
 import io.github.aftrolle.ffmpegkmp.core.CommandIo
+import io.github.aftrolle.ffmpegkmp.core.MediaSource
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith

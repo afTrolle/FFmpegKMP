@@ -19,9 +19,9 @@ import io.github.aftrolle.ffmpegkmp.bindings.NativePlatformVideoFrameKind
 import io.github.aftrolle.ffmpegkmp.bindings.NativeVideoFrame
 import io.github.aftrolle.ffmpegkmp.bindings.NativePlayerError
 import io.github.aftrolle.ffmpegkmp.bindings.createInMemoryPlayerBridge
-import io.github.aftrolle.ffmpegkmp.codec.MediaSource
 import io.github.aftrolle.ffmpegkmp.codec.VideoFrame
 import io.github.aftrolle.ffmpegkmp.codec.VideoInfo
+import io.github.aftrolle.ffmpegkmp.core.MediaSource
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNull
@@ -321,7 +321,10 @@ private class PlatformOutput(
     override val capabilities: FFplayOutputCapabilities = FFplayOutputCapabilities(),
 ) : FFplayVideoOutput {
     override val kind = FFplayRendererKind.NATIVE_SURFACE
-    override fun submit(frame: FFplayFrame): Boolean = true
+    override fun submitNative(frame: VideoFrame, video: VideoInfo?): Boolean {
+        frame.close()
+        return true
+    }
     override fun discard() = Unit
 }
 
@@ -334,11 +337,6 @@ private class CountingOutput(
         private set
     var platformSubmitCount = 0
         private set
-
-    override fun submit(frame: FFplayFrame): Boolean {
-        submitCount++
-        return acceptFrames
-    }
 
     override fun submitNative(frame: VideoFrame, video: VideoInfo?): Boolean {
         frame.close()

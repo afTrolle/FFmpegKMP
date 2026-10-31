@@ -6,10 +6,10 @@ import android.graphics.ColorSpace
 import androidx.compose.ui.graphics.asAndroidBitmap
 import io.github.aftrolle.ffmpegkmp.codec.CodecPreference
 import io.github.aftrolle.ffmpegkmp.codec.FrameFormat
-import io.github.aftrolle.ffmpegkmp.codec.MediaSource
 import io.github.aftrolle.ffmpegkmp.codec.VideoDecoder
 import io.github.aftrolle.ffmpegkmp.codec.VideoOutput
 import io.github.aftrolle.ffmpegkmp.core.CommandIo
+import io.github.aftrolle.ffmpegkmp.core.MediaSource
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import kotlin.test.Test

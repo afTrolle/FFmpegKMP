@@ -8,9 +8,12 @@ import io.github.aftrolle.ffmpegkmp.bindings.NativeAudioTrackInfo
 import io.github.aftrolle.ffmpegkmp.bindings.NativePlayerAudio
 import io.github.aftrolle.ffmpegkmp.bindings.NativePlayerBridge
 import io.github.aftrolle.ffmpegkmp.bindings.createInMemoryPlayerBridge
-import io.github.aftrolle.ffmpegkmp.codec.MediaSource
+import io.github.aftrolle.ffmpegkmp.codec.VideoFrame
+import io.github.aftrolle.ffmpegkmp.codec.VideoInfo
 import io.github.aftrolle.ffmpegkmp.core.AudioLevel
+import io.github.aftrolle.ffmpegkmp.core.MediaSource
 import io.github.aftrolle.ffmpegkmp.player.PlaybackState
+import io.github.aftrolle.ffmpegkmp.player.setLevel
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
@@ -165,6 +168,9 @@ private fun track(index: Int, isDefault: Boolean = false, isDecodable: Boolean =
 private class AudioTestCanvas : FFplayVideoOutput {
     override val kind = FFplayRendererKind.COMPOSE_CANVAS
     override val capabilities = FFplayOutputCapabilities()
-    override fun submit(frame: FFplayFrame): Boolean = true
+    override fun submitNative(frame: VideoFrame, video: VideoInfo?): Boolean {
+        frame.close()
+        return true
+    }
     override fun discard() = Unit
 }

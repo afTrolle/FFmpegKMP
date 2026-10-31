@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
 package io.github.aftrolle.ffmpegkmp.ffplay
 
-import io.github.aftrolle.ffmpegkmp.codec.MediaSource
+import io.github.aftrolle.ffmpegkmp.core.MediaSource
+import io.github.aftrolle.ffmpegkmp.player.AudioMixControls
 import kotlin.concurrent.atomics.AtomicBoolean
 import kotlin.concurrent.atomics.ExperimentalAtomicApi
 import kotlin.time.Duration
-import io.github.aftrolle.ffmpegkmp.core.AudioLevel
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -82,8 +82,13 @@ public class FFplayPlayer internal constructor(
     public val snapshot = mutableSnapshot.asStateFlow()
     public val events: Flow<FFplayEvent> = mutableEvents.asSharedFlow()
 
-    /** The prepared source's audio tracks and levels; see [setVolume] and [selectAudioTrack]. */
-    public val audio: StateFlow<FFplayAudioState> = audioPlayback.state
+    /**
+     * The prepared source's audio mix, whose levels and track selection apply live. With no audio
+     * to play (no source, no decodable track, audio off or a protected source) it has no tracks.
+     * Its master [AudioMixControls.level] belongs to the player and carries over to later sources,
+     * so a muted player stays muted; it can be set before any source is prepared.
+     */
+    public val audio: StateFlow<AudioMixControls> = audioPlayback.mix
     internal val secureOutputRequired = mutableSecureOutputRequired.asStateFlow()
 
     public suspend fun prepare(
@@ -135,6 +140,10 @@ public class FFplayPlayer internal constructor(
 
     public fun pause(): Unit = command(needsSource = true) { engine.pause() }
 
+    /**
+     * Seeks to [position]. The frame shown is the one on screen there, as `VideoDecoder.frameAt`
+     * picks it, also while paused, and the audio resumes at the same sample.
+     */
     public fun seekTo(position: Duration) {
         require(!position.isNegative()) { "Seek position must not be negative" }
         command(needsSource = true) { engine.seekTo(position) }
@@ -145,44 +154,6 @@ public class FFplayPlayer internal constructor(
         audioPlayback.close()
         engine.stop()
         mutableSecureOutputRequired.value = false
-    }
-
-    /** Sets the master audio level; it carries over to later sources. */
-    public fun setAudioLevel(level: AudioLevel) {
-        audioPlayback.updateLevel { level }
-    }
-
-    public fun setVolume(volume: Double) {
-        audioPlayback.updateLevel { it.copy(volume = volume) }
-    }
-
-    public fun setMuted(muted: Boolean) {
-        audioPlayback.updateLevel { it.copy(muted = muted) }
-    }
-
-    /** Sets one audio track's level in the mix (audio-relative index, as in [FFplayAudioState.tracks]). */
-    public fun setAudioTrackLevel(track: Int, level: AudioLevel) {
-        audioPlayback.updateTrackLevel(track) { level }
-    }
-
-    public fun setAudioTrackVolume(track: Int, volume: Double) {
-        if (track !in audio.value.trackLevels.indices) return
-        audioPlayback.updateTrackLevel(track) { it.copy(volume = volume) }
-    }
-
-    public fun setAudioTrackMuted(track: Int, muted: Boolean) {
-        if (track !in audio.value.trackLevels.indices) return
-        audioPlayback.updateTrackLevel(track) { it.copy(muted = muted) }
-    }
-
-    /** Plays [track] alone, e.g. to switch language. */
-    public fun selectAudioTrack(track: Int) {
-        audioPlayback.selectTracks(setOf(track))
-    }
-
-    /** Adds [track] to, or removes it from, the mix — e.g. commentary over the main audio. */
-    public fun setAudioTrackEnabled(track: Int, enabled: Boolean) {
-        audioPlayback.setTrackEnabled(track, enabled)
     }
 
     internal fun attachOutput(output: FFplayVideoOutput): Unit =

@@ -64,12 +64,14 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import io.github.aftrolle.ffmpegkmp.codec.MediaSource
 import io.github.aftrolle.ffmpegkmp.core.AudioLevel
 import io.github.aftrolle.ffmpegkmp.core.CommandIo
+import io.github.aftrolle.ffmpegkmp.core.MediaSource
 import io.github.aftrolle.ffmpegkmp.ffplay.FFplayState
 import io.github.aftrolle.ffmpegkmp.ffplay.FFplaySurface
 import io.github.aftrolle.ffmpegkmp.ffplay.rememberFFplayPlayer
+import io.github.aftrolle.ffmpegkmp.player.selectTrack
+import io.github.aftrolle.ffmpegkmp.player.setLevel
 import io.github.vinceglb.filekit.readBytes
 import kotlin.math.roundToInt
 import kotlin.time.Duration.Companion.seconds
@@ -258,12 +260,13 @@ private fun PreviewPanel(state: StudioState, modifier: Modifier = Modifier) {
     val player = rememberFFplayPlayer()
     val playback by player.snapshot.collectAsState()
     val audio by player.audio.collectAsState()
+    val enabledAudioTracks by audio.enabledTracks.collectAsState()
     val selectedClip = state.selectedClip
     var previewMuted by remember { mutableStateOf(false) }
 
     // The clip's volume is what the export renders, so the preview plays it at that level too.
     LaunchedEffect(selectedClip?.volume, previewMuted) {
-        player.setAudioLevel(AudioLevel(volume = selectedClip?.volume ?: 1.0, muted = previewMuted))
+        player.audio.value.setLevel(AudioLevel(volume = selectedClip?.volume ?: 1.0, muted = previewMuted))
     }
 
     LaunchedEffect(selectedClip?.id) {
@@ -364,14 +367,14 @@ private fun PreviewPanel(state: StudioState, modifier: Modifier = Modifier) {
                                 }
                                 OutlinedButton(
                                     onClick = { previewMuted = !previewMuted },
-                                    enabled = audio.available,
+                                    enabled = audio.tracks.isNotEmpty(),
                                 ) {
                                     Text(if (previewMuted) "Unmute" else "Mute")
                                 }
                                 if (audio.tracks.size > 1) {
-                                    val current = audio.enabledTracks.singleOrNull() ?: 0
+                                    val current = enabledAudioTracks.singleOrNull() ?: 0
                                     OutlinedButton(
-                                        onClick = { player.selectAudioTrack((current + 1) % audio.tracks.size) },
+                                        onClick = { audio.selectTrack((current + 1) % audio.tracks.size) },
                                     ) {
                                         val track = audio.tracks[current]
                                         Text("Audio ${current + 1}/${audio.tracks.size}" + (track.language?.let { " · $it" } ?: ""))

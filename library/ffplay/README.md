@@ -35,11 +35,11 @@ them in software.
 
 ## Types from `codec`
 
-The source, decoder and stream types come from the Compose-free [`codec`](../codec/README.md)
-module, which `ffplay` exposes as an API dependency: `MediaSource` is what `prepare` takes,
-`CodecPreference` and `DecoderThreads` configure the player, and `VideoInfo` and `DecoderKind`
-describe what it plays. They live in `io.github.aftrolle.ffmpegkmp.codec`; binaries built against
-0.2 need recompiling.
+The decoder and stream types come from the Compose-free [`codec`](../codec/README.md) module,
+which `ffplay` exposes as an API dependency: `CodecPreference` and `DecoderThreads` configure the
+player, and `VideoInfo` and `DecoderKind` describe what it plays. They live in
+`io.github.aftrolle.ffmpegkmp.codec`. What `prepare` takes, `MediaSource`, is in
+`io.github.aftrolle.ffmpegkmp.core`; binaries built against 0.2 need recompiling.
 
 ## Platforms
 
@@ -90,20 +90,23 @@ rule that CDM-decoded pixels may be unavailable to Canvas APIs.
 ## Audio
 
 FFplay plays the source's audio in sync with its video. Audio is decoded and mixed by the `player`
-module's engine (`ffmpegkmp_player.c`) from the same input — a path/URL, or a mounted `FileHandle`
-(mount a seekable handle rather than a `Source` so the audio can read it too). The audible position
+module's engine (`ffmpegkmp_player.c`) from the same input: a path or URL, or a mounted `FileHandle`
+or `Source`, whose bytes the video and the audio share through one replay cache. The audible position
 is reported to the video worker through `ffplaykmp_player_set_master_clock`, so audio is the master
 clock: frames are scheduled against what the listener hears, and late frames are dropped. When the
 audio ends before the video, scheduling continues on the wall clock from that point.
 
-Volume, mute and track controls apply live and are published on `FFplayPlayer.audio`:
+`FFplayPlayer.audio` holds the prepared source's `AudioMixControls`, the same controls as
+`AudioPlayer`'s; they apply live. While there is no audio it has no tracks, but its master level
+belongs to the player: it is kept across sources and can be set before the first one.
 
 ```kotlin
-player.setVolume(0.8)            // master level, kept across sources
-player.setMuted(true)
-player.selectAudioTrack(1)       // switch language
-player.setAudioTrackEnabled(2, true)  // mix in commentary
-player.setAudioTrackVolume(2, 0.4)
+val audio = player.audio.value
+audio.setVolume(0.8)             // master level, kept across sources
+audio.setMuted(true)
+audio.selectTrack(1)             // switch language
+audio.setTrackEnabled(2, true)   // mix in commentary
+audio.setTrackVolume(2, 0.4)
 ```
 
 Levels are the same `AudioLevel`s the command and filter DSLs render, so a preview matches an
@@ -142,9 +145,12 @@ A frame as decoded is then in two buffers, the decoder's and the bitmap's, with 
 between. `toImageBitmap` leaves the frame open.
 
 The Compose Canvas fallback draws the player's frames the same way: the player hands over each
-frame as decoded (hardware frames downloaded), and the canvas output converts it with
-`toImageBitmap` on the player's thread. The browser's worker converts its frames into RGBA8 bytes
-before they cross to the page.
+frame as decoded (hardware frames downloaded), and the canvas output converts it into a
+[`FrameImage`](#two-bitmaps-per-source) on the player's thread. Since that thread updates the image
+at the video's rate, which drawing does not pace, the player's image keeps three bitmaps rather
+than two. Android's Surface fallback draws each frame onto the surface before it takes the next,
+so it converts every frame into one reused bitmap. The browser's worker converts its frames into
+RGBA8 bytes before they cross to the page.
 
 `FFplayConfiguration(threads = …)` sets the software decoder's threads, as `VideoDecoder.open`
 does (see [`codec`](../codec/README.md#decoder-threads)). The player decodes with FFmpeg's frame and

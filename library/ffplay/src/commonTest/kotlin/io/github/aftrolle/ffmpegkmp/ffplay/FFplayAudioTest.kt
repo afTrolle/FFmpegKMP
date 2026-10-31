@@ -3,12 +3,18 @@
 
 package io.github.aftrolle.ffmpegkmp.ffplay
 
-import io.github.aftrolle.ffmpegkmp.codec.MediaSource
+import io.github.aftrolle.ffmpegkmp.codec.VideoFrame
+import io.github.aftrolle.ffmpegkmp.codec.VideoInfo
 import io.github.aftrolle.ffmpegkmp.core.AudioLevel
+import io.github.aftrolle.ffmpegkmp.core.MediaSource
 import io.github.aftrolle.ffmpegkmp.player.AudioTrackInfo
 import io.github.aftrolle.ffmpegkmp.player.PlaybackState
+import io.github.aftrolle.ffmpegkmp.player.selectTrack
+import io.github.aftrolle.ffmpegkmp.player.setMuted
+import io.github.aftrolle.ffmpegkmp.player.setVolume
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import kotlin.time.Duration
@@ -19,6 +25,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.test.runTest
 
 class FFplayAudioTest {
@@ -68,7 +75,7 @@ class FFplayAudioTest {
         val output = CanvasOutput()
         player.attachOutput(output)
         player.prepare(MediaSource("movie.mp4"))
-        assertTrue(player.audio.value.available)
+        assertEquals(audio.tracks, player.audio.value.tracks)
 
         audio.log.clear()
         player.play()
@@ -89,7 +96,7 @@ class FFplayAudioTest {
 
         player.stop()
         assertTrue(audio.closed)
-        assertEquals(false, player.audio.value.available)
+        assertTrue(player.audio.value.tracks.isEmpty())
         player.close()
     }
 
@@ -99,14 +106,21 @@ class FFplayAudioTest {
         val second = FakeAudio()
         val sources = ArrayDeque(listOf(first, second))
         val player = audioPlayer { sources.removeFirst() }
-        player.setMuted(true)
+        // Before any source, the mix has no tracks but its master level still sticks.
+        player.audio.value.setMuted(true)
+        assertFailsWith<IllegalArgumentException> { player.audio.value.selectTrack(0) }
 
         player.prepare(MediaSource("a.mp4"))
+        val firstMix = player.audio.value
         player.prepare(MediaSource("b.mp4"))
 
         assertTrue(first.closed)
-        assertEquals(AudioLevel.Muted, second.appliedLevel)
-        assertEquals(AudioLevel.Muted, player.audio.value.level)
+        assertEquals(AudioLevel.Muted, second.level.value)
+        assertEquals(AudioLevel.Muted, player.audio.value.level.value)
+
+        // The master level is the player's, so even a replaced source's mix reaches the current one.
+        firstMix.setVolume(0.5)
+        assertEquals(AudioLevel(volume = 0.5, muted = true), second.level.value)
         player.close()
     }
 
@@ -131,12 +145,12 @@ private class FakeAudio : FFplayAudioOutput {
     override val tracks = listOf(AudioTrackInfo(0, "aac", "eng", null, 2, 48_000, true, true))
     override val state = MutableStateFlow(PlaybackState.PAUSED)
     override val position = MutableStateFlow(Duration.ZERO)
+    override val level = MutableStateFlow(AudioLevel.Unchanged)
     override val enabledTracks = MutableStateFlow(setOf(0))
     override val trackLevels = MutableStateFlow(listOf(AudioLevel.Unchanged))
     val log = mutableListOf<String>()
     val plays get() = log.count { it == "play" }
     val seeks get() = log.filter { it.startsWith("seek ") }.map { Duration.parse(it.removePrefix("seek ")) }
-    var appliedLevel: AudioLevel = AudioLevel.Unchanged
     var closed = false
 
     override fun play() {
@@ -148,9 +162,7 @@ private class FakeAudio : FFplayAudioOutput {
     override fun seekTo(position: Duration) {
         log += "seek $position"
     }
-    override fun setLevel(level: AudioLevel) {
-        appliedLevel = level
-    }
+    override fun updateLevel(transform: (AudioLevel) -> AudioLevel) = level.update(transform)
     override fun updateTrackLevel(track: Int, transform: (AudioLevel) -> AudioLevel) = Unit
     override fun setTrackEnabled(track: Int, enabled: Boolean) = Unit
     override fun selectTracks(selected: Set<Int>) = Unit
@@ -162,6 +174,9 @@ private class FakeAudio : FFplayAudioOutput {
 private class CanvasOutput : FFplayVideoOutput {
     override val kind = FFplayRendererKind.COMPOSE_CANVAS
     override val capabilities = FFplayOutputCapabilities()
-    override fun submit(frame: FFplayFrame): Boolean = true
+    override fun submitNative(frame: VideoFrame, video: VideoInfo?): Boolean {
+        frame.close()
+        return true
+    }
     override fun discard() = Unit
 }

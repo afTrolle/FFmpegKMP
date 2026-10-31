@@ -260,8 +260,10 @@ abstract class FfmpegBuildTask : DefaultTask() {
             from(source) { exclude(".git/**") }
             into(prepared)
         }
+        // The protocol takes its I/O callback type and operations from the bridge's header.
         fileSystemOperations.copy {
             from(bridgeSourceDirectory.file("ffmpegkmp_protocol.c"))
+            from(bridgeSourceDirectory.file("ffplaykmp_player.h"))
             into(prepared.resolve("libavformat"))
         }
 

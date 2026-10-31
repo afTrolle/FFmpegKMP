@@ -8,6 +8,7 @@
 
 package io.github.aftrolle.ffmpegkmp.codec
 
+import io.github.aftrolle.ffmpegkmp.bindings.DECODER_THREAD_CLOSE_BOUND
 import io.github.aftrolle.ffmpegkmp.bindings.DecoderThread
 import io.github.aftrolle.ffmpegkmp.bindings.NativeBridgeUnavailableException
 import io.github.aftrolle.ffmpegkmp.bindings.NativeDecodedFrame
@@ -18,7 +19,9 @@ import io.github.aftrolle.ffmpegkmp.bindings.NativeVideoDecoderException
 import io.github.aftrolle.ffmpegkmp.bindings.NativeVideoDecoderOutput
 import io.github.aftrolle.ffmpegkmp.bindings.NativeVideoStream
 import io.github.aftrolle.ffmpegkmp.bindings.createPlatformVideoDecoder
+import io.github.aftrolle.ffmpegkmp.bindings.openOnDecoderThread
 import io.github.aftrolle.ffmpegkmp.core.FFmpegKmpException
+import io.github.aftrolle.ffmpegkmp.core.MediaSource
 import io.github.aftrolle.ffmpegkmp.core.toNativeMounts
 import kotlin.concurrent.Volatile
 import kotlin.concurrent.atomics.AtomicBoolean
@@ -29,7 +32,6 @@ import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.nanoseconds
 import kotlin.time.Duration.Companion.seconds
 import kotlinx.coroutines.Deferred
-import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.Flow
@@ -37,7 +39,6 @@ import kotlinx.coroutines.flow.FlowCollector
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
-import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 
 /** How [VideoDecoder] hands out its frames. */
@@ -320,34 +321,29 @@ public class VideoDecoder private constructor(
         ): VideoDecoder {
             require(timeout.isPositive()) { "The timeout must be positive: $timeout" }
             val action = "open '${source.input}'"
-            val thread = DecoderThread("FFmpegKMP VideoDecoder")
-            var native: NativeVideoDecoder? = null
-            try {
-                // Creating reads nothing; finish it even when cancelled so the handle is released.
-                val created = withContext(NonCancellable) {
-                    thread.submit {
-                        decoding(action) {
-                            createPlatformVideoDecoder(
-                                source = NativePlayerSource(source.input, source.io.toNativeMounts()),
-                                output = when (output) {
-                                    is VideoOutput.Memory -> NativeVideoDecoderOutput.MEMORY
-                                    VideoOutput.GpuBuffers -> NativeVideoDecoderOutput.GPU_BUFFERS
-                                },
-                                memoryFormat = (output as? VideoOutput.Memory)?.format?.toNative(),
-                                memoryWidth = (output as? VideoOutput.Memory)?.size?.width ?: 0,
-                                memoryHeight = (output as? VideoOutput.Memory)?.size?.height ?: 0,
-                                decoderPreference = decoder.toNative(),
-                                decoderThreads = threads.toNative(),
-                                timeoutMicros = if (timeout.isInfinite()) 0L else timeout.inWholeMicroseconds,
-                            )
-                        }
-                    }.await()
+            // Creating reads nothing; it runs to its end even when cancelled so the handle is released.
+            val (thread, native) = openOnDecoderThread("FFmpegKMP VideoDecoder") {
+                decoding(action) {
+                    createPlatformVideoDecoder(
+                        source = NativePlayerSource(source.input, source.io.toNativeMounts()),
+                        output = when (output) {
+                            is VideoOutput.Memory -> NativeVideoDecoderOutput.MEMORY
+                            VideoOutput.GpuBuffers -> NativeVideoDecoderOutput.GPU_BUFFERS
+                        },
+                        memoryFormat = (output as? VideoOutput.Memory)?.format?.toNative(),
+                        memoryWidth = (output as? VideoOutput.Memory)?.size?.width ?: 0,
+                        memoryHeight = (output as? VideoOutput.Memory)?.size?.height ?: 0,
+                        decoderPreference = decoder.toNative(),
+                        decoderThreads = threads.toNative(),
+                        timeoutMicros = if (timeout.isInfinite()) 0L else timeout.inWholeMicroseconds,
+                    )
                 }
-                native = created
-                val stream = thread.within(created, timeout, action) { created.start() }
-                return VideoDecoder(created, stream, thread, timeout)
+            }
+            try {
+                val stream = thread.within(native, timeout, action) { native.start() }
+                return VideoDecoder(native, stream, thread, timeout)
             } catch (failure: Throwable) {
-                if (native != null) thread.release(native) else thread.finish(Duration.ZERO) {}
+                thread.release(native)
                 throw failure
             }
         }
@@ -374,9 +370,6 @@ private fun NativeDecodedFrame.discard() {
 
 /** How long past its native deadline a call may run before the watchdog gives up on it. */
 private val DEADLINE_GRACE = 500.milliseconds
-
-/** How long [VideoDecoder.close] waits for the native close queued behind a stuck call. */
-private val CLOSE_BOUND = 1.seconds
 
 /**
  * Runs [block] on this thread within [timeout]. The native deadline bounds FFmpeg itself, including
@@ -439,7 +432,7 @@ private suspend fun <T> DecoderThread.within(
 /** Closes [native] after any call still running, without waiting on one that is stuck. */
 private fun DecoderThread.release(native: NativeVideoDecoder) {
     native.abort()
-    finish(CLOSE_BOUND) { native.close() }
+    finish(DECODER_THREAD_CLOSE_BOUND) { native.close() }
 }
 
 private fun Duration.requireNonNegativeNanos(): Long {

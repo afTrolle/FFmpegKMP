@@ -61,7 +61,7 @@ FFmpegClient().use { ffmpeg ->
 Okio `Source` and `Sink` mounts are non-seekable streams on every platform.
 Formats that seek to patch their own header (regular, non-fragmented MP4 chief
 among them) need a seekable destination: mount a `FileHandle` directly, or
-opt into `output(path, sink, Staging())` to have FFmpeg write to a real
+opt into `output(path, sink, staged = true)` to have FFmpeg write to a real
 temporary file that gets copied to the sink once the command succeeds. Staging
 is a caller choice, not implicit bridge behavior, so streaming-friendly
 formats (`-f mpegts`, or MP4 with `-movflags frag_keyframe+empty_moov`) can
@@ -112,8 +112,7 @@ val mix = FilterGraph {
 ```
 
 `ffplay` plays video with its audio in sync (audio is the master clock) and
-exposes the same controls: `setVolume`, `setMuted`, `selectAudioTrack`,
-`setAudioTrackEnabled`, and per-track levels on `FFplayPlayer`.
+exposes the same controls, `AudioMixControls`, as `FFplayPlayer.audio`.
 
 The optional `player` artifact plays or decodes audio on its own with live controls.
 `AudioPlayer` outputs through AudioTrack (Android), Java Sound (desktop) or
@@ -123,7 +122,7 @@ tools, so they run alongside `FFmpegClient` commands instead of queueing behind
 them. They are not available in the browser yet; there `FFplayPlayer` plays audio itself.
 
 ```kotlin
-val player = AudioPlayer.open("movie.mkv")
+val player = AudioPlayer.open(MediaSource("movie.mkv"))
 player.tracks          // codec, language, title, channels... per audio track
 player.selectTrack(1)  // switch language
 player.setTrackEnabled(2, true)   // or mix in commentary
@@ -158,9 +157,9 @@ codecs advertise P010 and the HDR10 profile.
 
 `codec` holds the Compose-free frame model (`VideoFrame`, `FrameFormat`),
 frame-accurate decoding (`VideoDecoder`, through WebCodecs in the browser), encoding
-(`MediaWriter`, SDR only in the browser), and the source,
-decoder and stream types (`MediaSource`, `DecoderThreads`, `VideoInfo`, …) that
-`ffplay` builds on and names with typealiases.
+(`MediaWriter`, SDR only in the browser), and the decoder and stream types
+(`CodecPreference`, `DecoderThreads`, `VideoInfo`, …) that `ffplay` builds on.
+The media source every decoder and player opens, `MediaSource`, is in `core`.
 
 `ffplay` excludes tvOS and watchOS because Compose UI artifacts are not
 published for those targets. `player` publishes JS and Wasm artifacts so shared

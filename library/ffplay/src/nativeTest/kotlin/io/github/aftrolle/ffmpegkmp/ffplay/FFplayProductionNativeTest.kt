@@ -8,10 +8,10 @@ package io.github.aftrolle.ffmpegkmp.ffplay
 
 import io.github.aftrolle.ffmpegkmp.codec.DecoderKind
 import io.github.aftrolle.ffmpegkmp.codec.CodecPreference
-import io.github.aftrolle.ffmpegkmp.codec.MediaSource
 import io.github.aftrolle.ffmpegkmp.codec.VideoFrame
 import io.github.aftrolle.ffmpegkmp.codec.VideoInfo
 import io.github.aftrolle.ffmpegkmp.core.CommandIo
+import io.github.aftrolle.ffmpegkmp.core.MediaSource
 import kotlinx.cinterop.addressOf
 import kotlinx.cinterop.usePinned
 import kotlinx.coroutines.runBlocking
@@ -58,8 +58,6 @@ private class NativeProductionOutput : FFplayVideoOutput {
     override val capabilities = FFplayOutputCapabilities()
     var framesReceived = 0
         private set
-
-    override fun submit(frame: FFplayFrame): Boolean = true
 
     override fun submitNative(frame: VideoFrame, video: VideoInfo?): Boolean {
         frame.close()

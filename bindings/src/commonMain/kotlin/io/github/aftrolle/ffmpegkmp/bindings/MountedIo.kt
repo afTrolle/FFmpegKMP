@@ -6,7 +6,7 @@ package io.github.aftrolle.ffmpegkmp.bindings
 import okio.Buffer
 import okio.Source
 
-/** `ffmpegkmp_io_operation` / `ffmpegkmp_io_capability` values from ffmpegkmp_bridge.h. */
+/** `ffplaykmp_io_operation` / `ffplaykmp_io_capability` values from ffplaykmp_player.h. */
 internal const val IO_OPEN: Int = 0
 internal const val IO_READ: Int = 1
 internal const val IO_WRITE: Int = 2
@@ -26,9 +26,8 @@ internal fun protocolUrl(id: Long, path: String): String {
 }
 
 /**
- * Serves the `ffmpegkmp:` protocol's operations for one mounted resource. Platform bindings only
- * move bytes between native memory and the arrays passed here. Not thread-safe: bindings
- * serialize calls per resource.
+ * Serves the `ffmpegkmp:` protocol's operations for one mounted resource. Not thread-safe:
+ * [MountTable] serializes calls per resource.
  */
 internal class MountedIo(
     private val resource: NativeIoResource,
@@ -119,7 +118,8 @@ internal class ReplayableSource(private val source: Source) {
         while (!exhausted) {
             if (source.read(cache, CHUNK) <= 0L) exhausted = true
         }
-        return cache.snapshot().toByteArray()
+        // A copy of the cache that shares its segments, read out once.
+        return cache.copy().readByteArray()
     }
 
     private companion object {

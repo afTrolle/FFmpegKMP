@@ -17,16 +17,17 @@ import io.github.aftrolle.ffmpegkmp.bindings.NativeGpuBuffer
 import io.github.aftrolle.ffmpegkmp.codec.CodecPreference
 import io.github.aftrolle.ffmpegkmp.codec.FrameFormat
 import io.github.aftrolle.ffmpegkmp.codec.FrameSize
-import io.github.aftrolle.ffmpegkmp.codec.MediaSource
 import io.github.aftrolle.ffmpegkmp.codec.VideoDecoder
 import io.github.aftrolle.ffmpegkmp.codec.VideoFrame
 import io.github.aftrolle.ffmpegkmp.codec.VideoOutput
 import io.github.aftrolle.ffmpegkmp.core.CommandIo
+import io.github.aftrolle.ffmpegkmp.core.MediaSource
 import kotlin.math.abs
 import kotlin.math.floor
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
 import kotlin.test.assertSame
 import kotlin.test.assertTrue
@@ -151,6 +152,30 @@ class FrameImageTest {
     }
 
     @Test
+    fun thePlayersImageWritesTheOldestOfThreeBitmapsAndKeepsThemWhenCleared() = runBlocking<Unit> {
+        decoder("cfr-30.mp4", VideoOutput.Memory()).use { decoder ->
+            playerFrameImage().use { image ->
+                val bitmaps = mutableListOf<ImageBitmap>()
+                for (index in 0 until 7) {
+                    decoder.frameAt(index.seconds / 30).use { frame ->
+                        assertTrue(image.updateIfOpen(frame))
+                        val shown = assertNotNull(image.shown).image
+                        if (index < 3) bitmaps += shown
+                        assertSame(bitmaps[index % 3], shown, "the bitmap at frame $index")
+                    }
+                }
+                assertEquals(3 to 7, image.allocations to image.conversions)
+                image.clear()
+                assertFalse(image.showsFrame)
+                assertEquals(Size.Zero, image.displaySize)
+                decoder.frameAt(7.seconds / 30).use { assertTrue(image.updateIfOpen(it)) }
+                assertTrue(image.showsFrame)
+                assertEquals(3 to 8, image.allocations to image.conversions)
+            }
+        }
+    }
+
+    @Test
     fun aNewSizeOrFormatAllocatesAnotherBitmap() = runBlocking<Unit> {
         FrameImage().use { image ->
             decoder("cfr-30.mp4", VideoOutput.Memory()).use { it.frameAt(Duration.ZERO).use(image::update) }
@@ -219,6 +244,7 @@ class FrameImageTest {
                 assertEquals(null, image.shown)
                 assertEquals(Size.Zero, image.displaySize)
                 assertFailsWith<IllegalStateException> { image.update(frame) }
+                assertFalse(image.updateIfOpen(frame))
                 image.close()
             }
         }

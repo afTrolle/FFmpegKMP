@@ -4,10 +4,10 @@ package io.github.aftrolle.ffmpegkmp.ffplay
 import io.github.aftrolle.ffmpegkmp.bindings.InternalFFmpegKmpApi
 import io.github.aftrolle.ffmpegkmp.codec.DecoderKind
 import io.github.aftrolle.ffmpegkmp.codec.CodecPreference
-import io.github.aftrolle.ffmpegkmp.codec.MediaSource
 import io.github.aftrolle.ffmpegkmp.codec.VideoFrame
 import io.github.aftrolle.ffmpegkmp.codec.VideoInfo
 import io.github.aftrolle.ffmpegkmp.core.CommandIo
+import io.github.aftrolle.ffmpegkmp.core.MediaSource
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import kotlin.test.Test
@@ -106,8 +106,6 @@ private class ProductionOutput : FFplayVideoOutput {
     override val capabilities = FFplayOutputCapabilities()
     var framesReceived = 0
         private set
-
-    override fun submit(frame: FFplayFrame): Boolean = true
 
     override fun submitNative(frame: VideoFrame, video: VideoInfo?): Boolean {
         frame.close()

@@ -7,7 +7,9 @@ import io.github.aftrolle.ffmpegkmp.bindings.NativePlayerBridge
 import io.github.aftrolle.ffmpegkmp.bindings.NativePlayerError
 import io.github.aftrolle.ffmpegkmp.bindings.NativePlayerSource
 import io.github.aftrolle.ffmpegkmp.bindings.createInMemoryPlayerBridge
-import io.github.aftrolle.ffmpegkmp.codec.MediaSource
+import io.github.aftrolle.ffmpegkmp.codec.VideoFrame
+import io.github.aftrolle.ffmpegkmp.codec.VideoInfo
+import io.github.aftrolle.ffmpegkmp.core.MediaSource
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
@@ -104,6 +106,9 @@ private class RecordingPrepareBridge(
 private class QueuedOutput : FFplayVideoOutput {
     override val kind = FFplayRendererKind.COMPOSE_CANVAS
     override val capabilities = FFplayOutputCapabilities()
-    override fun submit(frame: FFplayFrame): Boolean = true
+    override fun submitNative(frame: VideoFrame, video: VideoInfo?): Boolean {
+        frame.close()
+        return true
+    }
     override fun discard() = Unit
 }

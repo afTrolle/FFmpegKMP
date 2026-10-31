@@ -7,14 +7,16 @@
 
 package io.github.aftrolle.ffmpegkmp.ffplay
 
-import io.github.aftrolle.ffmpegkmp.bindings.NativeFileResource
-import io.github.aftrolle.ffmpegkmp.codec.MediaSource
+import io.github.aftrolle.ffmpegkmp.bindings.NativeAudioMixer
+import io.github.aftrolle.ffmpegkmp.bindings.NativeAudioTrackInfo
 import io.github.aftrolle.ffmpegkmp.core.AudioLevel
+import io.github.aftrolle.ffmpegkmp.core.MediaSource
 import io.github.aftrolle.ffmpegkmp.core.applyLatest
-import io.github.aftrolle.ffmpegkmp.core.toNativeMounts
+import io.github.aftrolle.ffmpegkmp.player.AudioMix
+import io.github.aftrolle.ffmpegkmp.player.AudioMixControls
 import io.github.aftrolle.ffmpegkmp.player.AudioPlayer
-import io.github.aftrolle.ffmpegkmp.player.AudioTrackInfo
 import io.github.aftrolle.ffmpegkmp.player.PlaybackState
+import io.github.aftrolle.ffmpegkmp.player.setLevel
 import kotlin.concurrent.atomics.AtomicReference
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.milliseconds
@@ -30,31 +32,13 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
-/** Audio of the prepared source: its tracks and the levels the listener chose. */
-public data class FFplayAudioState(
-    /** False when the source has no playable audio, or audio is unavailable on this platform. */
-    val available: Boolean = false,
-    val tracks: List<AudioTrackInfo> = emptyList(),
-    val enabledTracks: Set<Int> = emptySet(),
-    /** Master level; kept across sources, so a muted player stays muted. */
-    val level: AudioLevel = AudioLevel.Unchanged,
-    val trackLevels: List<AudioLevel> = emptyList(),
-)
-
 /** The part of [AudioPlayer] FFplay drives; a seam for tests. */
-internal interface FFplayAudioOutput : AutoCloseable {
-    val tracks: List<AudioTrackInfo>
+internal interface FFplayAudioOutput : AudioMixControls, AutoCloseable {
     val state: StateFlow<PlaybackState>
     val position: StateFlow<Duration>
-    val enabledTracks: StateFlow<Set<Int>>
-    val trackLevels: StateFlow<List<AudioLevel>>
     fun play()
     fun pause()
     fun seekTo(position: Duration)
-    fun setLevel(level: AudioLevel)
-    fun updateTrackLevel(track: Int, transform: (AudioLevel) -> AudioLevel)
-    fun setTrackEnabled(track: Int, enabled: Boolean)
-    fun selectTracks(selected: Set<Int>)
 }
 
 /** Opens the source's audio, or returns null when it has none worth playing. */
@@ -70,8 +54,13 @@ internal class FFplayAudio(
     private val warn: (String) -> Unit,
     private val open: FFplayAudioOpener,
 ) {
-    private val mutableState = MutableStateFlow(FFplayAudioState())
-    val state: StateFlow<FFplayAudioState> = mutableState.asStateFlow()
+    /** Kept across sources, so a muted player stays muted. */
+    private val masterLevel = MutableStateFlow(AudioLevel.Unchanged)
+    private val silent: AudioMixControls = SourceMix(AudioMix(NoTracks))
+    private val mutableMix = MutableStateFlow(silent)
+
+    /** The current source's mix, or one without tracks while there is none. */
+    val mix: StateFlow<AudioMixControls> = mutableMix.asStateFlow()
 
     private val current = AtomicReference<FFplayAudioOutput?>(null)
     private val lastEngineState = AtomicReference<FFplayState?>(null)
@@ -102,14 +91,8 @@ internal class FFplayAudio(
     fun attach(audio: FFplayAudioOutput, snapshot: FFplaySnapshot, reportClock: (Duration) -> Unit) {
         close()
         current.store(audio)
-        applyLatest({ mutableState.value.level }, audio::setLevel)
-        mutableState.value = FFplayAudioState(
-            available = true,
-            tracks = audio.tracks,
-            enabledTracks = audio.enabledTracks.value,
-            level = mutableState.value.level,
-            trackLevels = audio.trackLevels.value,
-        )
+        applyLatest({ masterLevel.value }, audio::setLevel)
+        mutableMix.value = SourceMix(audio)
         clockJob = scope.launch {
             combine(audio.state, audio.position) { state, position -> state to position }
                 .collect { (state, position) -> if (state == PlaybackState.PLAYING) reportClock(position) }
@@ -151,48 +134,28 @@ internal class FFplayAudio(
         return position.inWholeMicroseconds
     }
 
-    /**
-     * Atomic, so a volume and a mute change from different threads never lose one another.
-     * [transform] may run more than once when another update races it.
-     */
-    fun updateLevel(transform: (AudioLevel) -> AudioLevel) {
-        mutableState.update { it.copy(level = transform(it.level)) }
-        applyLatest({ mutableState.value.level }) { level -> current.load()?.setLevel(level) }
-    }
-
-    fun updateTrackLevel(track: Int, transform: (AudioLevel) -> AudioLevel) {
-        val audio = current.load() ?: return
-        audio.updateTrackLevel(track, transform)
-        applyLatest({ audio.trackLevels.value }) { levels ->
-            // A source replaced meanwhile publishes its own levels.
-            mutableState.update { if (current.load() === audio) it.copy(trackLevels = levels) else it }
-        }
-    }
-
-    fun setTrackEnabled(track: Int, enabled: Boolean) {
-        val audio = current.load() ?: return
-        audio.setTrackEnabled(track, enabled)
-        mutableState.update { it.copy(enabledTracks = audio.enabledTracks.value) }
-    }
-
-    fun selectTracks(selected: Set<Int>) {
-        val audio = current.load() ?: return
-        audio.selectTracks(selected)
-        mutableState.update { it.copy(enabledTracks = audio.enabledTracks.value) }
-    }
-
     /** Releases the source's audio; the master level carries over to the next source. */
     fun close() {
         clockJob?.cancel()
         clockJob = null
         current.exchange(null)?.close()
         pendingSeek.store(null)
-        mutableState.update { FFplayAudioState(level = it.level) }
+        mutableMix.value = silent
     }
 
     private fun seekAudio(audio: FFplayAudioOutput, position: Duration) {
         pendingSeek.store(PendingSeek(position, TimeSource.Monotonic.markNow()))
         audio.seekTo(position)
+    }
+
+    /** [source]'s mix with the player's master level, which every source shares. */
+    private inner class SourceMix(source: AudioMixControls) : AudioMixControls by source {
+        override val level: StateFlow<AudioLevel> = masterLevel.asStateFlow()
+
+        override fun updateLevel(transform: (AudioLevel) -> AudioLevel) {
+            masterLevel.update(transform)
+            applyLatest({ masterLevel.value }) { level -> current.load()?.setLevel(level) }
+        }
     }
 
     private class PendingSeek(val target: Duration, val started: TimeMark)
@@ -206,27 +169,24 @@ internal class FFplayAudio(
     }
 }
 
-/** Plays a path/URL input, or a mounted file handle; other mounts can't be re-read for audio. */
-internal suspend fun openAudioPlayer(source: MediaSource): FFplayAudioOutput? {
-    val mount = source.io.toNativeMounts().firstOrNull { it.path == source.input }
-    val player = when (val resource = mount?.resource) {
-        null -> AudioPlayer.open(source.input)
-        is NativeFileResource -> AudioPlayer.open(resource.fileHandle)
-        else -> throw IllegalArgumentException("Audio needs a seekable input; mount ${source.input} as a FileHandle")
-    }
-    return object : FFplayAudioOutput, AutoCloseable by player {
-        override val tracks get() = player.tracks
+/** Plays [source]'s audio with the `player` engine, which reads the same input as the video. */
+internal suspend fun openAudioPlayer(source: MediaSource): FFplayAudioOutput {
+    val player = AudioPlayer.open(source)
+    return object : FFplayAudioOutput, AudioMixControls by player, AutoCloseable by player {
         override val state get() = player.state
         override val position get() = player.position
-        override val enabledTracks get() = player.enabledTracks
-        override val trackLevels get() = player.trackLevels
         override fun play() = player.play()
         override fun pause() = player.pause()
         override fun seekTo(position: Duration) = player.seekTo(position)
-        override fun setLevel(level: AudioLevel) = player.setLevel(level)
-        override fun updateTrackLevel(track: Int, transform: (AudioLevel) -> AudioLevel) =
-            player.updateTrackLevel(track, transform)
-        override fun setTrackEnabled(track: Int, enabled: Boolean) = player.setTrackEnabled(track, enabled)
-        override fun selectTracks(selected: Set<Int>) = player.selectTracks(selected)
     }
+}
+
+/** The mixer behind [FFplayAudio.mix] while there is no audio: only the master level changes. */
+private object NoTracks : NativeAudioMixer {
+    override val tracks: List<NativeAudioTrackInfo> = emptyList()
+    override val durationMicros: Long = -1
+    override fun isTrackEnabled(track: Int): Boolean = false
+    override fun setTrackEnabled(track: Int, enabled: Boolean) = Unit
+    override fun setTrackGain(track: Int, gain: Float) = Unit
+    override fun setMasterGain(gain: Float) = Unit
 }

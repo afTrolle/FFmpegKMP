@@ -227,24 +227,28 @@ static int ffplaykmp_wait_until(
     return AVERROR_EXIT;
 }
 
+/* A frame's media time; one without a timestamp is taken to be at `fallback_us`. */
+static int64_t ffplaykmp_frame_time_us(
+        const AVFrame *frame,
+        AVRational time_base,
+        int64_t media_start_us,
+        int64_t fallback_us) {
+    return frame->best_effort_timestamp == AV_NOPTS_VALUE
+            ? fallback_us
+            : av_rescale_q(frame->best_effort_timestamp, time_base, AV_TIME_BASE_Q) - media_start_us;
+}
+
 static int ffplaykmp_present_decoded_frame(
         ffplaykmp_player *player,
         const AVFrame *frame,
         AVRational time_base,
-        int64_t media_start_us,
-        int64_t start_position_us,
+        int64_t presentation_time_us,
         int continuous,
         int64_t *clock_origin_us) {
-    int64_t presentation_time_us = frame->best_effort_timestamp == AV_NOPTS_VALUE
-            ? start_position_us
-            : av_rescale_q(frame->best_effort_timestamp, time_base, AV_TIME_BASE_Q) -
-                    media_start_us;
     int64_t duration_us = frame->duration > 0
             ? av_rescale_q(frame->duration, time_base, AV_TIME_BASE_Q)
             : 40000;
     int schedule_result;
-    if (presentation_time_us < start_position_us)
-        return 0;
     if (continuous) {
         if (duration_us < 10000)
             duration_us = 10000;
@@ -314,11 +318,18 @@ static int ffplaykmp_present_decoded_frame(
  * Presents every frame the decoder has ready. Returns 1 once a preview frame
  * (non-continuous) was shown, 0 when the decoder needs more input, or a
  * negative error. Undecodable data is skipped, as ffplay does.
+ *
+ * Frames before `start_position_us` are decoded from the keyframe a seek
+ * lands on. Of those, `held` keeps the latest: it is the frame on screen at the
+ * target once the next frame turns out to start after it, as VideoDecoder
+ * picks, and it is shown at the target. A frame that starts exactly there
+ * replaces it.
  */
 static int ffplaykmp_present_ready_frames(
         ffplaykmp_player *player,
         AVCodecContext *decoder,
         AVFrame *frame,
+        AVFrame *held,
         const AVStream *stream,
         int64_t media_start_us,
         int64_t start_position_us,
@@ -329,6 +340,7 @@ static int ffplaykmp_present_ready_frames(
     int result;
     while ((result = avcodec_receive_frame(decoder, frame)) >= 0) {
         int frame_is_hardware = ffplaykmp_is_hardware_frame(frame);
+        int64_t presentation_time_us;
         (*decoded_frames)++;
         if (require_hardware && !frame_is_hardware) {
             av_frame_unref(frame);
@@ -339,14 +351,43 @@ static int ffplaykmp_present_ready_frames(
                 ? FFPLAYKMP_DECODER_HARDWARE
                 : FFPLAYKMP_DECODER_SOFTWARE_ACTIVE;
         pthread_mutex_unlock(&player->mutex);
-        result = ffplaykmp_present_decoded_frame(
-                player, frame, stream->time_base, media_start_us,
-                start_position_us, continuous, clock_origin_us);
+        presentation_time_us = ffplaykmp_frame_time_us(
+                frame, stream->time_base, media_start_us, start_position_us);
+        if (presentation_time_us < start_position_us) {
+            /* Unreferencing a MediaCodec frame releases its buffer without rendering it. */
+            av_frame_unref(held);
+            av_frame_move_ref(held, frame);
+            continue;
+        }
+        result = 0;
+        if (held->buf[0] && presentation_time_us > start_position_us)
+            result = ffplaykmp_present_decoded_frame(
+                    player, held, stream->time_base, start_position_us, continuous, clock_origin_us);
+        av_frame_unref(held);
+        if (result == 0)
+            result = ffplaykmp_present_decoded_frame(
+                    player, frame, stream->time_base, presentation_time_us, continuous, clock_origin_us);
         av_frame_unref(frame);
         if (result != 0)
             return result;
     }
     return 0;
+}
+
+/* At the end of the input, the last frame before the target is the one on screen there. */
+static int ffplaykmp_present_held_frame(
+        ffplaykmp_player *player,
+        AVFrame *held,
+        const AVStream *stream,
+        int64_t start_position_us,
+        int continuous,
+        int64_t *clock_origin_us) {
+    int result = 0;
+    if (held->buf[0])
+        result = ffplaykmp_present_decoded_frame(
+                player, held, stream->time_base, start_position_us, continuous, clock_origin_us);
+    av_frame_unref(held);
+    return result;
 }
 
 /*
@@ -367,6 +408,7 @@ static int ffplaykmp_decode_frames(
     const AVStream *stream;
     AVPacket *packet = NULL;
     AVFrame *frame = NULL;
+    AVFrame *held = NULL;
     int video_stream;
     int result;
     int decoded_frames = 0;
@@ -422,7 +464,8 @@ static int ffplaykmp_decode_frames(
     pthread_mutex_unlock(&player->mutex);
     packet = av_packet_alloc();
     frame = av_frame_alloc();
-    if (!packet || !frame) {
+    held = av_frame_alloc();
+    if (!packet || !frame || !held) {
         result = AVERROR(ENOMEM);
         goto cleanup;
     }
@@ -441,7 +484,7 @@ static int ffplaykmp_decode_frames(
             if (sent == AVERROR(EAGAIN)) {
                 /* The decoder wants its ready frames taken first; then it accepts the packet. */
                 result = ffplaykmp_present_ready_frames(
-                        player, decoder, frame, stream, media_start_us, start_position_us,
+                        player, decoder, frame, held, stream, media_start_us, start_position_us,
                         continuous, require_hardware, &decoded_frames, &clock_origin_us);
                 if (result != 0) {
                     av_packet_unref(packet);
@@ -452,7 +495,7 @@ static int ffplaykmp_decode_frames(
             /* Like ffplay, a damaged packet is dropped; later packets may recover. */
             if (sent >= 0) {
                 result = ffplaykmp_present_ready_frames(
-                        player, decoder, frame, stream, media_start_us, start_position_us,
+                        player, decoder, frame, held, stream, media_start_us, start_position_us,
                         continuous, require_hardware, &decoded_frames, &clock_origin_us);
                 if (result != 0) {
                     av_packet_unref(packet);
@@ -469,8 +512,11 @@ static int ffplaykmp_decode_frames(
     if (result == AVERROR_EOF) {
         avcodec_send_packet(decoder, NULL);
         result = ffplaykmp_present_ready_frames(
-                player, decoder, frame, stream, media_start_us, start_position_us,
+                player, decoder, frame, held, stream, media_start_us, start_position_us,
                 continuous, require_hardware, &decoded_frames, &clock_origin_us);
+        if (result == 0)
+            result = ffplaykmp_present_held_frame(
+                    player, held, stream, start_position_us, continuous, &clock_origin_us);
     }
 finish:
     if (result > 0)
@@ -480,6 +526,7 @@ finish:
 cleanup:
     av_packet_free(&packet);
     av_frame_free(&frame);
+    av_frame_free(&held);
     ffplaykmp_video_codec_close(&video_codec);
     ffplaykmp_close_input(&input);
     if (result < 0 && hardware_active && decoded_frames == 0 &&
@@ -1178,7 +1225,7 @@ static int64_t ffplaykmp_web_io(
     if (!callbacks || resource_id != 1)
         return -1;
     if (operation == FFPLAYKMP_IO_OPEN)
-        return 1 | 4; /* read + seek */
+        return FFPLAYKMP_IO_CAP_READ | FFPLAYKMP_IO_CAP_SEEK;
     if (operation == FFPLAYKMP_IO_SIZE)
         return callbacks->input_size;
     if (operation == FFPLAYKMP_IO_CLOSE)
@@ -1418,44 +1465,6 @@ int ffplaykmp_web_player_prepare_bytes(
             safe_extension);
     return ffplaykmp_player_prepare(player, input, source_flags);
 }
-
-#if defined(__EMSCRIPTEN__)
-FFPLAYKMP_EXPORT ffmpegkmp_player *ffplaykmp_web_player_open_audio(
-        ffplaykmp_player *player,
-        int sample_rate,
-        int channels,
-        int *error);
-
-static int64_t ffplaykmp_web_audio_io(
-        void *opaque,
-        int64_t resource_id,
-        int operation,
-        int64_t offset,
-        uint8_t *data,
-        uint64_t size) {
-    return ffplaykmp_web_io(opaque, resource_id, (uint32_t)operation, offset, data, size);
-}
-
-/*
- * Opens the prepared input's audio in the ffmpegkmp_player audio engine, for the browser
- * worker only (so it is not in the header the other bindings generate from). It reads the
- * bytes this player holds, so close it before preparing again or destroying the player.
- */
-FFPLAYKMP_EXPORT ffmpegkmp_player *ffplaykmp_web_player_open_audio(
-        ffplaykmp_player *player,
-        int sample_rate,
-        int channels,
-        int *error) {
-    ffplaykmp_web_callbacks *callbacks = player ? player->opaque : NULL;
-    if (!callbacks || !callbacks->input) {
-        if (error)
-            *error = FFPLAYKMP_ERROR_INVALID_STATE;
-        return NULL;
-    }
-    return ffmpegkmp_player_open_io(
-            ffplaykmp_web_audio_io, callbacks, 1, sample_rate, channels, error);
-}
-#endif
 
 int ffplaykmp_web_player_set_output(
         ffplaykmp_player *player,

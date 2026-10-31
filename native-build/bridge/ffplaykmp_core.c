@@ -317,7 +317,6 @@ int64_t ffplaykmp_avio_seek(void *opaque, int64_t offset, int whence) {
 }
 
 #define FFPLAYKMP_IO_BUFFER_SIZE 32768
-#define FFPLAYKMP_IO_CAP_SEEK 4
 
 void ffplaykmp_close_input(ffplaykmp_input *input) {
     avformat_close_input(&input->format);
@@ -893,8 +892,7 @@ static inline float ffplaykmp_float_from_half(uint16_t half) {
     return single.value;
 }
 
-/* Primaries the converter distinguishes; the rest are taken as BT.709, as the outputs always have. */
-static enum AVColorPrimaries ffmpegkmp_known_primaries(enum AVColorPrimaries primaries) {
+enum AVColorPrimaries ffmpegkmp_known_primaries(enum AVColorPrimaries primaries) {
     return primaries == AVCOL_PRI_BT2020 || primaries == AVCOL_PRI_SMPTE432 ? primaries : AVCOL_PRI_BT709;
 }
 
@@ -1302,11 +1300,6 @@ static int ffmpegkmp_is_hdr_transfer(enum AVColorTransferCharacteristic transfer
     return transfer == AVCOL_TRC_SMPTE2084 || transfer == AVCOL_TRC_ARIB_STD_B67;
 }
 
-static int ffmpegkmp_is_rgb(const AVFrame *frame) {
-    const AVPixFmtDescriptor *descriptor = av_pix_fmt_desc_get(frame->format);
-    return descriptor && (descriptor->flags & AV_PIX_FMT_FLAG_RGB);
-}
-
 static ffmpegkmp_route ffmpegkmp_choose_route(const AVFrame *destination, const AVFrame *source) {
     const int same = destination->color_primaries == source->color_primaries &&
             destination->color_trc == source->color_trc;
@@ -1395,7 +1388,7 @@ static int ffmpegkmp_transfer_setup(
 
 /* An unspecified YUV matrix is BT.709, as the bridge has always converted it, not swscale's BT.601. */
 static void ffmpegkmp_default_matrix(AVFrame *frame) {
-    if (frame->colorspace == AVCOL_SPC_UNSPECIFIED && !ffmpegkmp_is_rgb(frame))
+    if (frame->colorspace == AVCOL_SPC_UNSPECIFIED && !ffmpegkmp_is_rgb_format(frame->format))
         frame->colorspace = AVCOL_SPC_BT709;
 }
 
@@ -1695,7 +1688,7 @@ int ffmpegkmp_frame_convert(ffmpegkmp_converter *converter, AVFrame *destination
      * bridge has always converted: following chroma_location instead would
      * move colour edges by half a pixel. Between YUV frames it stays as it is.
      */
-    if (ffmpegkmp_is_rgb(destination) || destination->format == AV_PIX_FMT_RGBAF16)
+    if (ffmpegkmp_is_rgb_format(destination->format) || destination->format == AV_PIX_FMT_RGBAF16)
         input.chroma_location = AVCHROMA_LOC_CENTER;
     ffmpegkmp_default_matrix(destination);
     if (!destination->data[0] && (result = av_frame_get_buffer(destination, 0)) < 0)
@@ -1763,4 +1756,9 @@ int ffplaykmp_rgb_output(AVFrame *output, const AVFrame *source, enum AVPixelFor
 int ffplaykmp_download_frame(AVFrame *software, const AVFrame *hardware) {
     int result = av_hwframe_transfer_data(software, hardware, 0);
     return result < 0 ? result : av_frame_copy_props(software, hardware);
+}
+
+int ffmpegkmp_is_rgb_format(enum AVPixelFormat format) {
+    const AVPixFmtDescriptor *descriptor = av_pix_fmt_desc_get(format);
+    return descriptor && (descriptor->flags & AV_PIX_FMT_FLAG_RGB);
 }

@@ -9,8 +9,6 @@ import io.github.aftrolle.ffmpegkmp.bindings.generated.bridge.ffmpegkmp_video_de
 import io.github.aftrolle.ffmpegkmp.bindings.generated.bridge.ffplaykmp_io_callback
 import io.github.aftrolle.ffmpegkmp.bindings.generated.bridge.ffplaykmp_snapshot
 import io.github.aftrolle.ffmpegkmp.bindings.generated.bridge.global.bridge
-import org.bytedeco.javacpp.BytePointer
-import org.bytedeco.javacpp.Pointer
 
 /** [attachSurface] hands a Surface output's target to the created decoder; 0 on success. */
 internal fun createJavaCppVideoDecoder(
@@ -25,19 +23,8 @@ internal fun createJavaCppVideoDecoder(
     attachSurface: (ffmpegkmp_video_decoder) -> Int,
 ): NativeVideoDecoder {
     JavaCppBridgeLoader.load()
-    val mounts = source.mounts.mapIndexed { index, mount ->
-        index.toLong() + 1L to MountedResource(resource = mount.resource, replayableSource = true)
-    }.toMap()
-    val ioCallback = object : ffplaykmp_io_callback() {
-        override fun call(
-            opaque: Pointer?,
-            resourceId: Long,
-            operation: Int,
-            offset: Long,
-            data: BytePointer?,
-            size: Long,
-        ): Long = mounts[resourceId]?.dispatch(operation, offset, data, size) ?: -1L
-    }
+    val mounts = MountTable(source.mounts, replayableSources = true)
+    val ioCallback = mountedIoCallback { mounts }
     val error = IntArray(1)
     fun create(format: ffmpegkmp_frame_format?) = bridge.ffmpegkmp_video_decoder_create(
         source.protocolInput(),
@@ -79,7 +66,7 @@ private class JavaCppVideoDecoderEngine(
         val snapshot = ffplaykmp_snapshot()
         bridge.ffplaykmp_snapshot_init(snapshot)
         return try {
-            requireVideoSuccess(bridge.ffmpegkmp_video_decoder_get_info(decoder, snapshot), "read the video info")
+            requireNative(bridge.ffmpegkmp_video_decoder_get_info(decoder, snapshot), "read the video info", ::NativeVideoDecoderException)
             snapshot.toNativeSnapshot()
         } finally {
             snapshot.close()
@@ -89,9 +76,10 @@ private class JavaCppVideoDecoderEngine(
     override fun seek(positionNanos: Long) = bridge.ffmpegkmp_video_decoder_seek(decoder, positionNanos)
 
     override fun frameAt(positionNanos: Long): NativeDecodedFrame {
-        requireVideoSuccess(
+        requireNative(
             bridge.ffmpegkmp_video_decoder_frame_at(decoder, positionNanos, frame),
             "decode the frame at ${positionNanos}ns",
+            ::NativeVideoDecoderException,
         )
         return NativeDecodedFrame(
             serial = frame.serial(),

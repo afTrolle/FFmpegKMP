@@ -62,7 +62,7 @@ Native, Android, and desktop callers may pass normal filesystem paths directly.
 Mounted files use Okio `FileHandle` for random reads and writes; Okio `Source`
 and `Sink` values are non-seekable streams by default on every platform.
 Formats that need to seek (regular MP4 chief among them) require either a
-`FileHandle` mount or an explicit `output(path, sink, Staging())` opt-in,
+`FileHandle` mount or an explicit `output(path, sink, staged = true)` opt-in,
 which stages through a real temporary file and copies it to the sink after a
 successful command. Android additionally accepts integer or Java file
 descriptors, `ParcelFileDescriptor`,

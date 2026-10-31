@@ -12,35 +12,15 @@
 #include "libavutil/opt.h"
 #include "libavutil/version.h"
 #include "url.h"
+/* Copied in next to this file with it: the I/O callback and its operations. */
+#include "ffplaykmp_player.h"
 
 #if defined(__EMSCRIPTEN__)
 #include <emscripten/threading.h>
 #endif
 
-enum {
-    FFMPEGKMP_IO_OPEN = 0,
-    FFMPEGKMP_IO_READ = 1,
-    FFMPEGKMP_IO_WRITE = 2,
-    FFMPEGKMP_IO_SIZE = 3,
-    FFMPEGKMP_IO_CLOSE = 4,
-};
-
-enum {
-    FFMPEGKMP_IO_CAP_READ = 1,
-    FFMPEGKMP_IO_CAP_WRITE = 2,
-    FFMPEGKMP_IO_CAP_SEEK = 4,
-};
-
-typedef int64_t (*ffmpegkmp_protocol_callback)(
-        void *opaque,
-        int64_t resource_id,
-        int operation,
-        int64_t offset,
-        uint8_t *data,
-        uint64_t size);
-
 void av_ffmpegkmp_protocol_set_callback(
-        ffmpegkmp_protocol_callback callback,
+        ffplaykmp_io_callback callback,
         void *opaque);
 
 typedef struct FFmpegKmpProtocolContext {
@@ -50,13 +30,13 @@ typedef struct FFmpegKmpProtocolContext {
     int capabilities;
 } FFmpegKmpProtocolContext;
 
-static ffmpegkmp_protocol_callback io_callback;
+static ffplaykmp_io_callback io_callback;
 static void *io_opaque;
 
 #if defined(__EMSCRIPTEN__)
 typedef struct FFmpegKmpIoCall {
     int64_t resource_id;
-    int operation;
+    uint32_t operation;
     int64_t offset;
     uint8_t *data;
     uint64_t size;
@@ -73,7 +53,7 @@ static void deliver_io_call(void *opaque) {
 
 static int64_t dispatch_io(
         int64_t resource_id,
-        int operation,
+        uint32_t operation,
         int64_t offset,
         uint8_t *data,
         uint64_t size) {
@@ -98,11 +78,7 @@ static int64_t dispatch_io(
 }
 
 void av_ffmpegkmp_protocol_set_callback(
-        ffmpegkmp_protocol_callback callback,
-        void *opaque);
-
-void av_ffmpegkmp_protocol_set_callback(
-        ffmpegkmp_protocol_callback callback,
+        ffplaykmp_io_callback callback,
         void *opaque) {
     io_callback = callback;
     io_opaque = opaque;
@@ -141,27 +117,27 @@ static int ffmpegkmp_open(URLContext *h, const char *filename, int flags) {
         return AVERROR(ENOSYS);
 
     capabilities = dispatch_io(
-            context->resource_id, FFMPEGKMP_IO_OPEN, flags, NULL, 0);
+            context->resource_id, FFPLAYKMP_IO_OPEN, flags, NULL, 0);
     if (capabilities < 0)
         return AVERROR(EIO);
-    if ((flags & AVIO_FLAG_READ) && !(capabilities & FFMPEGKMP_IO_CAP_READ))
+    if ((flags & AVIO_FLAG_READ) && !(capabilities & FFPLAYKMP_IO_CAP_READ))
         return AVERROR(EACCES);
-    if ((flags & AVIO_FLAG_WRITE) && !(capabilities & FFMPEGKMP_IO_CAP_WRITE))
+    if ((flags & AVIO_FLAG_WRITE) && !(capabilities & FFPLAYKMP_IO_CAP_WRITE))
         return AVERROR(EACCES);
 
     context->capabilities = (int)capabilities;
     context->position = 0;
-    h->is_streamed = !(capabilities & FFMPEGKMP_IO_CAP_SEEK);
+    h->is_streamed = !(capabilities & FFPLAYKMP_IO_CAP_SEEK);
     return 0;
 }
 
 static int ffmpegkmp_read(URLContext *h, unsigned char *buffer, int size) {
     FFmpegKmpProtocolContext *context = h->priv_data;
     int64_t result;
-    if (!io_callback || !(context->capabilities & FFMPEGKMP_IO_CAP_READ))
+    if (!io_callback || !(context->capabilities & FFPLAYKMP_IO_CAP_READ))
         return AVERROR(EBADF);
     result = dispatch_io(
-            context->resource_id, FFMPEGKMP_IO_READ,
+            context->resource_id, FFPLAYKMP_IO_READ,
             context->position, buffer, (uint64_t)size);
     if (result < 0)
         return AVERROR(EIO);
@@ -176,10 +152,10 @@ static int ffmpegkmp_read(URLContext *h, unsigned char *buffer, int size) {
 static int ffmpegkmp_write(URLContext *h, const unsigned char *buffer, int size) {
     FFmpegKmpProtocolContext *context = h->priv_data;
     int64_t result;
-    if (!io_callback || !(context->capabilities & FFMPEGKMP_IO_CAP_WRITE))
+    if (!io_callback || !(context->capabilities & FFPLAYKMP_IO_CAP_WRITE))
         return AVERROR(EBADF);
     result = dispatch_io(
-            context->resource_id, FFMPEGKMP_IO_WRITE,
+            context->resource_id, FFPLAYKMP_IO_WRITE,
             context->position, (uint8_t *)buffer, (uint64_t)size);
     if (result < 0 || result > size)
         return AVERROR(EIO);
@@ -193,12 +169,12 @@ static int64_t ffmpegkmp_seek(URLContext *h, int64_t offset, int whence) {
     int64_t size;
     int normalized_whence = whence & ~AVSEEK_FORCE;
 
-    if (!io_callback || !(context->capabilities & FFMPEGKMP_IO_CAP_SEEK))
+    if (!io_callback || !(context->capabilities & FFPLAYKMP_IO_CAP_SEEK))
         return AVERROR(ESPIPE);
 
     if (normalized_whence == AVSEEK_SIZE)
         return dispatch_io(
-                context->resource_id, FFMPEGKMP_IO_SIZE,
+                context->resource_id, FFPLAYKMP_IO_SIZE,
                 0, NULL, 0);
 
     if (normalized_whence == SEEK_SET) {
@@ -207,7 +183,7 @@ static int64_t ffmpegkmp_seek(URLContext *h, int64_t offset, int whence) {
         base = context->position;
     } else if (normalized_whence == SEEK_END) {
         size = dispatch_io(
-                context->resource_id, FFMPEGKMP_IO_SIZE,
+                context->resource_id, FFPLAYKMP_IO_SIZE,
                 0, NULL, 0);
         if (size < 0)
             return AVERROR(EIO);
@@ -229,7 +205,7 @@ static int ffmpegkmp_close(URLContext *h) {
     FFmpegKmpProtocolContext *context = h->priv_data;
     if (io_callback) {
         const int64_t result = dispatch_io(
-                context->resource_id, FFMPEGKMP_IO_CLOSE,
+                context->resource_id, FFPLAYKMP_IO_CLOSE,
                 context->position, NULL, 0);
         if (result < 0)
             return AVERROR(EIO);

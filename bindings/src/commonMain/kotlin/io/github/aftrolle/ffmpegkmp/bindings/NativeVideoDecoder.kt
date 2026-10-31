@@ -73,10 +73,7 @@ public interface NativeVideoDecoder : AutoCloseable {
 }
 
 @InternalFFmpegKmpApi
-public class NativeVideoDecoderException(
-    message: String,
-    public val errorCode: Int,
-) : IllegalStateException(message)
+public class NativeVideoDecoderException(message: String, errorCode: Int) : NativeCallException(message, errorCode)
 
 /**
  * Creates a decoder for [source] without reading it; [NativeVideoDecoder.start] opens it.
@@ -123,7 +120,7 @@ internal class GuardedVideoDecoder(
     private val guard = NativeHandleGuard()
 
     override suspend fun start(): NativeVideoStream = guard.use(::closedError) {
-        requireVideoSuccess(engine.start(), "decode video from '$input'")
+        requireNative(engine.start(), "decode video from '$input'", ::NativeVideoDecoderException)
         val snapshot = engine.info()
         NativeVideoStream(
             info = snapshot.videoInfo
@@ -135,7 +132,7 @@ internal class GuardedVideoDecoder(
 
     override suspend fun seek(positionNanos: Long) = guard.use(::closedError) {
         require(positionNanos >= 0) { "Seek position must not be negative" }
-        requireVideoSuccess(engine.seek(positionNanos), "seek to ${positionNanos}ns")
+        requireNative(engine.seek(positionNanos), "seek to ${positionNanos}ns", ::NativeVideoDecoderException)
     }
 
     override suspend fun frameAt(positionNanos: Long): NativeDecodedFrame = guard.use(::closedError) {
@@ -159,10 +156,6 @@ internal fun requireMemoryOutput(output: NativeVideoDecoderOutput) {
     require(output == NativeVideoDecoderOutput.MEMORY) {
         "GPU buffer output is only available on Android 14 (API 34) and later"
     }
-}
-
-internal fun requireVideoSuccess(result: Int, action: String) {
-    if (result < 0) throw NativeVideoDecoderException("Could not $action (error $result)", result)
 }
 
 /** The `ffmpegkmp:<id>` URL of the mount [NativePlayerSource.input] names, ids counting from 1. */

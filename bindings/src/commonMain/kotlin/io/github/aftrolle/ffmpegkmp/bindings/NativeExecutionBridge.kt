@@ -38,16 +38,25 @@ public class NativeFileResource(
     public val fileHandle: FileHandle,
     public val access: NativeIoAccess,
     public val truncate: Boolean = access == NativeIoAccess.WRITE,
-) : NativeIoResource
+) : NativeIoResource {
+    /** Held by every [MountTable] call into this resource. */
+    internal val ioLock = IoLock()
+}
 
 @InternalFFmpegKmpApi
 public class NativeSourceResource(public val source: Source) : NativeIoResource {
     /** Shared by every mount of this resource, so a re-prepare replays what was already read. */
     internal val replay: ReplayableSource by lazy { ReplayableSource(source) }
+
+    /** Held by every [MountTable] call into this resource, as the player and its audio share [replay]. */
+    internal val ioLock = IoLock()
 }
 
 @InternalFFmpegKmpApi
-public class NativeSinkResource(public val sink: Sink) : NativeIoResource
+public class NativeSinkResource(public val sink: Sink) : NativeIoResource {
+    /** Held by every [MountTable] call into this resource. */
+    internal val ioLock = IoLock()
+}
 
 @InternalFFmpegKmpApi
 public class NativeMountedIo(

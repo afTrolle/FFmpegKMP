@@ -23,7 +23,7 @@ internal class JavaCppFrame(internal val handle: ffmpegkmp_frame) : NativeFrame 
         val info = ffmpegkmp_frame_info()
         try {
             bridge.ffmpegkmp_frame_info_init(info)
-            requireFrameSuccess(bridge.ffmpegkmp_frame_get_info(handle, info), "describe a frame")
+            requireNative(bridge.ffmpegkmp_frame_get_info(handle, info), "describe a frame", ::NativeFrameException)
             width = info.width()
             height = info.height()
             mappable = info.mappable() != 0
@@ -42,7 +42,7 @@ internal class JavaCppFrame(internal val handle: ffmpegkmp_frame) : NativeFrame 
         val planes = ffmpegkmp_frame_planes()
         try {
             bridge.ffmpegkmp_frame_planes_init(planes)
-            requireFrameSuccess(bridge.ffmpegkmp_frame_map(handle, planes), "map a frame")
+            requireNative(bridge.ffmpegkmp_frame_map(handle, planes), "map a frame", ::NativeFrameException)
             try {
                 return block(
                     List(planes.count()) { index ->
@@ -68,21 +68,21 @@ internal class JavaCppFrame(internal val handle: ffmpegkmp_frame) : NativeFrame 
     override fun convert(format: NativeFrameFormat): NativeFrame {
         val destination = ffmpegkmp_frame()
         format.withNative { native ->
-            requireFrameSuccess(bridge.ffmpegkmp_frame_convert_to(handle, native, destination), "convert a frame")
+            requireNative(bridge.ffmpegkmp_frame_convert_to(handle, native, destination), "convert a frame", ::NativeFrameException)
         }
         return JavaCppFrame(destination)
     }
 
     override fun convertInto(target: NativeFrame) {
         val destination = requireNotNull(target as? JavaCppFrame) { "Frames of another binding cannot be converted into" }
-        requireFrameSuccess(bridge.ffmpegkmp_frame_convert_into(destination.handle, handle), "convert a frame")
+        requireNative(bridge.ffmpegkmp_frame_convert_into(destination.handle, handle), "convert a frame", ::NativeFrameException)
     }
 
     override fun <R> useWritablePixels(block: (address: Long, rowBytes: Int) -> R): R {
         val planes = ffmpegkmp_frame_planes()
         try {
             bridge.ffmpegkmp_frame_planes_init(planes)
-            requireFrameSuccess(bridge.ffmpegkmp_frame_map_writable(handle, planes), "map a frame for writing")
+            requireNative(bridge.ffmpegkmp_frame_map_writable(handle, planes), "map a frame for writing", ::NativeFrameException)
             try {
                 check(planes.count() == 1) { "A ${planes.count()}-plane frame has no single packed plane to write" }
                 return block(planes.data(0).address(), planes.row_bytes(0))
@@ -132,7 +132,7 @@ public actual fun allocateNativeFrame(format: NativeFrameFormat, width: Int, hei
     JavaCppBridgeLoader.load()
     val frame = ffmpegkmp_frame()
     format.withNative { native ->
-        requireFrameSuccess(bridge.ffmpegkmp_frame_pool_get(null, native, width, height, frame), "allocate a ${width}x$height frame")
+        requireNative(bridge.ffmpegkmp_frame_pool_get(null, native, width, height, frame), "allocate a ${width}x$height frame", ::NativeFrameException)
     }
     return JavaCppFrame(frame)
 }

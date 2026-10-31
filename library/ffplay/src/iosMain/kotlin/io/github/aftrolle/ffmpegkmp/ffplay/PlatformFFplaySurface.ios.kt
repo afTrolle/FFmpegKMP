@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import io.github.aftrolle.ffmpegkmp.codec.ColorPrimaries
 import io.github.aftrolle.ffmpegkmp.codec.ColorTransfer
+import io.github.aftrolle.ffmpegkmp.codec.VideoFrame
 import io.github.aftrolle.ffmpegkmp.codec.VideoInfo
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
@@ -35,7 +36,6 @@ import kotlinx.cinterop.readValue
 import kotlinx.cinterop.reinterpret
 import kotlinx.cinterop.useContents
 import kotlinx.cinterop.value
-import kotlinx.coroutines.flow.MutableStateFlow
 import platform.AVFoundation.AVLayerVideoGravityResize
 import platform.AVFoundation.AVLayerVideoGravityResizeAspect
 import platform.AVFoundation.AVLayerVideoGravityResizeAspectFill
@@ -79,7 +79,6 @@ internal actual fun PlatformFFplaySurface(
     }
 
     val output = remember(player) { IOSSampleBufferOutput() }
-    val softwareFrame by output.frames.collectAsState()
     // Only the stream's display metadata matters here; the full snapshot changes every frame.
     val video by remember(player) { player.snapshot.map { it.video }.distinctUntilChanged() }
         .collectAsState(player.snapshot.value.video)
@@ -117,11 +116,11 @@ internal actual fun PlatformFFplaySurface(
             )
         }
 
-        // The overlay is transparent while VideoToolbox is active. If hardware
-        // negotiation falls back to software, scheduled RGBA frames remain visible.
-        softwareFrame?.let { frame ->
+        // The overlay is absent while VideoToolbox is active. If hardware
+        // negotiation falls back to software, scheduled frames remain visible.
+        if (output.image.showsFrame) {
             Canvas(Modifier.fillMaxSize()) {
-                drawFrame(frame, contentScale)
+                drawFrameImage(output.image, contentScale)
             }
         }
     }
@@ -129,7 +128,7 @@ internal actual fun PlatformFFplaySurface(
 
 private class IOSSampleBufferOutput : FFplayVideoOutput {
     override val kind: FFplayRendererKind = FFplayRendererKind.NATIVE_SURFACE
-    val frames = MutableStateFlow<FFplayFrame?>(null)
+    val image = playerFrameImage()
     override val capabilities: FFplayOutputCapabilities
         get() {
             val directPresentation = videoInfo.hasIdentityDisplayTransform()
@@ -165,28 +164,26 @@ private class IOSSampleBufferOutput : FFplayVideoOutput {
         }
     }
 
-    override fun submit(frame: FFplayFrame): Boolean {
-        frames.value = frame
-        return true
-    }
+    override fun submitNative(frame: VideoFrame, video: VideoInfo?): Boolean = frame.use { image.updateIfOpen(it) }
 
     override fun submitPlatform(frame: NativePlatformVideoFrame, video: VideoInfo?): Boolean {
         if (frame.kind != NativePlatformVideoFrameKind.CV_PIXEL_BUFFER) return false
         val target = view ?: return false
         val imageBuffer = frame.handle as? CVImageBufferRef ?: return false
         val sampleBuffer = createSampleBuffer(imageBuffer, frame.presentationTimeUs) ?: return false
-        frames.value = null
+        image.clear()
         target.enqueue(sampleBuffer)
         return true
     }
 
     override fun discard() {
-        frames.value = null
+        image.clear()
         view?.flush()
     }
 
     fun release() {
         discard()
+        image.close()
         view = null
     }
 }

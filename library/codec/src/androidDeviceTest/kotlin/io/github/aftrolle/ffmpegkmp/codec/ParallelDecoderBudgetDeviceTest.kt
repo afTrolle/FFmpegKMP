@@ -4,6 +4,7 @@ package io.github.aftrolle.ffmpegkmp.codec
 import android.os.PowerManager
 import android.util.Log
 import androidx.test.platform.app.InstrumentationRegistry
+import io.github.aftrolle.ffmpegkmp.core.MediaSource
 import java.io.File
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger

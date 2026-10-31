@@ -5,19 +5,17 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.RememberObserver
-import androidx.compose.runtime.collectAsState
-import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.unit.IntRect
 import io.github.aftrolle.ffmpegkmp.codec.ColorPrimaries
+import io.github.aftrolle.ffmpegkmp.codec.VideoFrame
+import io.github.aftrolle.ffmpegkmp.codec.VideoInfo
 import kotlinx.coroutines.DelicateCoroutinesApi
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.GlobalScope
-import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.launch
 
 /** A player that is closed when it leaves the composition. */
@@ -75,20 +73,22 @@ internal fun ComposeCanvasFFplaySurface(
     backgroundColor: Color,
 ) {
     val output = remember(player) { ComposeCanvasOutput() }
-    val frame by output.frames.collectAsState()
     DisposableEffect(player, output) {
         player.attachOutput(output)
-        onDispose { player.detachOutput(output) }
+        onDispose {
+            player.detachOutput(output)
+            output.close()
+        }
     }
     Canvas(modifier) {
         drawRect(backgroundColor)
-        frame?.let { drawFrame(it, contentScale) }
+        drawFrameImage(output.image, contentScale)
     }
 }
 
-private class ComposeCanvasOutput : FFplayVideoOutput {
+private class ComposeCanvasOutput : FFplayVideoOutput, AutoCloseable {
     override val kind: FFplayRendererKind = FFplayRendererKind.COMPOSE_CANVAS
-    val frames = MutableStateFlow<FFplayFrame?>(null)
+    val image = playerFrameImage()
     override val capabilities = FFplayOutputCapabilities(
         softwareFrameUpload = true,
         zeroCopy = false,
@@ -99,20 +99,24 @@ private class ComposeCanvasOutput : FFplayVideoOutput {
         toneMapHdrToSdr = true,
     )
 
-    override fun submit(frame: FFplayFrame): Boolean {
-        frames.value = frame
-        return true
-    }
+    override fun submitNative(frame: VideoFrame, video: VideoInfo?): Boolean = frame.use { image.updateIfOpen(it) }
 
-    override fun discard() {
-        frames.value = null
-    }
+    override fun discard() = image.clear()
+
+    override fun close() = image.close()
 }
 
-internal fun DrawScope.drawFrame(frame: FFplayFrame, contentScale: ContentScale) {
-    val image = frame.image
-    val display = displaySize(image.width, image.height, frame.sampleAspectRatio, frame.rotationDegrees)
-    drawUpright(image, IntRect(0, 0, image.width, image.height), frame.rotationDegrees, contentScale.place(display, size))
+/**
+ * The image a player's Canvas output converts its frames into, with three bitmaps rather than two:
+ * the player's native thread updates it at the video's rate, which drawing does not pace, so a
+ * drawing must not see its bitmap written by the second update after it began.
+ */
+internal fun playerFrameImage(): FrameImage = FrameImage(bitmaps = 3)
+
+/** Draws [image] placed by [contentScale] in the whole canvas; nothing before its first frame. */
+internal fun DrawScope.drawFrameImage(image: FrameImage, contentScale: ContentScale) {
+    val destination = contentScale.place(image.displaySize, size)
+    drawFrameImage(image, destination.topLeft, destination.size)
 }
 
 internal fun Double.normalizedRotation(): Float =

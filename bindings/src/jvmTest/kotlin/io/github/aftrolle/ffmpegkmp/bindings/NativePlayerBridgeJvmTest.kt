@@ -127,6 +127,31 @@ class NativePlayerBridgeJvmTest {
     }
 
     @Test
+    fun aSeekShowsTheFrameOnScreenAtTheTarget() {
+        val frames = mutableListOf<NativeVideoFrame>()
+        createPlatformPlayerBridge(
+            NativePlayerConfiguration(NativePlayerDecoderPreference.SOFTWARE),
+            update = {},
+            frame = frames::add,
+        ).use { bridge ->
+            assertEquals(0, bridge.setOutput(NativePlayerOutputCapabilities()))
+            assertEquals(0, bridge.prepare(clearVideoSource()))
+            // The fixture runs at 25 fps with keyframes at 0, 0.48 and 0.96 s. A paused seek shows
+            // its frame before returning: inside the 0.28 s frame, exactly on the 0.32 s one, and
+            // inside the last frame, which only the end of the input shows to be the one there.
+            listOf(300_000L, 320_000L, 990_000L).forEach { target ->
+                frames.forEach { it.frame.close() }
+                frames.clear()
+                assertEquals(0, bridge.seek(target))
+                val frame = frames.single()
+                assertEquals(target, frame.presentationTimeUs, "the frame shown after seeking to ${target}us")
+                assertEquals(bridge.snapshot().queueSerial, frame.queueSerial)
+            }
+            frames.forEach { it.frame.close() }
+        }
+    }
+
+    @Test
     fun compiledPlayerSchedulesDecodedFramesAndAdvancesItsClock() {
         val frames = CopyOnWriteArrayList<NativeVideoFrame>()
         val updates = CopyOnWriteArrayList<NativePlayerSnapshot>()

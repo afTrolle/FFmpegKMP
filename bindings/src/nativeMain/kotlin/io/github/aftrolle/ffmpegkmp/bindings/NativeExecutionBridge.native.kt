@@ -3,7 +3,6 @@
     kotlinx.cinterop.ExperimentalForeignApi::class,
     kotlinx.cinterop.UnsafeNumber::class,
     io.github.aftrolle.ffmpegkmp.bindings.InternalFFmpegKmpApi::class,
-    kotlin.concurrent.atomics.ExperimentalAtomicApi::class,
 )
 
 package io.github.aftrolle.ffmpegkmp.bindings
@@ -37,7 +36,6 @@ import kotlinx.cinterop.usePinned
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.IO
 import platform.posix.memcpy
-import kotlin.concurrent.atomics.AtomicBoolean
 
 @InternalFFmpegKmpApi
 public actual fun createPlatformExecutionBridge(): NativeExecutionBridge =
@@ -59,15 +57,13 @@ private class NativeCInteropCommandEngine : CommandEngineCalls {
     }
 
     override fun attach(mounts: List<NativeMountedIo>, emit: (NativeExecutionEvent) -> Unit) {
-        callbackState.mounts = mounts.mapIndexed { index, mount ->
-            (index.toLong() + 1L) to NativeMountedResource(mount.resource)
-        }.toMap()
+        callbackState.mounts = MountTable(mounts)
         callbackState.emit = emit
     }
 
     override fun detach() {
         callbackState.emit = null
-        callbackState.mounts = emptyMap()
+        callbackState.mounts = MountTable.Empty
     }
 
     override fun resetCancel() = ffmpegkmp_context_reset_cancel(context)
@@ -98,7 +94,7 @@ private class NativeCInteropCommandEngine : CommandEngineCalls {
 
 private class CallbackState {
     var emit: ((NativeExecutionEvent) -> Unit)? = null
-    var mounts: Map<Long, NativeMountedResource> = emptyMap()
+    var mounts = MountTable.Empty
 }
 
 private fun receiveNativeEvent(
@@ -120,68 +116,42 @@ private fun receiveNativeEvent(
     )
 }
 
-/** Moves `ffmpegkmp:` protocol bytes between native memory and a [MountedIo]. */
-internal class NativeMountedResource(resource: NativeIoResource, replayableSource: Boolean = false) {
-    private val io = MountedIo(resource, replayableSource)
-    private var scratch = ByteArray(0)
-
-    /** Serializes dispatch like the JVM's @Synchronized: player worker threads share the cache. */
-    private val busy = AtomicBoolean(false)
-
-    fun dispatch(operation: Int, offset: Long, data: CPointer<UByteVar>?, size: ULong): Long {
-        while (!busy.compareAndSet(expectedValue = false, newValue = true)) {
-            // Contention is rare and short: only concurrent reads of one mount.
-        }
-        return try {
-            when (operation) {
-                IO_OPEN -> io.open(offset.toInt())
-                IO_READ -> {
-                    val length = size.checkedSize()
-                    val bytes = scratch(length)
-                    val count = io.read(offset, bytes, length)
-                    if (count > 0) {
-                        val target = data ?: return IO_FAILURE
-                        bytes.usePinned { pinned -> memcpy(target, pinned.addressOf(0), count.convert()) }
-                    }
-                    count.toLong()
-                }
-                IO_WRITE -> {
-                    val length = size.checkedSize()
-                    val bytes = (data ?: return IO_FAILURE).readBytes(length)
-                    if (io.write(offset, bytes, length)) length.toLong() else IO_FAILURE
-                }
-                IO_SIZE -> io.size()
-                IO_CLOSE -> io.close()
-                else -> IO_FAILURE
-            }
-        } catch (_: Throwable) {
-            IO_FAILURE
-        } finally {
-            busy.store(false)
-        }
-    }
-
-    /** Reused across calls: FFmpeg reads in similar-sized blocks. */
-    private fun scratch(size: Int): ByteArray {
-        if (scratch.size < size) scratch = ByteArray(size)
-        return scratch
-    }
-}
-
 private fun receiveNativeIo(
     opaque: COpaquePointer?,
     resourceId: Long,
-    operation: Int,
+    operation: UInt,
     offset: Long,
     data: CPointer<UByteVar>?,
     size: ULong,
 ): Long {
     val state = opaque?.asStableRef<CallbackState>()?.get() ?: return IO_FAILURE
-    return state.mounts[resourceId]?.dispatch(operation, offset, data, size) ?: IO_FAILURE
+    return state.mounts.dispatch(resourceId, operation.toInt(), offset, data, size)
 }
 
-private fun ULong.checkedSize(): Int {
-    require(this <= Int.MAX_VALUE.toULong()) { "Invalid native I/O size: $this" }
-    return toInt()
-}
+/** Serves one `ffplaykmp_io_callback` call, moving bytes between [data] and the table's resources. */
+internal fun MountTable.dispatch(
+    resourceId: Long,
+    operation: Int,
+    offset: Long,
+    data: CPointer<UByteVar>?,
+    size: ULong,
+): Long = dispatch(
+    resourceId,
+    operation,
+    offset,
+    size = if (size > Long.MAX_VALUE.toULong()) -1L else size.toLong(),
+    copyOut = { bytes, count -> if (count > 0) bytes.usePinned { memcpy(checkNotNull(data), it.addressOf(0), count.convert()) } },
+    copyIn = { bytes, count -> if (count > 0) bytes.usePinned { memcpy(it.addressOf(0), checkNotNull(data), count.convert()) } },
+)
 
+/** An `ffplaykmp_io_callback` whose opaque is a [StableRef] to the [MountTable] it serves. */
+internal fun receiveMountedIo(
+    opaque: COpaquePointer?,
+    resourceId: Long,
+    operation: UInt,
+    offset: Long,
+    data: CPointer<UByteVar>?,
+    size: ULong,
+): Long = runCatching {
+    opaque?.asStableRef<MountTable>()?.get()?.dispatch(resourceId, operation.toInt(), offset, data, size)
+}.getOrNull() ?: IO_FAILURE

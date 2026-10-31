@@ -11,13 +11,13 @@ import io.github.aftrolle.ffmpegkmp.bindings.DecoderThread
 import io.github.aftrolle.ffmpegkmp.bindings.NativeAudioDecoder
 import io.github.aftrolle.ffmpegkmp.bindings.NativeAudioDecoderException
 import io.github.aftrolle.ffmpegkmp.bindings.NativeBridgeUnavailableException
+import io.github.aftrolle.ffmpegkmp.bindings.NativePlayerSource
 import io.github.aftrolle.ffmpegkmp.bindings.openPlatformAudioDecoder
 import io.github.aftrolle.ffmpegkmp.core.AudioLevel
 import io.github.aftrolle.ffmpegkmp.core.FFmpegKmpException
-import io.github.aftrolle.ffmpegkmp.core.applyLatest
+import io.github.aftrolle.ffmpegkmp.core.MediaSource
+import io.github.aftrolle.ffmpegkmp.core.toNativeMounts
 import kotlin.concurrent.atomics.AtomicBoolean
-import kotlin.concurrent.atomics.AtomicReference
-import kotlin.concurrent.atomics.update
 import kotlin.coroutines.cancellation.CancellationException
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.microseconds
@@ -28,7 +28,6 @@ import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
-import okio.FileHandle
 
 /** Interleaved 32-bit float PCM, the format [AudioDecoder] produces and [AudioPlayer] plays. */
 public data class PcmFormat(
@@ -61,8 +60,8 @@ public data class AudioTrackInfo(
 public class AudioDecodingException(message: String, cause: Throwable? = null) : FFmpegKmpException(message, cause)
 
 /**
- * Decodes an input's audio tracks into interleaved float PCM, mixing every enabled track at its
- * own [AudioLevel] and then applying the master [level]. This is the engine behind
+ * Decodes an input's audio tracks into interleaved float PCM, mixed as its [AudioMixControls] set:
+ * every enabled track at its own [AudioLevel], then the master [level]. This is the engine behind
  * [AudioPlayer]; use it directly to feed your own audio pipeline, analyse audio, or render PCM.
  *
  * A mix sums tracks the same way the filters module's `FilterGraph.Builder.mixAudio` does with its
@@ -82,24 +81,8 @@ public class AudioDecoder internal constructor(
     private val native: NativeAudioDecoder,
     /** Null runs the native calls on the caller's thread, as the tests' fakes need. */
     private val thread: DecoderThread?,
-) : AutoCloseable {
+) : AudioMixControls by AudioMix(native), AutoCloseable {
     public val format: PcmFormat = PcmFormat(native.sampleRate, native.channels)
-
-    public val tracks: List<AudioTrackInfo> = native.tracks.map { track ->
-        AudioTrackInfo(
-            index = track.index,
-            codec = track.codec,
-            language = track.language,
-            title = track.title,
-            channels = track.channels,
-            sampleRate = track.sampleRate,
-            isDefault = track.isDefault,
-            isDecodable = track.isDecodable,
-        )
-    }
-
-    private val masterLevel = AtomicReference(AudioLevel.Unchanged)
-    private val levels = AtomicReference(List(tracks.size) { AudioLevel.Unchanged })
 
     /** Null when the input does not report a duration (live streams, some raw formats). */
     public val duration: Duration? = native.durationMicros.takeIf { it >= 0 }?.microseconds
@@ -112,53 +95,6 @@ public class AudioDecoder internal constructor(
 
     /** The decoder's thread decodes here and [read] copies out, so a cancelled read never writes into the caller's array. */
     private var decoded = FloatArray(0)
-
-    /** Master level, applied to the mix of every enabled track. */
-    public var level: AudioLevel
-        get() = masterLevel.load()
-        set(value) {
-            masterLevel.store(value)
-            applyLatest(masterLevel::load) { native.setMasterGain(it.effectiveVolume.toFloat()) }
-        }
-
-    public val trackLevels: List<AudioLevel> get() = levels.load()
-
-    public fun trackLevel(track: Int): AudioLevel = levels.load()[requireTrack(track)]
-
-    public fun setTrackLevel(track: Int, level: AudioLevel) {
-        updateTrackLevel(track) { level }
-    }
-
-    /**
-     * Atomic, so a volume and a mute change to one track from different threads never lose one
-     * another. [transform] may run more than once when another update races it, so keep it pure.
-     */
-    public fun updateTrackLevel(track: Int, transform: (AudioLevel) -> AudioLevel) {
-        requireTrack(track)
-        levels.update { current -> current.toMutableList().also { it[track] = transform(it[track]) } }
-        applyLatest({ levels.load()[track] }) { native.setTrackGain(track, it.effectiveVolume.toFloat()) }
-    }
-
-    /** Tracks currently decoded and mixed. Opening enables FFmpeg's default track only. */
-    public val enabledTracks: Set<Int> get() = tracks.indices.filterTo(mutableSetOf(), native::isTrackEnabled)
-
-    /**
-     * Adds or removes [track] from the mix. Enabling a track mid-playback joins it at the current
-     * position; disabling one stops decoding it altogether. A track muted with [setTrackLevel]
-     * is still decoded, so un-muting is instant.
-     */
-    public fun setTrackEnabled(track: Int, enabled: Boolean) {
-        if (enabled) requireDecodable(track) else requireTrack(track)
-        decoding("enable audio track $track") { native.setTrackEnabled(track, enabled) }
-    }
-
-    /** Mixes exactly [selected], e.g. `selectTracks(setOf(2))` to switch language. */
-    public fun selectTracks(selected: Set<Int>) {
-        selected.forEach(::requireDecodable)
-        decoding("select audio tracks $selected") {
-            tracks.indices.forEach { track -> native.setTrackEnabled(track, track in selected) }
-        }
-    }
 
     /** Seeks so the next [read] starts at [position], sample-accurately. */
     public suspend fun seek(position: Duration) {
@@ -212,37 +148,21 @@ public class AudioDecoder internal constructor(
         return decoding(action) { checkNotNull(thread).submit(block).await() }
     }
 
-    private fun requireDecodable(track: Int) {
-        requireTrack(track)
-        require(tracks[track].isDecodable) { "No decoder for audio track $track (${tracks[track].codec})" }
-    }
-
-    private fun requireTrack(track: Int): Int {
-        require(track in tracks.indices) { "No audio track $track; the input has ${tracks.size}" }
-        return track
-    }
-
     public companion object {
         /**
-         * Opens [url] — a file path or any URL the FFmpeg build's protocols accept — for audio
-         * decoding, probing the input on the decoder's thread.
-         */
-        public suspend fun open(url: String, format: PcmFormat = PcmFormat.Default): AudioDecoder {
-            require(url.isNotBlank()) { "Audio URL must not be blank" }
-            return open("open '$url'") { openPlatformAudioDecoder(url, format.sampleRate, format.channels) }
-        }
-
-        /**
-         * Opens a random-access [fileHandle] — for example an Android content URI, or media
-         * already in memory. The decoder reads it on demand and does not close it.
-         */
-        public suspend fun open(fileHandle: FileHandle, format: PcmFormat = PcmFormat.Default): AudioDecoder =
-            open("open the file handle") { openPlatformAudioDecoder(fileHandle, format.sampleRate, format.channels) }
-
-        /**
+         * Opens [source] for audio decoding, probing the input on the decoder's thread: a file
+         * path, any URL the FFmpeg build's protocols accept, or an input mounted in its `io`, such
+         * as an Android content URI or media in memory. A mount is read on demand (a `Source`
+         * through a cache, so the decoder can seek it) and is not closed.
+         *
          * Probing cannot be interrupted, so it runs to completion; if the caller was cancelled
          * meanwhile, the decoder it opened is closed instead of leaked.
          */
+        public suspend fun open(source: MediaSource, format: PcmFormat = PcmFormat.Default): AudioDecoder {
+            val native = NativePlayerSource(source.input, source.io.toNativeMounts())
+            return open("open '${source.input}'") { openPlatformAudioDecoder(native, format.sampleRate, format.channels) }
+        }
+
         private suspend fun open(action: String, create: () -> NativeAudioDecoder): AudioDecoder {
             val thread = DecoderThread("FFmpegKMP AudioDecoder")
             val native = try {
@@ -266,7 +186,7 @@ public class AudioDecoder internal constructor(
 /** How long [AudioDecoder.close] waits for the native close queued behind a stuck call. */
 private val CLOSE_BOUND = 1.seconds
 
-private inline fun <T> decoding(action: String, block: () -> T): T = try {
+internal inline fun <T> decoding(action: String, block: () -> T): T = try {
     block()
 } catch (failure: NativeAudioDecoderException) {
     throw AudioDecodingException("Could not $action: ${failure.message}", failure)

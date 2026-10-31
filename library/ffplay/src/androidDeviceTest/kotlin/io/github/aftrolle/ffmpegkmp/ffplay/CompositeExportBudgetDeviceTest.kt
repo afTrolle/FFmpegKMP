@@ -15,7 +15,6 @@ import io.github.aftrolle.ffmpegkmp.codec.CodecPreference
 import io.github.aftrolle.ffmpegkmp.codec.DynamicRange
 import io.github.aftrolle.ffmpegkmp.codec.FrameRate
 import io.github.aftrolle.ffmpegkmp.codec.MediaOutput
-import io.github.aftrolle.ffmpegkmp.codec.MediaSource
 import io.github.aftrolle.ffmpegkmp.codec.MediaWriter
 import io.github.aftrolle.ffmpegkmp.codec.VideoCodec
 import io.github.aftrolle.ffmpegkmp.codec.VideoDecoder
@@ -23,6 +22,7 @@ import io.github.aftrolle.ffmpegkmp.codec.VideoEncoderConfig
 import io.github.aftrolle.ffmpegkmp.codec.VideoFrame
 import io.github.aftrolle.ffmpegkmp.codec.VideoOutput
 import io.github.aftrolle.ffmpegkmp.codec.VideoTrack
+import io.github.aftrolle.ffmpegkmp.core.MediaSource
 import java.io.File
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger

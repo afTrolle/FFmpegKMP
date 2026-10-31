@@ -72,7 +72,7 @@ private class BrowserVideoDecoder(
             NativePlayerError.UNSUPPORTED,
         )
         val calls = BrowserWorkerCalls.start().also { worker = it }
-        val bytes = copyToJsUint8Array(mount.readBytesForBrowser())
+        val bytes = transferToJsUint8Array(mount.readBytesForBrowser())
         val opened = call {
             calls.request(
                 openMessage(

@@ -10,7 +10,8 @@ import org.bytedeco.javacpp.tools.InfoMapper;
 @Properties(
         value = {
                 @Platform(
-                        cinclude = {"<ffmpegkmp_bridge.h>", "<ffplaykmp_player.h>", "<ffmpegkmp_frame.h>", "<ffmpegkmp_decoder.h>", "<ffmpegkmp_writer.h>"},
+                        // The player header first: the bridge header takes its I/O callback type.
+                        cinclude = {"<ffplaykmp_player.h>", "<ffmpegkmp_bridge.h>", "<ffmpegkmp_frame.h>", "<ffmpegkmp_decoder.h>", "<ffmpegkmp_writer.h>"},
                         link = {"ffmpegkmp_bridge#", "avdevice", "avfilter", "avformat", "avcodec", "swscale", "swresample", "avutil"}
                 ),
                 // Platform-specific link lists replace the default one, so repeat it in full.

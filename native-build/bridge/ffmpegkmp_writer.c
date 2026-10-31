@@ -26,8 +26,6 @@
 #define FFMPEGKMP_MICROSECONDS ((AVRational){ 1, 1000000 })
 /* Timestamps of a variable frame rate, as MPEG-TS counts them. */
 #define FFMPEGKMP_VFR_TIME_BASE ((AVRational){ 1, 90000 })
-#define FFMPEGKMP_IO_CAP_WRITE 2
-#define FFMPEGKMP_IO_CAP_SEEK 4
 
 typedef struct ffmpegkmp_writer_track {
     enum AVMediaType type;
@@ -260,25 +258,13 @@ static int ffmpegkmp_choose_pixel_format(
     return 0;
 }
 
+/* The frames a track takes: `layout`, in the colour the config's dynamic range calls for, in limited range. */
 static void ffmpegkmp_describe_input(
         const ffmpegkmp_video_encoder_config *config,
         enum AVPixelFormat layout,
         ffmpegkmp_frame_format *format) {
     ffmpegkmp_frame_format_init(format);
-    switch (layout) {
-    case AV_PIX_FMT_NV12:
-        format->layout = FFMPEGKMP_LAYOUT_NV12;
-        break;
-    case AV_PIX_FMT_P010:
-        format->layout = FFMPEGKMP_LAYOUT_P010;
-        break;
-    case AV_PIX_FMT_YUV420P10:
-        format->layout = FFMPEGKMP_LAYOUT_YUV420P10;
-        break;
-    default:
-        format->layout = FFMPEGKMP_LAYOUT_YUV420P;
-        break;
-    }
+    format->layout = ffmpegkmp_pixel_format_layout(layout);
     format->range = FFMPEGKMP_RANGE_LIMITED;
     if (config->dynamic_range == FFMPEGKMP_DYNAMIC_RANGE_SDR) {
         format->primaries = FFMPEGKMP_PRIMARIES_BT709;
@@ -368,17 +354,9 @@ static void ffmpegkmp_video_colour(
         enum AVColorPrimaries *primaries,
         enum AVColorTransferCharacteristic *transfer,
         enum AVColorSpace *matrix) {
-    if (config->dynamic_range == FFMPEGKMP_DYNAMIC_RANGE_SDR) {
-        *primaries = AVCOL_PRI_BT709;
-        *transfer = AVCOL_TRC_BT709;
-        *matrix = AVCOL_SPC_BT709;
-    } else {
-        *primaries = AVCOL_PRI_BT2020;
-        *transfer = config->dynamic_range == FFMPEGKMP_DYNAMIC_RANGE_HLG
-                ? AVCOL_TRC_ARIB_STD_B67
-                : AVCOL_TRC_SMPTE2084;
-        *matrix = AVCOL_SPC_BT2020_NCL;
-    }
+    ffmpegkmp_frame_format format;
+    ffmpegkmp_describe_input(config, AV_PIX_FMT_NONE, &format);
+    ffmpegkmp_format_colour(&format, primaries, transfer, matrix);
 }
 
 /* Opens `codec` for `config`; the context is freed on failure. */
@@ -567,10 +545,10 @@ static int ffmpegkmp_open_output(ffmpegkmp_writer *writer) {
         return AVERROR(ENOSYS);
     capabilities = writer->host.callback(
             writer->host.opaque, writer->resource_id, FFPLAYKMP_IO_OPEN, AVIO_FLAG_WRITE, NULL, 0);
-    if (capabilities < 0 || !(capabilities & FFMPEGKMP_IO_CAP_WRITE))
+    if (capabilities < 0 || !(capabilities & FFPLAYKMP_IO_CAP_WRITE))
         return AVERROR(EACCES);
     writer->resource_opened = 1;
-    seekable = (capabilities & FFMPEGKMP_IO_CAP_SEEK) != 0;
+    seekable = (capabilities & FFPLAYKMP_IO_CAP_SEEK) != 0;
     /* MP4 goes back to write its index; only a seekable output takes it unfragmented. */
     if (!seekable && writer->container == FFMPEGKMP_CONTAINER_MP4)
         return FFPLAYKMP_ERROR_UNSUPPORTED;
@@ -795,7 +773,7 @@ static int ffmpegkmp_mux(ffmpegkmp_writer *writer, ffmpegkmp_writer_track *track
 static int ffmpegkmp_stopped(const ffmpegkmp_writer *writer, ffmpegkmp_writer_track *track) {
     if (atomic_load(&writer->aborted))
         return AVERROR_EXIT;
-    if (track->deadline > 0 && av_gettime_relative() >= track->deadline) {
+    if (ffmpegkmp_deadline_passed(track->deadline)) {
         track->timed_out = 1;
         return FFPLAYKMP_ERROR_TIMED_OUT;
     }
@@ -856,7 +834,7 @@ static int ffmpegkmp_encode(ffmpegkmp_writer *writer, ffmpegkmp_writer_track *tr
 static int ffmpegkmp_begin_track_call(const ffmpegkmp_writer *writer, ffmpegkmp_writer_track *track) {
     if (track->timed_out)
         return FFPLAYKMP_ERROR_TIMED_OUT;
-    track->deadline = writer->timeout_us > 0 ? av_gettime_relative() + writer->timeout_us : 0;
+    track->deadline = ffmpegkmp_deadline_after(writer->timeout_us);
     return 0;
 }
 

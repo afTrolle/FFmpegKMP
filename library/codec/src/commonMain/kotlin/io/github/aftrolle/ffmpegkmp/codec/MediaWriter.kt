@@ -7,6 +7,7 @@
 
 package io.github.aftrolle.ffmpegkmp.codec
 
+import io.github.aftrolle.ffmpegkmp.bindings.DECODER_THREAD_CLOSE_BOUND
 import io.github.aftrolle.ffmpegkmp.bindings.DecoderThread
 import io.github.aftrolle.ffmpegkmp.bindings.NativeBridgeUnavailableException
 import io.github.aftrolle.ffmpegkmp.bindings.NativeContainer
@@ -19,6 +20,7 @@ import io.github.aftrolle.ffmpegkmp.bindings.NativeMediaWriterException
 import io.github.aftrolle.ffmpegkmp.bindings.NativePlayerError
 import io.github.aftrolle.ffmpegkmp.bindings.NativeWriterOutput
 import io.github.aftrolle.ffmpegkmp.bindings.createPlatformMediaWriter
+import io.github.aftrolle.ffmpegkmp.bindings.openOnDecoderThread
 import io.github.aftrolle.ffmpegkmp.bindings.platformVideoEncoderFor
 import io.github.aftrolle.ffmpegkmp.core.FFmpegKmpException
 import io.github.aftrolle.ffmpegkmp.core.InternalFFmpegKmpApi
@@ -149,20 +151,14 @@ public class MediaWriter private constructor(
         fun release() {
             if (remaining.decrementAndFetch() == 0) native.close()
         }
-        all.forEach { track -> track.thread.finish(CLOSE_BOUND) { native.releaseTrack(track.index).also { release() } } }
-        thread.finish(CLOSE_BOUND) { release() }
+        all.forEach { track -> track.thread.finish(DECODER_THREAD_CLOSE_BOUND) { native.releaseTrack(track.index).also { release() } } }
+        thread.finish(DECODER_THREAD_CLOSE_BOUND) { release() }
     }
 
     private suspend fun <T : WriterTrack> addTrack(name: String, open: suspend (DecoderThread) -> T): T {
         checkOpen()
-        val thread = DecoderThread(name)
-        val track = try {
-            // Opening an encoder cannot be interrupted; a cancelled caller's track still belongs to the writer.
-            withContext(NonCancellable) { thread.submit { open(thread) }.await() }
-        } catch (failure: Throwable) {
-            thread.finish(Duration.ZERO) {}
-            throw failure
-        }
+        // Opening an encoder cannot be interrupted; a cancelled caller's track still belongs to the writer.
+        val (_, track) = openOnDecoderThread(name, open)
         tracks.update { it + track }
         return track
     }
@@ -201,23 +197,15 @@ public class MediaWriter private constructor(
                     NativeWriterOutput.Mounted("output.mp4", NativeFileResource(output.fileHandle, NativeIoAccess.READ_WRITE, truncate = true))
             }
             val description = (output as? MediaOutput.File)?.path?.let { "'$it'" } ?: "the output"
-            val thread = DecoderThread("FFmpegKMP MediaWriter")
-            val native = try {
-                withContext(NonCancellable) {
-                    thread.submit {
-                        writing("open $description") {
-                            createPlatformMediaWriter(
-                                nativeOutput,
-                                NativeContainer.MP4,
-                                fastStart = fastStart,
-                                timeoutMicros = if (timeout.isInfinite()) 0L else timeout.inWholeMicroseconds,
-                            )
-                        }
-                    }.await()
+            val (thread, native) = openOnDecoderThread("FFmpegKMP MediaWriter") {
+                writing("open $description") {
+                    createPlatformMediaWriter(
+                        nativeOutput,
+                        NativeContainer.MP4,
+                        fastStart = fastStart,
+                        timeoutMicros = if (timeout.isInfinite()) 0L else timeout.inWholeMicroseconds,
+                    )
                 }
-            } catch (failure: Throwable) {
-                thread.finish(Duration.ZERO) {}
-                throw failure
             }
             return MediaWriter(native, thread, description)
         }
@@ -399,9 +387,6 @@ public class AudioTrack internal constructor(
 
 /** Writes a track's encoder may have queued before it suspends a caller. */
 private const val QUEUED_WRITES = 2
-
-/** How long [MediaWriter.close] waits for each thread before leaving it to wind down. */
-private val CLOSE_BOUND = 1.seconds
 
 private inline fun <T> writing(action: String, block: () -> T): T = try {
     block()

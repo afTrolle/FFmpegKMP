@@ -2,7 +2,10 @@
 package io.github.aftrolle.ffmpegkmp.bindings
 
 import kotlin.time.Duration
+import kotlin.time.Duration.Companion.seconds
 import kotlinx.coroutines.Deferred
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.withContext
 
 /**
  * The one thread a native decoder's calls run on, in order: MediaCodec sessions are bound to the
@@ -21,4 +24,25 @@ public expect class DecoderThread(name: String) {
 
     /** Runs [block] last and ends the thread, waiting at most [bound] for it: it still runs after a stuck block. */
     public fun finish(bound: Duration, block: () -> Unit)
+}
+
+/** How long closing a decoder or writer waits for its thread to run the close queued behind a stuck call. */
+@InternalFFmpegKmpApi
+public val DECODER_THREAD_CLOSE_BOUND: Duration = 1.seconds
+
+/**
+ * Starts a [DecoderThread] called [name] and runs [open] on it to its end, even when the caller is
+ * cancelled: what it opens would otherwise leak. When [open] fails, the thread ends without
+ * waiting and the failure is rethrown.
+ */
+@InternalFFmpegKmpApi
+public suspend fun <T> openOnDecoderThread(name: String, open: suspend (DecoderThread) -> T): Pair<DecoderThread, T> {
+    val thread = DecoderThread(name)
+    val opened = try {
+        withContext(NonCancellable) { thread.submit { open(thread) }.await() }
+    } catch (failure: Throwable) {
+        thread.finish(Duration.ZERO) {}
+        throw failure
+    }
+    return thread to opened
 }

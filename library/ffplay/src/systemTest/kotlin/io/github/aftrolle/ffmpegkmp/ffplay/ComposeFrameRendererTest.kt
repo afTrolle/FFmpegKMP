@@ -29,7 +29,6 @@ import io.github.aftrolle.ffmpegkmp.codec.FrameColor
 import io.github.aftrolle.ffmpegkmp.codec.FrameFormat
 import io.github.aftrolle.ffmpegkmp.codec.FrameRate
 import io.github.aftrolle.ffmpegkmp.codec.MediaOutput
-import io.github.aftrolle.ffmpegkmp.codec.MediaSource
 import io.github.aftrolle.ffmpegkmp.codec.MediaWriter
 import io.github.aftrolle.ffmpegkmp.codec.PixelLayout
 import io.github.aftrolle.ffmpegkmp.codec.VideoCodec
@@ -37,6 +36,7 @@ import io.github.aftrolle.ffmpegkmp.codec.VideoDecoder
 import io.github.aftrolle.ffmpegkmp.codec.VideoEncoderConfig
 import io.github.aftrolle.ffmpegkmp.codec.VideoFrame
 import io.github.aftrolle.ffmpegkmp.codec.VideoOutput
+import io.github.aftrolle.ffmpegkmp.core.MediaSource
 import kotlin.math.abs
 import kotlin.math.pow
 import kotlin.random.Random

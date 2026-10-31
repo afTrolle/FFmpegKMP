@@ -21,13 +21,10 @@ import io.github.aftrolle.ffmpegkmp.bindings.cinterop.ffmpegkmp_video_decoder_st
 import io.github.aftrolle.ffmpegkmp.bindings.cinterop.ffmpegkmp_video_decoder_time_left
 import io.github.aftrolle.ffmpegkmp.bindings.cinterop.ffplaykmp_snapshot
 import io.github.aftrolle.ffmpegkmp.bindings.cinterop.ffplaykmp_snapshot_init
-import kotlinx.cinterop.COpaquePointer
 import kotlinx.cinterop.CPointer
 import kotlinx.cinterop.IntVar
 import kotlinx.cinterop.StableRef
-import kotlinx.cinterop.UByteVar
 import kotlinx.cinterop.alloc
-import kotlinx.cinterop.asStableRef
 import kotlinx.cinterop.free
 import kotlinx.cinterop.memScoped
 import kotlinx.cinterop.nativeHeap
@@ -47,11 +44,7 @@ public actual fun createPlatformVideoDecoder(
     timeoutMicros: Long,
 ): NativeVideoDecoder {
     requireMemoryOutput(output)
-    val mounts = StableRef.create(
-        source.mounts.mapIndexed { index, mount ->
-            index.toLong() + 1L to NativeMountedResource(resource = mount.resource, replayableSource = true)
-        }.toMap(),
-    )
+    val mounts = StableRef.create(MountTable(source.mounts, replayableSources = true))
     val decoder = memScoped {
         val error = alloc<IntVar>()
         ffmpegkmp_video_decoder_create(
@@ -63,7 +56,7 @@ public actual fun createPlatformVideoDecoder(
             decoderPreference.ordinal,
             decoderThreads,
             timeoutMicros,
-            staticCFunction(::receiveVideoDecoderIo),
+            staticCFunction(::receiveMountedIo),
             mounts.asCPointer(),
             error.ptr,
         ) ?: run {
@@ -77,21 +70,9 @@ public actual fun createPlatformVideoDecoder(
     return GuardedVideoDecoder(CInteropVideoDecoderEngine(decoder, mounts), source.input)
 }
 
-private fun receiveVideoDecoderIo(
-    opaque: COpaquePointer?,
-    resourceId: Long,
-    operation: UInt,
-    offset: Long,
-    data: CPointer<UByteVar>?,
-    size: ULong,
-): Long = runCatching {
-    opaque?.asStableRef<Map<Long, NativeMountedResource>>()?.get()?.get(resourceId)
-        ?.dispatch(operation.toInt(), offset, data, size)
-}.getOrNull() ?: -1L
-
 private class CInteropVideoDecoderEngine(
     private val decoder: CPointer<ffmpegkmp_video_decoder>,
-    private val mounts: StableRef<Map<Long, NativeMountedResource>>,
+    private val mounts: StableRef<MountTable>,
 ) : VideoDecoderEngineCalls {
     private val frame = nativeHeap.alloc<ffmpegkmp_decoded_frame>().also { ffmpegkmp_decoded_frame_init(it.ptr) }
 
@@ -100,16 +81,17 @@ private class CInteropVideoDecoderEngine(
     override fun info(): NativePlayerSnapshot = memScoped {
         val snapshot = alloc<ffplaykmp_snapshot>()
         ffplaykmp_snapshot_init(snapshot.ptr)
-        requireVideoSuccess(ffmpegkmp_video_decoder_get_info(decoder, snapshot.ptr), "read the video info")
+        requireNative(ffmpegkmp_video_decoder_get_info(decoder, snapshot.ptr), "read the video info", ::NativeVideoDecoderException)
         snapshot.toNativeSnapshot()
     }
 
     override fun seek(positionNanos: Long) = ffmpegkmp_video_decoder_seek(decoder, positionNanos)
 
     override fun frameAt(positionNanos: Long): NativeDecodedFrame {
-        requireVideoSuccess(
+        requireNative(
             ffmpegkmp_video_decoder_frame_at(decoder, positionNanos, frame.ptr),
             "decode the frame at ${positionNanos}ns",
+            ::NativeVideoDecoderException,
         )
         return NativeDecodedFrame(
             serial = frame.serial.toLong(),

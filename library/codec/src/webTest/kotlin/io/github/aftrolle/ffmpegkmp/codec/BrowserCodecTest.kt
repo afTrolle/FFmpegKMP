@@ -4,6 +4,7 @@
 package io.github.aftrolle.ffmpegkmp.codec
 
 import io.github.aftrolle.ffmpegkmp.core.CommandIo
+import io.github.aftrolle.ffmpegkmp.core.MediaSource
 import kotlin.js.JsAny
 import kotlin.js.Promise
 import kotlin.math.PI

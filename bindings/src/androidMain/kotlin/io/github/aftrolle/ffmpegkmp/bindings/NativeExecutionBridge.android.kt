@@ -109,7 +109,7 @@ private val androidSurfaceNatives = lazy { Loader.load(AndroidPlayerSurface::cla
 public fun convertIntoBitmap(frame: NativeFrame, bitmap: android.graphics.Bitmap) {
     val source = requireNotNull(frame as? JavaCppFrame) { "Frames of another binding cannot be converted" }
     androidBitmapNatives.value
-    requireFrameSuccess(AndroidBitmapFrames.convertInto(bitmap, source.handle), "convert a frame into a Bitmap")
+    requireNative(AndroidBitmapFrames.convertInto(bitmap, source.handle), "convert a frame into a Bitmap", ::NativeFrameException)
 }
 
 /** Converts [bitmap]'s pixels, an ARGB_8888 or RGBA_F16 bitmap's read in place, into [frame], which keeps its format. */
@@ -117,7 +117,7 @@ public fun convertIntoBitmap(frame: NativeFrame, bitmap: android.graphics.Bitmap
 public fun convertFromBitmap(bitmap: android.graphics.Bitmap, frame: NativeFrame) {
     val target = requireNotNull(frame as? JavaCppFrame) { "Frames of another binding cannot be converted into" }
     androidBitmapNatives.value
-    requireFrameSuccess(AndroidBitmapFrames.convertFrom(bitmap, target.handle), "convert a Bitmap into a frame")
+    requireNative(AndroidBitmapFrames.convertFrom(bitmap, target.handle), "convert a Bitmap into a frame", ::NativeFrameException)
 }
 
 /**
@@ -128,7 +128,7 @@ public fun convertFromBitmap(bitmap: android.graphics.Bitmap, frame: NativeFrame
 public fun convertFromHardwareBuffer(buffer: android.hardware.HardwareBuffer, frame: NativeFrame) {
     val target = requireNotNull(frame as? JavaCppFrame) { "Frames of another binding cannot be converted into" }
     androidBitmapNatives.value
-    requireFrameSuccess(AndroidBitmapFrames.convertFromHardwareBuffer(buffer, target.handle), "convert a HardwareBuffer into a frame")
+    requireNative(AndroidBitmapFrames.convertFromHardwareBuffer(buffer, target.handle), "convert a HardwareBuffer into a frame", ::NativeFrameException)
 }
 
 private val androidBitmapNatives = lazy { Loader.load(AndroidBitmapFrames::class.java) }

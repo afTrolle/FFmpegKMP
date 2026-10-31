@@ -23,6 +23,7 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalView
 import io.github.aftrolle.ffmpegkmp.codec.ColorPrimaries
 import io.github.aftrolle.ffmpegkmp.codec.ColorTransfer
+import io.github.aftrolle.ffmpegkmp.codec.VideoFrame
 import io.github.aftrolle.ffmpegkmp.codec.VideoInfo
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
@@ -105,6 +106,9 @@ private class AndroidSurfaceOutput(
     private var displayColorSpaces: Set<ColorPrimaries> = setOf(ColorPrimaries.BT709)
     private val paint = Paint(Paint.FILTER_BITMAP_FLAG)
 
+    /** The bitmap each software frame is converted into before it is drawn onto [surface]. */
+    private var bitmap: FrameBitmap? = null
+
     override val kind: FFplayRendererKind = FFplayRendererKind.NATIVE_SURFACE
     override val capabilities: FFplayOutputCapabilities
         get() = synchronized(lock) {
@@ -164,14 +168,30 @@ private class AndroidSurfaceOutput(
     }
 
     fun detachSurface(expected: Surface? = null) = synchronized(lock) {
-        if (expected == null || surface === expected) surface = null
+        if (expected != null && surface !== expected) return@synchronized
+        surface = null
+        bitmap?.close()
+        bitmap = null
     }
 
-    override fun submit(frame: FFplayFrame): Boolean = synchronized(lock) {
+    override fun submitNative(frame: VideoFrame, video: VideoInfo?): Boolean = frame.use {
+        synchronized(lock) { draw(it) }
+    }
+
+    /** Converts [frame] and draws it onto the surface; the caller holds [lock]. */
+    private fun draw(frame: VideoFrame): Boolean {
         val target = surface?.takeIf(Surface::isValid) ?: return false
         if (width <= 0 || height <= 0) return false
-        val bitmap = frame.image.asAndroidBitmap()
-        val display = displaySize(bitmap.width, bitmap.height, frame.sampleAspectRatio, frame.rotationDegrees)
+        // The frame is drawn before this returns, so one bitmap serves every frame of its size and format.
+        val format = frame.bitmapFormat()
+        val converted = bitmap?.takeIf { it.width == frame.width && it.height == frame.height && it.format == format }
+            ?.apply { write(frame) }
+            ?: frame.toFrameBitmap(format).also {
+                bitmap?.close()
+                bitmap = it
+            }
+        val pixels = converted.image.asAndroidBitmap()
+        val display = displaySize(pixels.width, pixels.height, frame.sampleAspectRatio, frame.rotationDegrees)
         val destination = contentScale.place(display, Size(width.toFloat(), height.toFloat()))
         val turn = uprightTurn(frame.rotationDegrees)
         val canvas = try {
@@ -183,12 +203,12 @@ private class AndroidSurfaceOutput(
             canvas.drawColor(backgroundArgb)
             canvas.save()
             canvas.rotate(turn, destination.center.x, destination.center.y)
-            canvas.drawBitmap(bitmap, null, destination.beforeTurn(turn).toAndroidRectF(), paint)
+            canvas.drawBitmap(pixels, null, destination.beforeTurn(turn).toAndroidRectF(), paint)
             canvas.restore()
         } finally {
             target.unlockCanvasAndPost(canvas)
         }
-        true
+        return true
     }
 
     override fun discard() = Unit

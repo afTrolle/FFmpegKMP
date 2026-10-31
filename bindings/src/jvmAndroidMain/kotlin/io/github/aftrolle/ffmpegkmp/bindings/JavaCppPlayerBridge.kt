@@ -15,7 +15,6 @@ import io.github.aftrolle.ffmpegkmp.bindings.generated.bridge.ffplaykmp_state_ca
 import io.github.aftrolle.ffmpegkmp.bindings.generated.bridge.ffplaykmp_video_frame
 import io.github.aftrolle.ffmpegkmp.bindings.generated.bridge.ffplaykmp_video_frame_callback
 import io.github.aftrolle.ffmpegkmp.bindings.generated.bridge.global.bridge
-import org.bytedeco.javacpp.BytePointer
 import org.bytedeco.javacpp.Pointer
 
 internal fun createJavaCppPlayerBridge(
@@ -49,7 +48,7 @@ private class JavaCppPlayerEngine(
     private val ioCallback: ffplaykmp_io_callback
     private val player: ffplaykmp_player
     @Volatile
-    private var mounts: Map<Long, MountedResource> = emptyMap()
+    private var mounts = MountTable.Empty
 
     init {
         JavaCppBridgeLoader.load()
@@ -99,16 +98,7 @@ private class JavaCppPlayerEngine(
                 ) 1 else 0
             }
         }
-        ioCallback = object : ffplaykmp_io_callback() {
-            override fun call(
-                opaque: Pointer?,
-                resourceId: Long,
-                operation: Int,
-                offset: Long,
-                data: BytePointer?,
-                size: Long,
-            ): Long = mounts[resourceId]?.dispatch(operation, offset, data, size) ?: -1L
-        }
+        ioCallback = mountedIoCallback { mounts }
         val nativeConfiguration = ffplaykmp_configuration()
         bridge.ffplaykmp_configuration_default(nativeConfiguration)
         nativeConfiguration.decoder_preference(configuration.decoderPreference.ordinal)
@@ -133,9 +123,7 @@ private class JavaCppPlayerEngine(
     }
 
     override fun mount(mounts: List<NativeMountedIo>) {
-        this.mounts = mounts.mapIndexed { index, mount ->
-            index.toLong() + 1L to MountedResource(resource = mount.resource, replayableSource = true)
-        }.toMap()
+        this.mounts = MountTable(mounts, replayableSources = true)
     }
 
     override fun prepare(input: String, requireSecurePath: Boolean): Int = bridge.ffplaykmp_player_prepare(

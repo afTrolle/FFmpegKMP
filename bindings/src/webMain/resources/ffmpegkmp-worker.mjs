@@ -23,6 +23,10 @@ let webCodecsPumping = false;
 let webCodecsEof = false;
 let webCodecsClockOriginMs = 0;
 let webCodecsPositionUs = 0;
+// After a seek, frames before the target decode from its keyframe; the latest of them is held,
+// because it is the frame on screen at the target when the next one starts after it.
+let webCodecsSeekTargetUs = null;
+let webCodecsHeldFrame = null;
 let webCodecsQueueSerial = 0;
 let webCodecsPresentationId = 1;
 let webCodecsOutputFlags = 0;
@@ -31,9 +35,13 @@ let playerMessageTail = Promise.resolve();
 
 // Audio of the prepared source, decoded here on demand and played by the page's AudioWorklet,
 // which it reaches directly through `port`. Chunks carry the seek epoch they belong to.
+// The engine reads the prepared input as mount 1, served from `resources` by `ioCallback`.
 const AUDIO_CHUNK_FRAMES = 2048;
 const AUDIO_BUFFER_SECONDS = 0.25;
 const audio = {
+  resources: null,
+  input: '',
+  ioCallback: 0,
   handle: 0,
   port: null,
   pcm: 0,
@@ -82,14 +90,42 @@ function pumpAudio(module) {
   }
 }
 
+/** Keeps the prepared input for the audio engine, which opens it as mount 1 as the player did. */
+function mountAudioInput(mount, extension) {
+  audio.resources = new Map([[1, {
+    access: 'read',
+    bytes: mount.bytes,
+    size: mount.bytes.length,
+    truncate: false,
+    truncated: false,
+    dirty: false,
+  }]]);
+  audio.input = extension ? `ffmpegkmp:1.${extension}` : 'ffmpegkmp:1';
+}
+
 function openAudio(module, data) {
   closeAudio(module);
+  if (!audio.resources) {
+    data.port.close();
+    audioFailure('Could not open the source\'s audio: no source is prepared');
+    return;
+  }
+  if (!audio.ioCallback) {
+    audio.ioCallback = module.addFunction(
+      (opaque, resourceId, operation, offset, bytes, size) =>
+        serveResource(module, audio.resources, resourceId, operation, offset, bytes, size),
+      'jijijij',
+    );
+  }
+  const inputPointer = module.stringToNewUTF8(audio.input);
   const errorPointer = module._malloc(4);
   let handle;
   let error;
   try {
-    handle = module._ffplaykmp_web_player_open_audio(
-      playerHandle,
+    handle = module._ffmpegkmp_player_open(
+      inputPointer,
+      audio.ioCallback,
+      0,
       data.sampleRate,
       data.channels,
       errorPointer,
@@ -97,6 +133,7 @@ function openAudio(module, data) {
     error = new Int32Array(module.HEAPU8.buffer, errorPointer, 1)[0];
   } finally {
     module._free(errorPointer);
+    module._free(inputPointer);
   }
   if (!handle) {
     data.port.close();
@@ -233,6 +270,24 @@ function clearWebCodecsPresentations() {
     frame.close();
   }
   webCodecsPresentations.clear();
+  webCodecsHeldFrame?.close();
+  webCodecsHeldFrame = null;
+  webCodecsSeekTargetUs = null;
+}
+
+/** Seeks the packet reader to the keyframe before `positionUs`; the frame shown is the one there. */
+function seekWebCodecs(module, positionUs) {
+  webCodecsSeekTargetUs = positionUs;
+  return module._ffplaykmp_web_player_webcodecs_seek(playerHandle, BigInt(positionUs));
+}
+
+/** At the end of the input, the last frame before the seek target is the one on screen there. */
+function presentWebCodecsHeldFrame(module) {
+  const held = webCodecsHeldFrame;
+  const target = webCodecsSeekTargetUs;
+  webCodecsHeldFrame = null;
+  webCodecsSeekTargetUs = null;
+  if (held) scheduleWebCodecsFrame(module, held, target);
 }
 
 function resetWebCodecs(module, closeDecoder = false) {
@@ -266,7 +321,7 @@ function finishWebCodecsIfDrained(module) {
   }
 }
 
-function scheduleWebCodecsFrame(module, frame) {
+function scheduleWebCodecsFrame(module, frame, presentationTimeUs = Number(frame.timestamp || 0)) {
   if (!webCodecsActive || !playerHandle) {
     frame.close();
     return;
@@ -275,7 +330,27 @@ function scheduleWebCodecsFrame(module, frame) {
     frame.close();
     return;
   }
-  const presentationTimeUs = Number(frame.timestamp || 0);
+  if (webCodecsSeekTargetUs !== null) {
+    if (presentationTimeUs < webCodecsSeekTargetUs) {
+      webCodecsHeldFrame?.close();
+      webCodecsHeldFrame = frame;
+      return;
+    }
+    const held = webCodecsHeldFrame;
+    const target = webCodecsSeekTargetUs;
+    webCodecsHeldFrame = null;
+    webCodecsSeekTargetUs = null;
+    if (held && presentationTimeUs > target) {
+      scheduleWebCodecsFrame(module, held, target);
+      // A preview shows one frame: the held one.
+      if (!webCodecsPlaying) {
+        frame.close();
+        return;
+      }
+    } else {
+      held?.close();
+    }
+  }
   const delay = webCodecsPlaying
     ? Math.max(0, presentationTimeUs / 1000 - (performance.now() - webCodecsClockOriginMs))
     : 0;
@@ -293,6 +368,9 @@ function scheduleWebCodecsFrame(module, frame) {
       webCodecsQueueSerial,
       0,
     );
+    // The snapshot goes first: the page drops a frame whose serial it has not seen yet, as it
+    // has not when a seek's frame is ready before the next poll.
+    module._ffplaykmp_web_player_poll(playerHandle);
     self.postMessage({
       type: 'player-video-frame',
       frame,
@@ -301,7 +379,6 @@ function scheduleWebCodecsFrame(module, frame) {
       presentationTimeUs,
       queueSerial: webCodecsQueueSerial,
     }, [frame]);
-    module._ffplaykmp_web_player_poll(playerHandle);
     finishWebCodecsIfDrained(module);
   }, Math.min(delay, 2147483647));
   webCodecsPresentations.set(id, { timer, frame });
@@ -320,7 +397,10 @@ function pumpWebCodecs(module, previewOnly = false) {
       );
       if (result === 1) {
         webCodecsEof = true;
-        webCodecsDecoder.flush().then(() => finishWebCodecsIfDrained(module)).catch(error => {
+        webCodecsDecoder.flush().then(() => {
+          presentWebCodecsHeldFrame(module);
+          finishWebCodecsIfDrained(module);
+        }).catch(error => {
           fallbackFromWebCodecs(module, error);
         });
         break;
@@ -419,7 +499,9 @@ async function configureWebCodecs(module, outputFlags) {
     error: error => fallbackFromWebCodecs(module, error),
   });
   webCodecsDecoder.ondequeue = () => {
+    // A preview after a seek keeps decoding until it reaches the target.
     if (webCodecsPlaying) pumpWebCodecs(module);
+    else if (webCodecsPreviewing && webCodecsSeekTargetUs !== null) pumpWebCodecs(module, true);
   };
   webCodecsDecoder.configure(webCodecsConfig);
   webCodecsActive = true;
@@ -604,6 +686,7 @@ async function handlePlayerMessage(data) {
         throw new Error('Browser playback requires a non-empty mounted input');
       }
       const extension = mount.path.match(/\.([A-Za-z0-9]+)$/)?.[1] || '';
+      mountAudioInput(mount, extension);
       const extensionPointer = module.stringToNewUTF8(extension);
       const inputPointer = module._malloc(mount.bytes.length);
       try {
@@ -636,10 +719,7 @@ async function handlePlayerMessage(data) {
           webCodecsDecoder.reset();
           webCodecsDecoder.configure(webCodecsConfig);
           webCodecsEof = false;
-          result = module._ffplaykmp_web_player_webcodecs_seek(
-            playerHandle,
-            BigInt(webCodecsPositionUs),
-          );
+          result = seekWebCodecs(module, webCodecsPositionUs);
           webCodecsNeedsResumeSeek = false;
         }
         webCodecsPlaying = true;
@@ -661,10 +741,7 @@ async function handlePlayerMessage(data) {
         webCodecsEof = false;
         result = module._ffplaykmp_web_player_webcodecs_pause(playerHandle);
         if (result >= 0) {
-          result = module._ffplaykmp_web_player_webcodecs_seek(
-            playerHandle,
-            BigInt(webCodecsPositionUs),
-          );
+          result = seekWebCodecs(module, webCodecsPositionUs);
         }
         webCodecsNeedsResumeSeek = false;
       } else {
@@ -678,10 +755,7 @@ async function handlePlayerMessage(data) {
         webCodecsEof = false;
         webCodecsPositionUs = Number(data.positionUs);
         webCodecsNeedsResumeSeek = false;
-        result = module._ffplaykmp_web_player_webcodecs_seek(
-          playerHandle,
-          BigInt(data.positionUs),
-        );
+        result = seekWebCodecs(module, webCodecsPositionUs);
         webCodecsClockOriginMs = performance.now() - webCodecsPositionUs / 1000;
         webCodecsPreviewing = !webCodecsPlaying;
         pumpWebCodecs(module, !webCodecsPlaying);
@@ -690,6 +764,7 @@ async function handlePlayerMessage(data) {
       }
     } else if (data.type === 'player-stop') {
       closeAudio(module);
+      audio.resources = null;
       resetWebCodecs(module, true);
       result = module._ffplaykmp_player_stop(playerHandle);
     }

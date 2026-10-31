@@ -38,15 +38,15 @@ bindings and locally generated native artifacts.
 The `library` modules provide the platform-neutral API:
 
 - `core` owns sessions, execution, cancellation, logging, progress, results,
-  and errors;
+  errors, and the `MediaSource` every decoder and player opens;
 - `ffmpeg` provides typed command construction and a raw-argument escape hatch;
 - `ffprobe` exposes typed media-inspection models;
 - `codec` holds the Compose-free frame model (`VideoFrame`, `FrameFormat`),
-  frame-accurate decoding (`VideoDecoder`), and the source, decoder and stream
-  types that the decoders and players share (`MediaSource`,
-  `CodecPreference`, `DecoderThreads`, `VideoInfo`, …);
+  frame-accurate decoding (`VideoDecoder`), and the decoder and stream types
+  that the decoders and players share (`CodecPreference`, `DecoderThreads`,
+  `VideoInfo`, …);
 - `ffplay` owns a per-player lifecycle and Compose video-output contract, and
-  draws frames with `VideoFrame.toImageBitmap()`;
+  draws frames through a `FrameImage`, which reuses its bitmaps;
 - `filters` provides the optional filter-graph DSL; and
 - `player` provides audio decoding and playback with live volume, mute, and
   track controls.
@@ -126,8 +126,8 @@ frames in IOSurface-backed `CVPixelBufferPool`s, read VideoToolbox's buffers in
 place by locking them, and hand out every frame as decoded as a `CVPixelBuffer`:
 VideoToolbox's own, or a software frame copied into a pooled NV12 or P010 one in
 its own colour. The FFplay Canvas fallback gets the player's frames as decoded
-the same way, and `ffplay`'s `VideoFrame.toImageBitmap()` converts a frame once,
-straight into a Skia or Android `Bitmap`'s own memory.
+the same way, and `ffplay`'s `FrameImage` converts a frame once, straight into
+one of a few reused Skia or Android `Bitmap`s' own memory.
 
 Pixels change format in one place, `ffmpegkmp_frame_convert` in
 `ffplaykmp_core.c`, driven by the pixel formats and colour tags of the two

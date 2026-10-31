@@ -10,7 +10,6 @@ import kotlin.js.Promise
 import kotlin.time.Duration.Companion.microseconds
 import kotlinx.coroutines.await
 import kotlinx.coroutines.withTimeoutOrNull
-import okio.Buffer
 
 /**
  * Encodes video with WebCodecs and audio with FFmpeg's AAC encoder in a worker of its own, where
@@ -165,19 +164,9 @@ private class BrowserMediaWriter(
     }
 
     private fun writeOut(bytes: ByteArray) {
-        when (val resource = output.resource) {
-            is NativeSinkResource -> {
-                val buffer = Buffer().write(bytes)
-                resource.sink.write(buffer, buffer.size)
-                resource.sink.flush()
-            }
-            is NativeFileResource -> {
-                resource.fileHandle.write(0L, bytes, 0, bytes.size)
-                if (resource.truncate) resource.fileHandle.resize(bytes.size.toLong())
-                resource.fileHandle.flush()
-            }
-            is NativeSourceResource -> throw NativeMediaWriterException("The output is a source", NativePlayerError.INVALID_ARGUMENT)
-        }
+        val resource = output.resource
+        if (resource is NativeSourceResource) throw NativeMediaWriterException("The output is a source", NativePlayerError.INVALID_ARGUMENT)
+        resource.writeBrowserOutput(bytes)
     }
 }
 

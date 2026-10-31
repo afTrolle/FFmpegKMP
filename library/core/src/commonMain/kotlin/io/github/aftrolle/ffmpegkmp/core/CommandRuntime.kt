@@ -49,29 +49,15 @@ import kotlinx.coroutines.withContext
 import okio.Sink
 import okio.buffer
 
-@InternalFFmpegKmpApi
-public enum class CommandKind { FFMPEG, FFPROBE }
+internal enum class CommandKind { FFMPEG, FFPROBE }
 
 @OptIn(ExperimentalAtomicApi::class)
-@InternalFFmpegKmpApi
-public class CommandRuntimeClient private constructor(
+internal class CommandRuntimeClient(
     private val kind: CommandKind,
-    private val bridge: NativeExecutionBridge,
-    private val limits: CommandRuntimeLimits,
-    private val scheduler: CommandScheduler,
-    @Suppress("UNUSED_PARAMETER") constructorMarker: Unit,
+    private val bridge: NativeExecutionBridge = createPlatformExecutionBridge(),
+    private val limits: CommandRuntimeLimits = CommandRuntimeLimits.Default,
+    private val scheduler: CommandScheduler = GlobalCommandScheduler,
 ) : AutoCloseable {
-    public constructor(
-        kind: CommandKind,
-        limits: CommandRuntimeLimits = CommandRuntimeLimits.Default,
-    ) : this(kind, createPlatformExecutionBridge(), limits, GlobalCommandScheduler, Unit)
-
-    internal constructor(
-        kind: CommandKind,
-        bridge: NativeExecutionBridge,
-        limits: CommandRuntimeLimits = CommandRuntimeLimits.Default,
-        scheduler: CommandScheduler = GlobalCommandScheduler,
-    ) : this(kind, bridge, limits, scheduler, Unit)
 
     private val clientState = AtomicReference(ClientState())
     private val bridgeClosed = AtomicBoolean(false)
@@ -466,13 +452,13 @@ private class CommandExecutionSession(
         }
     }
 
-    /** Substitutes a real temporary [NativeFileResource] for each mount that requested [Staging]. */
+    /** Substitutes a real temporary [NativeFileResource] for each mount that asked to be staged. */
     private fun prepareStaging(): StagedMounts {
         val contexts = mutableListOf<StagingContext>()
         try {
             val mounts = io.mounts.mapIndexed { index, mount ->
                 val resource = mount.resource
-                if (mount.staging && resource is NativeSinkResource) {
+                if (mount.staged && resource is NativeSinkResource) {
                     val temporaryFile = TemporaryFile("ffmpegkmp-$id-$index")
                     contexts += StagingContext(mount.path, resource.sink, temporaryFile)
                     NativeMountedIo(

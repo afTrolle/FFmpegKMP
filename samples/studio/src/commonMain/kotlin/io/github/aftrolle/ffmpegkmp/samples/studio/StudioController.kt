@@ -3,7 +3,6 @@ package io.github.aftrolle.ffmpegkmp.samples.studio
 
 import io.github.aftrolle.ffmpegkmp.core.CommandIo
 import io.github.aftrolle.ffmpegkmp.core.ExecutionEvent
-import io.github.aftrolle.ffmpegkmp.core.Staging
 import io.github.aftrolle.ffmpegkmp.ffmpeg.FFmpegClient
 import io.github.aftrolle.ffmpegkmp.ffmpeg.FFmpegSession
 import io.github.aftrolle.ffmpegkmp.ffprobe.FFprobeClient
@@ -200,7 +199,7 @@ public class StudioController(
                 val io = CommandIo {
                     plan.inputPaths.zip(sources).forEach { (path, bytes) -> input(path, ByteArrayFileHandle(bytes)) }
                     // MP4 needs to seek to patch its header; Buffer-backed Sink mounts don't.
-                    output(plan.outputPath, rendered, Staging())
+                    output(plan.outputPath, rendered, staged = true)
                 }
                 val client = FFmpegClient()
                 try {
