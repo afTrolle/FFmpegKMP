@@ -20,24 +20,26 @@
 #define ANDROID_BITMAP_FORMAT_RGBA_1010102 10
 #endif
 
-/* The format of a bitmap's pixels: ARGB_8888 and RGBA_1010102 as sRGB, RGBA_F16 as linear extended sRGB. */
-static int ffmpegkmp_bitmap_format(const AndroidBitmapInfo *info, ffmpegkmp_frame_format *format) {
+/* An RGBA layout as Android draws it: 8- and 10-bit as sRGB, half floats as linear extended sRGB. */
+static void ffmpegkmp_android_rgba_format(int32_t layout, ffmpegkmp_frame_format *format) {
     ffmpegkmp_frame_format_init(format);
+    format->layout = layout;
     format->primaries = FFMPEGKMP_PRIMARIES_BT709;
+    format->transfer = layout == FFMPEGKMP_LAYOUT_RGBA_F16 ? FFMPEGKMP_TRANSFER_LINEAR : FFMPEGKMP_TRANSFER_SRGB;
     format->matrix = FFMPEGKMP_MATRIX_RGB;
     format->range = FFMPEGKMP_RANGE_FULL;
-    if (info->format == ANDROID_BITMAP_FORMAT_RGBA_8888) {
-        format->layout = FFMPEGKMP_LAYOUT_RGBA8;
-        format->transfer = FFMPEGKMP_TRANSFER_SRGB;
-    } else if (info->format == ANDROID_BITMAP_FORMAT_RGBA_1010102) {
-        format->layout = FFMPEGKMP_LAYOUT_RGBA_1010102;
-        format->transfer = FFMPEGKMP_TRANSFER_SRGB;
-    } else if (info->format == ANDROID_BITMAP_FORMAT_RGBA_F16) {
-        format->layout = FFMPEGKMP_LAYOUT_RGBA_F16;
-        format->transfer = FFMPEGKMP_TRANSFER_LINEAR;
-    } else {
+}
+
+/* The format of a bitmap's pixels: ARGB_8888, RGBA_1010102 or RGBA_F16. */
+static int ffmpegkmp_bitmap_format(const AndroidBitmapInfo *info, ffmpegkmp_frame_format *format) {
+    if (info->format == ANDROID_BITMAP_FORMAT_RGBA_8888)
+        ffmpegkmp_android_rgba_format(FFMPEGKMP_LAYOUT_RGBA8, format);
+    else if (info->format == ANDROID_BITMAP_FORMAT_RGBA_1010102)
+        ffmpegkmp_android_rgba_format(FFMPEGKMP_LAYOUT_RGBA_1010102, format);
+    else if (info->format == ANDROID_BITMAP_FORMAT_RGBA_F16)
+        ffmpegkmp_android_rgba_format(FFMPEGKMP_LAYOUT_RGBA_F16, format);
+    else
         return FFPLAYKMP_ERROR_UNSUPPORTED;
-    }
     return 0;
 }
 
@@ -120,25 +122,15 @@ int ffmpegkmp_frame_convert_from_android_hardware_buffer(
     if (!env || !buffer || !target || !(native = ffmpegkmp_hardware_buffer.from_java(env, buffer)))
         return FFPLAYKMP_ERROR_INVALID_ARGUMENT;
     ffmpegkmp_hardware_buffer.describe(native, &description);
-    ffmpegkmp_frame_format_init(&format);
-    format.primaries = FFMPEGKMP_PRIMARIES_BT709;
-    format.matrix = FFMPEGKMP_MATRIX_RGB;
-    format.range = FFMPEGKMP_RANGE_FULL;
-    if (description.format == AHARDWAREBUFFER_FORMAT_R8G8B8A8_UNORM) {
-        format.layout = FFMPEGKMP_LAYOUT_RGBA8;
-        format.transfer = FFMPEGKMP_TRANSFER_SRGB;
-        bytes_per_pixel = 4;
-    } else if (description.format == AHARDWAREBUFFER_FORMAT_R10G10B10A2_UNORM) {
-        format.layout = FFMPEGKMP_LAYOUT_RGBA_1010102;
-        format.transfer = FFMPEGKMP_TRANSFER_SRGB;
-        bytes_per_pixel = 4;
-    } else if (description.format == AHARDWAREBUFFER_FORMAT_R16G16B16A16_FLOAT) {
-        format.layout = FFMPEGKMP_LAYOUT_RGBA_F16;
-        format.transfer = FFMPEGKMP_TRANSFER_LINEAR;
-        bytes_per_pixel = 8;
-    } else {
+    if (description.format == AHARDWAREBUFFER_FORMAT_R8G8B8A8_UNORM)
+        ffmpegkmp_android_rgba_format(FFMPEGKMP_LAYOUT_RGBA8, &format);
+    else if (description.format == AHARDWAREBUFFER_FORMAT_R10G10B10A2_UNORM)
+        ffmpegkmp_android_rgba_format(FFMPEGKMP_LAYOUT_RGBA_1010102, &format);
+    else if (description.format == AHARDWAREBUFFER_FORMAT_R16G16B16A16_FLOAT)
+        ffmpegkmp_android_rgba_format(FFMPEGKMP_LAYOUT_RGBA_F16, &format);
+    else
         return FFPLAYKMP_ERROR_UNSUPPORTED;
-    }
+    bytes_per_pixel = format.layout == FFMPEGKMP_LAYOUT_RGBA_F16 ? 8 : 4;
     /* The caller has waited for the GPU's fence, so the lock takes none. */
     if (ffmpegkmp_hardware_buffer.lock(native, AHARDWAREBUFFER_USAGE_CPU_READ_OFTEN, -1, NULL, &pixels) != 0 || !pixels)
         return FFPLAYKMP_ERROR_INVALID_STATE;

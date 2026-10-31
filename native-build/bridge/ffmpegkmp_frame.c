@@ -97,7 +97,7 @@ static enum AVPixelFormat ffmpegkmp_layout_pixel_format(int32_t layout) {
     }
 }
 
-static int32_t ffmpegkmp_pixel_format_layout(enum AVPixelFormat format) {
+int32_t ffmpegkmp_pixel_format_layout(enum AVPixelFormat format) {
     switch (format) {
     case AV_PIX_FMT_RGBA:
         return FFMPEGKMP_LAYOUT_RGBA8;
@@ -121,11 +121,6 @@ static int32_t ffmpegkmp_pixel_format_layout(enum AVPixelFormat format) {
     }
 }
 
-static int ffmpegkmp_is_rgb_format(enum AVPixelFormat format) {
-    const AVPixFmtDescriptor *descriptor = av_pix_fmt_desc_get(format);
-    return descriptor && (descriptor->flags & AV_PIX_FMT_FLAG_RGB);
-}
-
 int ffmpegkmp_frame_format_is_valid(const ffmpegkmp_frame_format *format) {
     return format && format->size >= sizeof(*format) &&
             ffmpegkmp_layout_pixel_format(format->layout) != AV_PIX_FMT_NONE &&
@@ -138,19 +133,27 @@ int ffmpegkmp_frame_format_is_valid(const ffmpegkmp_frame_format *format) {
                     ffmpegkmp_is_rgb_format(ffmpegkmp_layout_pixel_format(format->layout));
 }
 
-/* Tags `frame` with `format`'s pixel format and colour. */
-static void ffmpegkmp_apply_format(AVFrame *frame, const ffmpegkmp_frame_format *format) {
-    static const enum AVColorPrimaries primaries[] = { AVCOL_PRI_BT709, AVCOL_PRI_BT2020, AVCOL_PRI_SMPTE432 };
+void ffmpegkmp_format_colour(
+        const ffmpegkmp_frame_format *format,
+        enum AVColorPrimaries *primaries,
+        enum AVColorTransferCharacteristic *transfer,
+        enum AVColorSpace *matrix) {
+    static const enum AVColorPrimaries all_primaries[] = { AVCOL_PRI_BT709, AVCOL_PRI_BT2020, AVCOL_PRI_SMPTE432 };
     static const enum AVColorTransferCharacteristic transfers[] = {
         AVCOL_TRC_IEC61966_2_1, AVCOL_TRC_BT709, AVCOL_TRC_LINEAR, AVCOL_TRC_SMPTE2084, AVCOL_TRC_ARIB_STD_B67,
     };
     static const enum AVColorSpace matrices[] = {
         AVCOL_SPC_RGB, AVCOL_SPC_BT709, AVCOL_SPC_BT2020_NCL, AVCOL_SPC_SMPTE170M,
     };
+    *primaries = all_primaries[format->primaries];
+    *transfer = transfers[format->transfer];
+    *matrix = matrices[format->matrix];
+}
+
+/* Tags `frame` with `format`'s pixel format and colour. */
+static void ffmpegkmp_apply_format(AVFrame *frame, const ffmpegkmp_frame_format *format) {
     frame->format = ffmpegkmp_layout_pixel_format(format->layout);
-    frame->color_primaries = primaries[format->primaries];
-    frame->color_trc = transfers[format->transfer];
-    frame->colorspace = matrices[format->matrix];
+    ffmpegkmp_format_colour(format, &frame->color_primaries, &frame->color_trc, &frame->colorspace);
     frame->color_range = format->range == FFMPEGKMP_RANGE_FULL ? AVCOL_RANGE_JPEG : AVCOL_RANGE_MPEG;
     frame->chroma_location = ffmpegkmp_is_rgb_format(frame->format) ? AVCHROMA_LOC_UNSPECIFIED : AVCHROMA_LOC_LEFT;
 }
@@ -946,11 +949,6 @@ static int ffmpegkmp_is_sdr_curve(enum AVColorTransferCharacteristic transfer) {
     return transfer != AVCOL_TRC_SMPTE2084 && transfer != AVCOL_TRC_ARIB_STD_B67 && transfer != AVCOL_TRC_LINEAR;
 }
 
-/* Primaries the converter distinguishes; it takes the others as BT.709. */
-static enum AVColorPrimaries ffmpegkmp_frame_primaries(enum AVColorPrimaries primaries) {
-    return primaries == AVCOL_PRI_BT2020 || primaries == AVCOL_PRI_SMPTE432 ? primaries : AVCOL_PRI_BT709;
-}
-
 /*
  * The colour `target` converts into from `source`. SDR curves convert as they
  * are shown, without a curve change, so BT.709-coded video becomes sRGB as the
@@ -960,7 +958,7 @@ static enum AVColorPrimaries ffmpegkmp_frame_primaries(enum AVColorPrimaries pri
 static void ffmpegkmp_conversion_colour(AVFrame *target, const AVFrame *source) {
     if (ffmpegkmp_is_sdr_curve(target->color_trc) && ffmpegkmp_is_sdr_curve(source->color_trc))
         target->color_trc = source->color_trc;
-    if (ffmpegkmp_frame_primaries(source->color_primaries) == target->color_primaries)
+    if (ffmpegkmp_known_primaries(source->color_primaries) == target->color_primaries)
         target->color_primaries = source->color_primaries;
 }
 

@@ -301,4 +301,32 @@ int ffmpegkmp_frame_is_pixel_buffer(const AVFrame *frame);
 /* Counts pixel memory the bridge allocated, for ffmpegkmp_frame_get_statistics. */
 void ffmpegkmp_frame_count_allocation(size_t bytes);
 
+/* Primaries the converter distinguishes; the rest are taken as BT.709, as the outputs always have. */
+enum AVColorPrimaries ffmpegkmp_known_primaries(enum AVColorPrimaries primaries);
+
+/* Whether `format` stores RGB rather than YUV. */
+int ffmpegkmp_is_rgb_format(enum AVPixelFormat format);
+
+/* The model's layout of `format`, FFMPEGKMP_LAYOUT_OTHER for one it does not name. */
+int32_t ffmpegkmp_pixel_format_layout(enum AVPixelFormat format);
+
+/* FFmpeg's names for the primaries, transfer and matrix of `format`. */
+void ffmpegkmp_format_colour(
+        const ffmpegkmp_frame_format *format,
+        enum AVColorPrimaries *primaries,
+        enum AVColorTransferCharacteristic *transfer,
+        enum AVColorSpace *matrix);
+
+#include <libavutil/time.h>
+
+/* The av_gettime_relative() bound of a call that may take `timeout_us`, 0 for none. */
+static inline int64_t ffmpegkmp_deadline_after(int64_t timeout_us) {
+    return timeout_us > 0 ? av_gettime_relative() + timeout_us : 0;
+}
+
+/* Whether a call bound by `deadline`, 0 for none, has run past it. */
+static inline int ffmpegkmp_deadline_passed(int64_t deadline) {
+    return deadline > 0 && av_gettime_relative() >= deadline;
+}
+
 #endif

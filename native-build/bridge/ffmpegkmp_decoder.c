@@ -98,15 +98,14 @@ static int ffmpegkmp_decoder_interrupted(void *opaque) {
             atomic_load(&decoder->interrupted))
         return 1;
     deadline = atomic_load(&decoder->deadline);
-    if (deadline <= 0 || av_gettime_relative() < deadline)
+    if (!ffmpegkmp_deadline_passed(deadline))
         return 0;
     atomic_store(&decoder->timed_out, 1);
     return 1;
 }
 
 static void ffmpegkmp_arm_deadline(ffmpegkmp_video_decoder *decoder) {
-    atomic_store(&decoder->deadline,
-            decoder->timeout_us > 0 ? av_gettime_relative() + decoder->timeout_us : 0);
+    atomic_store(&decoder->deadline, ffmpegkmp_deadline_after(decoder->timeout_us));
 }
 
 static int ffmpegkmp_begin_call(ffmpegkmp_video_decoder *decoder) {
