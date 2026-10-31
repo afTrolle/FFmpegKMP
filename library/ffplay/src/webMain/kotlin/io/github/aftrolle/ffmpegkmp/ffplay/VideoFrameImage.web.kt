@@ -8,7 +8,10 @@ import io.github.aftrolle.ffmpegkmp.codec.VideoFrame
 import org.jetbrains.skia.Bitmap
 import org.jetbrains.skia.ImageInfo
 
-/** The browser copies frames of the bitmap's size only; its worker would have to convert at the drawn size. */
+/**
+ * The browser copies frames of the bitmap's size only. A player's worker converts its frames at the
+ * size they are drawn at instead, which the Canvas outputs tell it (BridgeFrameSize).
+ */
 internal actual val bitmapsScale: Boolean = false
 
 /**

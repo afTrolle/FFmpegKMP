@@ -30,8 +30,52 @@ let webCodecsHeldFrame = null;
 let webCodecsQueueSerial = 0;
 let webCodecsPresentationId = 1;
 let webCodecsOutputFlags = 0;
+// What the packet callback failed with, for pumpWebCodecs to fall back on once the read returns.
+let webCodecsPacketFailure = null;
 const webCodecsPresentations = new Map();
 let playerMessageTail = Promise.resolve();
+
+// What a 'statistics' message reports, for the page's tests: copies out of the Wasm heap (HEAPU8.slice), the
+// software frames posted, the packets that reached WebCodecs and the player's WebCodecs decoders not yet closed.
+const heapCopies = { slices: 0, frames: 0, packets: 0 };
+let webCodecsDecodersOpen = 0;
+
+// A copy of heap bytes in a buffer of their own, which the page can take over or keep past the callback.
+function copyFromHeap(module, start, end) {
+  heapCopies.slices++;
+  return module.HEAPU8.slice(start, end);
+}
+
+// WebCodecs copies a chunk's data as it makes the chunk and takes views of shared memory (AllowSharedBufferSource),
+// so a packet goes to it straight from the heap, valid only while the packet callback runs. A browser that refuses
+// a view of the shared heap gets one copy instead, from then on.
+let chunksFromHeap = true;
+function encodedChunk(module, init, bytes, size) {
+  heapCopies.packets++;
+  if (chunksFromHeap) {
+    try {
+      return new EncodedVideoChunk({ ...init, data: module.HEAPU8.subarray(bytes, bytes + size) });
+    } catch (error) {
+      if (!(error instanceof TypeError)) throw error;
+      chunksFromHeap = false;
+      console.warn(`FFmpegKMP: this browser's EncodedVideoChunk refuses shared memory; packets are copied (${error.message})`);
+    }
+  }
+  return new EncodedVideoChunk({ ...init, data: copyFromHeap(module, bytes, bytes + size) });
+}
+
+// Copies `bytes` into the heap for a prepare, which takes the copy over: the input lies in the heap once.
+function bytesIntoHeap(module, bytes) {
+  const pointer = module._malloc(bytes.length);
+  if (!pointer) throw bridgeFailure(ERROR_IO, `The heap has no room for the ${bytes.length}-byte input`);
+  try {
+    module.HEAPU8.set(bytes, pointer);
+  } catch (error) {
+    module._free(pointer);
+    throw error;
+  }
+  return pointer;
+}
 
 // Audio of the prepared source, decoded here on demand and played by the page's AudioWorklet,
 // which it reaches directly through `port`. Chunks carry the seek epoch they belong to.
@@ -304,6 +348,7 @@ function resetWebCodecs(module, closeDecoder = false) {
     } catch (_) {
       // Decoder reclamation or an earlier error may already have closed it.
     }
+    if (closeDecoder) webCodecsDecodersOpen--;
   }
   if (closeDecoder) {
     webCodecsDecoder = null;
@@ -395,6 +440,12 @@ function pumpWebCodecs(module, previewOnly = false) {
         playerPacketCallback,
         0,
       );
+      if (webCodecsPacketFailure) {
+        const failure = webCodecsPacketFailure;
+        webCodecsPacketFailure = null;
+        fallbackFromWebCodecs(module, failure);
+        break;
+      }
       if (result === 1) {
         webCodecsEof = true;
         webCodecsDecoder.flush().then(() => {
@@ -498,6 +549,7 @@ async function configureWebCodecs(module, outputFlags) {
     output: frame => scheduleWebCodecsFrame(module, frame),
     error: error => fallbackFromWebCodecs(module, error),
   });
+  webCodecsDecodersOpen++;
   webCodecsDecoder.ondequeue = () => {
     // A preview after a seek keeps decoding until it reaches the target.
     if (webCodecsPlaying) pumpWebCodecs(module);
@@ -599,7 +651,9 @@ async function handlePlayerMessage(data) {
       }, 'viii');
       playerFrameCallback = module.addFunction(
         (opaque, rgba, size, width, height, stride, presentationTimeUs, queueSerial) => {
-          const copied = module.HEAPU8.slice(rgba, rgba + Number(size));
+          // The heap is shared memory, which cannot be transferred: one copy out of it is inherent.
+          const copied = copyFromHeap(module, rgba, rgba + Number(size));
+          heapCopies.frames++;
           self.postMessage({
             type: 'player-frame',
             bytes: copied,
@@ -622,10 +676,7 @@ async function handlePlayerMessage(data) {
             optimizeForLatency: true,
           };
           if (descriptionSize > 0) {
-            config.description = module.HEAPU8.slice(
-              description,
-              description + Number(descriptionSize),
-            );
+            config.description = copyFromHeap(module, description, description + Number(descriptionSize));
           }
           const colorSpace = webColorSpace(primaries, transfer, matrix);
           if (colorSpace) config.colorSpace = colorSpace;
@@ -636,14 +687,14 @@ async function handlePlayerMessage(data) {
       playerPacketCallback = module.addFunction(
         (opaque, bytes, size, timestampUs, durationUs, keyFrame, queueSerial, pts, duration) => {
           webCodecsQueueSerial = queueSerial;
-          const copied = module.HEAPU8.slice(bytes, bytes + Number(size));
-          const init = {
-            type: keyFrame ? 'key' : 'delta',
-            timestamp: Number(timestampUs),
-            data: copied,
-          };
+          const init = { type: keyFrame ? 'key' : 'delta', timestamp: Number(timestampUs) };
           if (Number(durationUs) > 0) init.duration = Number(durationUs);
-          webCodecsDecoder.decode(new EncodedVideoChunk(init));
+          // Nothing may throw through the player, which holds its input's lock while it calls this.
+          try {
+            webCodecsDecoder.decode(encodedChunk(module, init, bytes, Number(size)));
+          } catch (error) {
+            webCodecsPacketFailure = error;
+          }
         },
         'viiijjiijj',
       );
@@ -689,10 +740,10 @@ async function handlePlayerMessage(data) {
       }
       const extension = mount.path.match(/\.([A-Za-z0-9]+)$/)?.[1] || '';
       mountAudioInput(mount, extension);
+      const inputPointer = bytesIntoHeap(module, mount.bytes);
       const extensionPointer = module.stringToNewUTF8(extension);
-      const inputPointer = module._malloc(mount.bytes.length);
       try {
-        module.HEAPU8.set(mount.bytes, inputPointer);
+        // The player takes the input over and frees it with the next prepare.
         result = module._ffplaykmp_web_player_prepare_bytes(
           playerHandle,
           inputPointer,
@@ -701,10 +752,14 @@ async function handlePlayerMessage(data) {
           data.requireSecurePath ? 1 : 0,
         );
       } finally {
-        module._free(inputPointer);
         module._free(extensionPointer);
       }
+    } else if (data.type === 'player-frame-size') {
+      // The size the page draws software frames at; 0 x 0 for their own.
+      module._ffplaykmp_web_player_set_frame_size(playerHandle, data.width | 0, data.height | 0);
     } else if (data.type === 'player-set-output') {
+      // A new output replaces the WebCodecs decoder and the packet reader, if any: each output opens its own.
+      resetWebCodecs(module, true);
       const canTryWebCodecs = playerDecoderPreference !== 2 && (data.flags & 1) !== 0;
       if (canTryWebCodecs && await configureWebCodecs(module, data.flags)) {
         result = 0;
@@ -784,9 +839,10 @@ async function handlePlayerMessage(data) {
 }
 
 // The video stream of an input, demuxed by the player's packet reader: prepared without an output,
-// so the player never decodes or plays. `onPacket` receives each packet read.
+// so the player never decodes or plays, from the input its prepare opened. `onPacket` receives each
+// packet read, its `data` a view of the heap valid only until it returns.
 function openPacketReader(module, bytes, extension, onPacket) {
-  const reader = { handle: 0, snapshot: null, config: null, callbacks: [] };
+  const reader = { handle: 0, snapshot: null, config: null, failure: null, callbacks: [] };
   reader.callbacks = [
     module.addFunction((opaque, json, size) => {
       reader.snapshot = decodeUtf8(module.HEAPU8, json, Number(size));
@@ -795,7 +851,7 @@ function openPacketReader(module, bytes, extension, onPacket) {
       (opaque, codec, description, descriptionSize, width, height, primaries, transfer, matrix) => {
         const config = { codec: decodeCString(module.HEAPU8, codec), codedWidth: width, codedHeight: height };
         if (descriptionSize > 0) {
-          config.description = module.HEAPU8.slice(description, description + Number(descriptionSize));
+          config.description = copyFromHeap(module, description, description + Number(descriptionSize));
         }
         const colorSpace = webColorSpace(primaries, transfer, matrix);
         if (colorSpace) config.colorSpace = colorSpace;
@@ -804,33 +860,41 @@ function openPacketReader(module, bytes, extension, onPacket) {
       'viiiiiiiii',
     ),
     module.addFunction((opaque, bytes, size, timestampUs, durationUs, keyFrame, queueSerial, pts, duration) => {
-      onPacket({
-        key: keyFrame !== 0,
-        timestampUs: Number(timestampUs),
-        durationUs: Number(durationUs),
-        pts,
-        duration,
-        data: module.HEAPU8.slice(bytes, bytes + Number(size)),
-      });
+      // Nothing may throw through the player, which holds its input's lock while it calls this.
+      try {
+        onPacket({
+          key: keyFrame !== 0,
+          timestampUs: Number(timestampUs),
+          durationUs: Number(durationUs),
+          pts,
+          duration,
+          bytes,
+          size: Number(size),
+        });
+      } catch (error) {
+        reader.failure = error;
+      }
     }, 'viiijjiijj'),
   ];
   // A demuxer only: it never opens a decoder, so the release delay (-1, keep) does not apply.
   reader.handle = module._ffplaykmp_web_player_create(0, 0, -1n, reader.callbacks[0], 0, 0);
   if (!reader.handle) throw new Error('FFmpegKMP demuxer allocation failed');
+  const inputPointer = bytesIntoHeap(module, bytes);
   const extensionPointer = module.stringToNewUTF8(extension || '');
-  const inputPointer = module._malloc(bytes.length);
   let result;
   try {
-    module.HEAPU8.set(bytes, inputPointer);
-    result = module._ffplaykmp_web_player_prepare_bytes(reader.handle, inputPointer, bytes.length, extensionPointer, 0);
+    // Inspects the input and reads its packets on the same open; the player takes the input over.
+    result = module._ffplaykmp_web_player_prepare_packets(
+      reader.handle, inputPointer, bytes.length, extensionPointer, reader.callbacks[1], 0);
   } finally {
-    module._free(inputPointer);
     module._free(extensionPointer);
   }
-  if (result < 0) throw bridgeFailure(result, `FFmpeg could not open the input (${result})`);
   // Delivers the inspected stream's snapshot: size, rotation, aspect ratio and duration.
   module._ffplaykmp_web_player_poll(reader.handle);
-  result = module._ffplaykmp_web_player_open_packets(reader.handle, reader.callbacks[1], 0);
+  // A prepare that failed leaves the player FAILED; else the input had no stream WebCodecs takes.
+  if (result < 0 && JSON.parse(reader.snapshot ?? '{}').state === STATE_FAILED) {
+    throw bridgeFailure(result, `FFmpeg could not open the input (${result})`);
+  }
   if (result < 0 || !reader.config) {
     throw bridgeFailure(result < 0 ? result : ERROR_UNSUPPORTED, `FFmpeg found no video stream WebCodecs can take (${result})`);
   }
@@ -840,6 +904,11 @@ function openPacketReader(module, bytes, extension, onPacket) {
 // Reads the next packet into `onPacket`: false at the end of the stream.
 function readPacket(module, reader) {
   const result = module._ffplaykmp_web_player_read_packet(reader.handle, reader.callbacks[2], 0);
+  if (reader.failure) {
+    const failure = reader.failure;
+    reader.failure = null;
+    throw failure;
+  }
   if (result === 1) return false;
   if (result < 0) throw bridgeFailure(result, `FFmpeg packet demux failed (${result})`);
   return true;
@@ -865,6 +934,8 @@ const ERROR_INVALID_ARGUMENT = -1001;
 const ERROR_INVALID_STATE = -1002;
 const ERROR_UNSUPPORTED = -1004;
 const ERROR_IO = -1005;
+// FFPLAYKMP_STATE_FAILED.
+const STATE_FAILED = 9;
 // AVERROR_EXIT and AVERROR_INVALIDDATA.
 const ERROR_EXIT = -0x54495845;
 const ERROR_INVALID_DATA = -0x41444e49;
@@ -896,7 +967,6 @@ const video = {
   origin: 0n,
   defaultDuration: 1n,
   streamEnd: NO_PTS,
-  packet: null,
   outputs: [],
   // Each chunk in the decoder's own pts and duration, by the timestamp it was given.
   times: new Map(),
@@ -1035,25 +1105,24 @@ async function decodeNextFrame(module) {
       }
       continue;
     }
-    video.packet = null;
-    if (!readPacket(module, video.reader)) {
-      video.demuxEnded = true;
-      continue;
-    }
-    const packet = video.packet;
-    if (video.awaitingSeekPacket) {
-      video.awaitingSeekPacket = false;
-      video.seekFloor = packet.pts === NO_PTS ? null : packet.pts;
-    }
-    // WebCodecs starts at a keyframe after each configure, reset and flush.
-    if (video.needsKey && !packet.key) continue;
-    video.needsKey = false;
-    const timestamp = packet.pts === NO_PTS
-      ? video.synthetic--
-      : Number(rescale(packet.pts - video.origin, video.timeBase, MICROSECONDS));
-    video.times.set(timestamp, { pts: packet.pts, duration: packet.duration });
-    video.decoder.decode(new EncodedVideoChunk({ type: packet.key ? 'key' : 'delta', timestamp, data: packet.data }));
+    if (!readPacket(module, video.reader)) video.demuxEnded = true;
   }
+}
+
+// Gives the decoder a packet the reader read, inside the reader's callback: its bytes are a view of the heap.
+function decodeVideoPacket(module, packet) {
+  if (video.awaitingSeekPacket) {
+    video.awaitingSeekPacket = false;
+    video.seekFloor = packet.pts === NO_PTS ? null : packet.pts;
+  }
+  // WebCodecs starts at a keyframe after each configure, reset and flush.
+  if (video.needsKey && !packet.key) return;
+  video.needsKey = false;
+  const timestamp = packet.pts === NO_PTS
+    ? video.synthetic--
+    : Number(rescale(packet.pts - video.origin, video.timeBase, MICROSECONDS));
+  video.times.set(timestamp, { pts: packet.pts, duration: packet.duration });
+  video.decoder.decode(encodedChunk(module, { type: packet.key ? 'key' : 'delta', timestamp }, packet.bytes, packet.size));
 }
 
 async function primeVideo(module) {
@@ -1209,9 +1278,7 @@ async function presentVideo() {
 async function openVideo(module, data) {
   if (video.reader) throw bridgeFailure(ERROR_INVALID_STATE, 'The decoder is already open');
   if (typeof VideoDecoder !== 'function') throw bridgeFailure(ERROR_UNSUPPORTED, 'This browser has no WebCodecs VideoDecoder');
-  video.reader = openPacketReader(module, data.bytes, data.extension, packet => {
-    video.packet = packet;
-  });
+  video.reader = openPacketReader(module, data.bytes, data.extension, packet => decodeVideoPacket(module, packet));
   const timing = module._malloc(40);
   try {
     const result = module._ffplaykmp_web_player_packet_timing(video.reader.handle, timing);
@@ -1620,6 +1687,25 @@ function serveResource(module, resources, resourceId, operation, offset, bytes, 
 }
 
 self.onmessage = async ({ data }) => {
+  // Instrumentation for the page's tests: the heap's size, the copies out of it, and the inputs opened.
+  if (data.type === 'statistics') {
+    // After the commands that came before it.
+    await Promise.all([playerMessageTail, videoMessageTail]);
+    const module = modulePromise ? await modulePromise : null;
+    const handle = playerHandle || video.reader?.handle || 0;
+    self.postMessage({
+      type: 'statistics',
+      id: data.id,
+      heapBytes: module ? module.HEAPU8.buffer.byteLength : 0,
+      heapSlices: heapCopies.slices,
+      frames: heapCopies.frames,
+      packets: heapCopies.packets,
+      chunksFromHeap,
+      webCodecsDecoders: webCodecsDecodersOpen,
+      inputOpens: module && handle ? module._ffplaykmp_web_player_input_opens(handle) : 0,
+    });
+    return;
+  }
   if (data.type.startsWith('player-')) {
     playerMessageTail = playerMessageTail.then(() => handlePlayerMessage(data));
     return;

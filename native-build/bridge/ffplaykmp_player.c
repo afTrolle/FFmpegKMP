@@ -1788,51 +1788,70 @@ int ffplaykmp_player_get_snapshot(
     return 0;
 }
 
-typedef struct ffplaykmp_web_packet_reader {
-    ffplaykmp_input input;
-    int video_stream;
-} ffplaykmp_web_packet_reader;
-
 typedef struct ffplaykmp_web_callbacks {
     ffplaykmp_web_state_callback state;
     ffplaykmp_web_video_frame_callback frame;
     void *opaque;
     ffplaykmp_player *player;
-    /* The page gets RGBA bytes, converted here on the decode thread; only it touches these. */
+    /* The page gets RGBA bytes, converted here on the session thread; only it touches the converter. */
     ffmpegkmp_converter *converter;
-    AVFrame *converted;
+    /*
+     * The frame mailbox, double buffered: the session thread converts into
+     * converted[!front] and then, under `mutex`, makes it the front one, which
+     * the page copies out of the heap in ffplaykmp_web_player_poll, under
+     * `mutex` too. So no frame is copied within the heap, and the one the
+     * page reads is never written.
+     */
+    AVFrame *converted[2];
+    int front;
     pthread_mutex_t mutex;
     char snapshot_json[4096];
     uint32_t snapshot_json_size;
     int snapshot_pending;
-    uint8_t *rgba;
-    uint32_t rgba_size;
-    uint32_t rgba_capacity;
-    int32_t width;
-    int32_t height;
-    int32_t stride;
     int64_t presentation_time_us;
     uint32_t queue_serial;
     int frame_pending;
+    /* What ffplaykmp_web_player_set_frame_size asked for, guarded by `mutex`; 0 x 0 for the source's size. */
+    int32_t frame_width;
+    int32_t frame_height;
+    /* The worker's buffer, taken over by prepare_bytes. */
     uint8_t *input;
     uint32_t input_size;
-    ffplaykmp_web_packet_reader *packet_reader;
+    /* IO_OPEN calls on the input, for the page's tests: one a prepare. */
+    atomic_uint input_opens;
+    /*
+     * The session's input is the packet reader's, from open_packets until
+     * close_packets; meanwhile no software run decodes from it. Guarded by
+     * session_mutex, as the input is.
+     */
+    int packets_open;
+    /* The reader's packet, allocated once. */
+    AVPacket *packet;
 } ffplaykmp_web_callbacks;
 
+/* Parks the packet reader; a software run after it seeks, since the decoder no longer follows the demuxer. */
 static void ffplaykmp_web_close_packet_reader(ffplaykmp_player *player) {
     ffplaykmp_web_callbacks *callbacks;
-    ffplaykmp_web_packet_reader *reader;
     if (!player)
         return;
     callbacks = player->opaque;
     if (!callbacks)
         return;
-    reader = callbacks->packet_reader;
-    callbacks->packet_reader = NULL;
-    if (!reader)
-        return;
-    ffplaykmp_close_input(&reader->input);
-    free(reader);
+    pthread_mutex_lock(&player->session_mutex);
+    if (callbacks->packets_open) {
+        callbacks->packets_open = 0;
+        player->session.in_sync = 0;
+        player->session.showing = 0;
+    }
+    pthread_mutex_unlock(&player->session_mutex);
+}
+
+/* The session, while the packet reader has its input, with session_mutex held; else NULL. */
+static ffplaykmp_session *ffplaykmp_web_packet_session(ffplaykmp_player *player) {
+    ffplaykmp_web_callbacks *callbacks = player ? player->opaque : NULL;
+    if (!callbacks || !callbacks->packets_open || !player->session.input.format)
+        return NULL;
+    return &player->session;
 }
 
 static int ffplaykmp_web_codec_string(
@@ -1881,8 +1900,10 @@ static int64_t ffplaykmp_web_io(
     uint64_t count;
     if (!callbacks || resource_id != 1)
         return -1;
-    if (operation == FFPLAYKMP_IO_OPEN)
+    if (operation == FFPLAYKMP_IO_OPEN) {
+        atomic_fetch_add(&callbacks->input_opens, 1);
         return FFPLAYKMP_IO_CAP_READ | FFPLAYKMP_IO_CAP_SEEK;
+    }
     if (operation == FFPLAYKMP_IO_SIZE)
         return callbacks->input_size;
     if (operation == FFPLAYKMP_IO_CLOSE)
@@ -1974,47 +1995,58 @@ static void ffplaykmp_web_publish(
     pthread_mutex_unlock(&callbacks->mutex);
 }
 
+/*
+ * Whether `width` x `height` shows a `source_width` x `source_height` frame
+ * smaller, at its aspect to within rounding: a size the page asked for another
+ * source, before it saw this one, is not one.
+ */
+static int ffplaykmp_web_frame_size_fits(int width, int height, int source_width, int source_height) {
+    const int64_t skew = (int64_t)width * source_height - (int64_t)height * source_width;
+    return width > 0 && height > 0 && width <= source_width && height <= source_height &&
+            (skew < 0 ? -skew : skew) < (source_width > source_height ? source_width : source_height);
+}
+
 static void ffplaykmp_web_frame(
         void *opaque,
         const ffplaykmp_video_frame *frame) {
     ffplaykmp_web_callbacks *callbacks = opaque;
     const AVFrame *decoded;
     AVFrame *converted;
-    uint64_t rgba_size;
     int tone_map_hdr;
+    int width;
+    int height;
+    int result;
     if (!callbacks || !callbacks->frame || !callbacks->player || !frame || !frame->frame)
         return;
     decoded = frame->frame->frame;
     pthread_mutex_lock(&callbacks->player->mutex);
     tone_map_hdr = (callbacks->player->snapshot.output_flags & FFPLAYKMP_OUTPUT_TONE_MAP_HDR_TO_SDR) != 0;
     pthread_mutex_unlock(&callbacks->player->mutex);
+    pthread_mutex_lock(&callbacks->mutex);
+    width = callbacks->frame_width;
+    height = callbacks->frame_height;
+    pthread_mutex_unlock(&callbacks->mutex);
+    if (!ffplaykmp_web_frame_size_fits(width, height, decoded->width, decoded->height))
+        width = height = 0;
     if (!callbacks->converter)
         callbacks->converter = ffmpegkmp_converter_alloc(0);
-    if (!callbacks->converted)
-        callbacks->converted = av_frame_alloc();
-    converted = callbacks->converted;
-    if (!callbacks->converter || !converted ||
-            ffplaykmp_rgb_output(converted, decoded, AV_PIX_FMT_RGBA, tone_map_hdr) < 0 ||
-            ffmpegkmp_frame_convert(callbacks->converter, converted, decoded) < 0)
+    /* Only this thread changes `front`, so it reads it without the lock. */
+    converted = callbacks->converted[!callbacks->front];
+    if (!callbacks->converter || !converted)
         return;
-    rgba_size = (uint64_t)converted->linesize[0] * (uint64_t)converted->height;
-    if (rgba_size > UINT32_MAX)
+    result = ffplaykmp_rgb_output(converted, decoded, AV_PIX_FMT_RGBA, width, height, tone_map_hdr);
+    if (result >= 0)
+        result = ffmpegkmp_frame_convert(callbacks->converter, converted, decoded);
+    /* A packed RGB source converts pixel for pixel only. */
+    if (result == AVERROR(ENOSYS) && width > 0) {
+        result = ffplaykmp_rgb_output(converted, decoded, AV_PIX_FMT_RGBA, 0, 0, tone_map_hdr);
+        if (result >= 0)
+            result = ffmpegkmp_frame_convert(callbacks->converter, converted, decoded);
+    }
+    if (result < 0 || (uint64_t)converted->linesize[0] * (uint64_t)converted->height > UINT32_MAX)
         return;
     pthread_mutex_lock(&callbacks->mutex);
-    if (callbacks->rgba_capacity < rgba_size) {
-        uint8_t *grown = realloc(callbacks->rgba, (size_t)rgba_size);
-        if (!grown) {
-            pthread_mutex_unlock(&callbacks->mutex);
-            return;
-        }
-        callbacks->rgba = grown;
-        callbacks->rgba_capacity = (uint32_t)rgba_size;
-    }
-    memcpy(callbacks->rgba, converted->data[0], (size_t)rgba_size);
-    callbacks->rgba_size = (uint32_t)rgba_size;
-    callbacks->width = converted->width;
-    callbacks->height = converted->height;
-    callbacks->stride = converted->linesize[0];
+    callbacks->front = !callbacks->front;
     callbacks->presentation_time_us = frame->presentation_time_us;
     callbacks->queue_serial = frame->queue_serial;
     callbacks->frame_pending = 1;
@@ -2040,7 +2072,15 @@ ffplaykmp_player *ffplaykmp_web_player_create(
     callbacks->state = state_callback;
     callbacks->frame = frame_callback;
     callbacks->opaque = opaque;
-    if (pthread_mutex_init(&callbacks->mutex, NULL) != 0) {
+    atomic_init(&callbacks->input_opens, 0);
+    callbacks->converted[0] = av_frame_alloc();
+    callbacks->converted[1] = av_frame_alloc();
+    callbacks->packet = av_packet_alloc();
+    if (!callbacks->converted[0] || !callbacks->converted[1] || !callbacks->packet ||
+            pthread_mutex_init(&callbacks->mutex, NULL) != 0) {
+        av_frame_free(&callbacks->converted[0]);
+        av_frame_free(&callbacks->converted[1]);
+        av_packet_free(&callbacks->packet);
         free(callbacks);
         return NULL;
     }
@@ -2054,6 +2094,9 @@ ffplaykmp_player *ffplaykmp_web_player_create(
             callbacks);
     if (!player) {
         pthread_mutex_destroy(&callbacks->mutex);
+        av_frame_free(&callbacks->converted[0]);
+        av_frame_free(&callbacks->converted[1]);
+        av_packet_free(&callbacks->packet);
         free(callbacks);
         return NULL;
     }
@@ -2070,38 +2113,33 @@ void ffplaykmp_web_player_destroy(ffplaykmp_player *player) {
     if (!player)
         return;
     callbacks = player->opaque;
-    ffplaykmp_web_close_packet_reader(player);
     ffplaykmp_player_destroy(player);
     pthread_mutex_destroy(&callbacks->mutex);
     ffmpegkmp_converter_free(&callbacks->converter);
-    av_frame_free(&callbacks->converted);
-    free(callbacks->rgba);
+    av_frame_free(&callbacks->converted[0]);
+    av_frame_free(&callbacks->converted[1]);
+    av_packet_free(&callbacks->packet);
     free(callbacks->input);
     free(callbacks);
 }
 
 int ffplaykmp_web_player_prepare_bytes(
         ffplaykmp_player *player,
-        const uint8_t *bytes,
+        uint8_t *bytes,
         uint32_t size,
         const char *extension,
         uint32_t source_flags) {
-    ffplaykmp_web_callbacks *callbacks;
-    uint8_t *copied;
+    ffplaykmp_web_callbacks *callbacks = player ? player->opaque : NULL;
     char input[64];
     char safe_extension[17];
     size_t index = 0;
-    if (!player || !bytes || size == 0)
+    if (!callbacks || !bytes || size == 0) {
+        free(bytes);
         return FFPLAYKMP_ERROR_INVALID_ARGUMENT;
-    callbacks = player->opaque;
-    if (!callbacks)
-        return FFPLAYKMP_ERROR_INVALID_ARGUMENT;
+    }
+    /* Closes the input, and with it the packet reader's, before the bytes it reads go. */
     ffplaykmp_player_reset_cancel(player);
     ffplaykmp_web_close_packet_reader(player);
-    copied = malloc(size);
-    if (!copied)
-        return -ENOMEM;
-    memcpy(copied, bytes, size);
     while (extension && extension[index] && index < sizeof(safe_extension) - 1) {
         char value = extension[index];
         if (!((value >= 'a' && value <= 'z') ||
@@ -2113,7 +2151,7 @@ int ffplaykmp_web_player_prepare_bytes(
     safe_extension[index] = '\0';
     pthread_mutex_lock(&callbacks->mutex);
     free(callbacks->input);
-    callbacks->input = copied;
+    callbacks->input = bytes;
     callbacks->input_size = size;
     pthread_mutex_unlock(&callbacks->mutex);
     ffplaykmp_player_set_io_callback(player, ffplaykmp_web_io, callbacks);
@@ -2129,6 +2167,8 @@ int ffplaykmp_web_player_set_output(
         ffplaykmp_player *player,
         uint32_t output_flags) {
     ffplaykmp_output_capabilities capabilities;
+    /* The software path decodes from the input the packet reader had. */
+    ffplaykmp_web_close_packet_reader(player);
     ffplaykmp_output_capabilities_init(&capabilities);
     capabilities.flags = output_flags;
     return ffplaykmp_player_set_output(player, &capabilities);
@@ -2150,18 +2190,58 @@ void ffplaykmp_web_player_poll(ffplaykmp_player *player) {
                 callbacks->snapshot_json_size);
     }
     if (callbacks->frame_pending && callbacks->frame) {
+        const AVFrame *front = callbacks->converted[callbacks->front];
         callbacks->frame_pending = 0;
         callbacks->frame(
                 callbacks->opaque,
-                callbacks->rgba,
-                callbacks->rgba_size,
-                callbacks->width,
-                callbacks->height,
-                callbacks->stride,
+                front->data[0],
+                (uint32_t)front->linesize[0] * (uint32_t)front->height,
+                front->width,
+                front->height,
+                front->linesize[0],
                 callbacks->presentation_time_us,
                 callbacks->queue_serial);
     }
     pthread_mutex_unlock(&callbacks->mutex);
+}
+
+void ffplaykmp_web_player_set_frame_size(ffplaykmp_player *player, int32_t width, int32_t height) {
+    ffplaykmp_web_callbacks *callbacks = player ? player->opaque : NULL;
+    if (!callbacks)
+        return;
+    pthread_mutex_lock(&callbacks->mutex);
+    callbacks->frame_width = width > 0 && height > 0 ? width : 0;
+    callbacks->frame_height = width > 0 && height > 0 ? height : 0;
+    pthread_mutex_unlock(&callbacks->mutex);
+}
+
+uint32_t ffplaykmp_web_player_input_opens(ffplaykmp_player *player) {
+    ffplaykmp_web_callbacks *callbacks = player ? player->opaque : NULL;
+    return callbacks ? atomic_load(&callbacks->input_opens) : 0;
+}
+
+/*
+ * Moves the session's input to the start of its video stream for the packet
+ * reader, with session_mutex held: an input not yet read past its probe is
+ * there already. The decoder no longer follows the demuxer, so a software run
+ * after it seeks.
+ */
+static int ffplaykmp_web_rewind_input(ffplaykmp_session *session) {
+    AVIOContext *pb = session->input.format->pb;
+    int64_t target;
+    session->in_sync = 0;
+    session->showing = 0;
+    if (session->at_start) {
+        session->at_start = 0;
+        return 0;
+    }
+    if (pb) {
+        pb->error = 0;
+        pb->eof_reached = 0;
+    }
+    target = av_rescale_q(session->media_start_us, AV_TIME_BASE_Q, session->stream->time_base);
+    return avformat_seek_file(
+            session->input.format, session->video_stream, INT64_MIN, target, INT64_MAX, AVSEEK_FLAG_BACKWARD);
 }
 
 int ffplaykmp_web_player_open_packets(
@@ -2169,49 +2249,61 @@ int ffplaykmp_web_player_open_packets(
         ffplaykmp_web_decoder_config_callback callback,
         void *opaque) {
     ffplaykmp_web_callbacks *callbacks;
-    ffplaykmp_web_packet_reader *reader;
+    ffplaykmp_session *session;
     const AVCodecParameters *parameters;
+    const char *input;
     char codec[64];
     int result;
     if (!player || !callback)
         return FFPLAYKMP_ERROR_INVALID_ARGUMENT;
     callbacks = player->opaque;
-    if (!callbacks || !callbacks->input || callbacks->input_size == 0)
+    if (!callbacks)
         return FFPLAYKMP_ERROR_INVALID_STATE;
-    ffplaykmp_web_close_packet_reader(player);
-    reader = calloc(1, sizeof(*reader));
-    if (!reader)
-        return AVERROR(ENOMEM);
-    /* The worker mounts the prepared bytes as resource 1. */
-    result = ffplaykmp_player_open_input(player, "ffmpegkmp:1", &reader->input);
-    if (result < 0)
-        goto fail;
-    reader->video_stream = av_find_best_stream(
-            reader->input.format, AVMEDIA_TYPE_VIDEO, -1, -1, NULL, 0);
-    if (reader->video_stream < 0) {
-        result = reader->video_stream;
-        goto fail;
+    /* The two outputs are exclusive: a software playback reading the input ends first. */
+    ffplaykmp_stop_worker(player);
+    pthread_mutex_lock(&player->session_mutex);
+    session = &player->session;
+    callbacks->packets_open = 0;
+    pthread_mutex_lock(&player->mutex);
+    input = player->input;
+    pthread_mutex_unlock(&player->mutex);
+    /* Prepare left the input open; only a software run that failed closed it since. */
+    result = input ? ffplaykmp_session_open_input(player, input) : FFPLAYKMP_ERROR_INVALID_STATE;
+    if (result < 0) {
+        pthread_mutex_unlock(&player->session_mutex);
+        return result;
     }
-    parameters = reader->input.format->streams[reader->video_stream]->codecpar;
+    parameters = session->stream->codecpar;
     result = ffplaykmp_web_codec_string(parameters, codec, sizeof(codec));
-    if (result < 0)
-        goto fail;
-    callbacks->packet_reader = reader;
-    callback(
-            opaque,
-            codec,
-            parameters->extradata,
-            parameters->extradata_size > 0 ? (uint32_t)parameters->extradata_size : 0,
-            parameters->width,
-            parameters->height,
-            parameters->color_primaries,
-            parameters->color_trc,
-            parameters->color_space);
-    return 0;
-fail:
-    callbacks->packet_reader = reader;
-    ffplaykmp_web_close_packet_reader(player);
+    if (result >= 0)
+        result = ffplaykmp_web_rewind_input(session);
+    if (result >= 0) {
+        callbacks->packets_open = 1;
+        callback(
+                opaque,
+                codec,
+                parameters->extradata,
+                parameters->extradata_size > 0 ? (uint32_t)parameters->extradata_size : 0,
+                parameters->width,
+                parameters->height,
+                parameters->color_primaries,
+                parameters->color_trc,
+                parameters->color_space);
+        result = 0;
+    }
+    pthread_mutex_unlock(&player->session_mutex);
     return result;
+}
+
+int ffplaykmp_web_player_prepare_packets(
+        ffplaykmp_player *player,
+        uint8_t *bytes,
+        uint32_t size,
+        const char *extension,
+        ffplaykmp_web_decoder_config_callback callback,
+        void *opaque) {
+    int result = ffplaykmp_web_player_prepare_bytes(player, bytes, size, extension, 0);
+    return result < 0 ? result : ffplaykmp_web_player_open_packets(player, callback, opaque);
 }
 
 int ffplaykmp_web_player_read_packet(
@@ -2219,9 +2311,8 @@ int ffplaykmp_web_player_read_packet(
         ffplaykmp_web_encoded_packet_callback callback,
         void *opaque) {
     ffplaykmp_web_callbacks *callbacks;
-    ffplaykmp_web_packet_reader *reader;
+    ffplaykmp_session *session;
     AVPacket *packet;
-    AVStream *stream;
     int64_t timestamp;
     int64_t duration;
     uint32_t queue_serial;
@@ -2229,27 +2320,26 @@ int ffplaykmp_web_player_read_packet(
     if (!player || !callback)
         return FFPLAYKMP_ERROR_INVALID_ARGUMENT;
     callbacks = player->opaque;
-    reader = callbacks ? callbacks->packet_reader : NULL;
-    if (!reader || !reader->input.format)
+    pthread_mutex_lock(&player->session_mutex);
+    session = ffplaykmp_web_packet_session(player);
+    if (!session) {
+        pthread_mutex_unlock(&player->session_mutex);
         return FFPLAYKMP_ERROR_INVALID_STATE;
-    packet = av_packet_alloc();
-    if (!packet)
-        return AVERROR(ENOMEM);
-    while ((result = av_read_frame(reader->input.format, packet)) >= 0) {
-        if (packet->stream_index != reader->video_stream) {
+    }
+    packet = callbacks->packet;
+    while ((result = av_read_frame(session->input.format, packet)) >= 0) {
+        if (packet->stream_index != session->video_stream) {
             av_packet_unref(packet);
             continue;
         }
-        stream = reader->input.format->streams[reader->video_stream];
         timestamp = packet->pts != AV_NOPTS_VALUE ? packet->pts : packet->dts;
         if (timestamp == AV_NOPTS_VALUE)
             timestamp = 0;
-        timestamp = av_rescale_q(timestamp, stream->time_base, AV_TIME_BASE_Q) -
-                ffplaykmp_media_start_us(reader->input.format);
+        timestamp = ffplaykmp_session_time_us(session, timestamp);
         if (timestamp < 0)
             timestamp = 0;
         duration = packet->duration > 0
-                ? av_rescale_q(packet->duration, stream->time_base, AV_TIME_BASE_Q)
+                ? av_rescale_q(packet->duration, session->stream->time_base, AV_TIME_BASE_Q)
                 : 0;
         pthread_mutex_lock(&player->mutex);
         queue_serial = player->snapshot.queue_serial;
@@ -2264,10 +2354,11 @@ int ffplaykmp_web_player_read_packet(
                 queue_serial,
                 packet->pts != AV_NOPTS_VALUE ? packet->pts : packet->dts,
                 packet->duration > 0 ? packet->duration : 0);
-        av_packet_free(&packet);
+        av_packet_unref(packet);
+        pthread_mutex_unlock(&player->session_mutex);
         return 0;
     }
-    av_packet_free(&packet);
+    pthread_mutex_unlock(&player->session_mutex);
     return result == AVERROR_EOF ? 1 : result;
 }
 
@@ -2275,48 +2366,58 @@ void ffplaykmp_web_player_close_packets(ffplaykmp_player *player) {
     ffplaykmp_web_close_packet_reader(player);
 }
 
-static AVStream *ffplaykmp_web_packet_stream(ffplaykmp_player *player, AVFormatContext **format) {
-    ffplaykmp_web_callbacks *callbacks = player ? player->opaque : NULL;
-    ffplaykmp_web_packet_reader *reader = callbacks ? callbacks->packet_reader : NULL;
-    if (!reader || !reader->input.format)
-        return NULL;
-    *format = reader->input.format;
-    return reader->input.format->streams[reader->video_stream];
-}
-
 int ffplaykmp_web_player_packet_timing(ffplaykmp_player *player, int64_t *values) {
-    AVFormatContext *format;
-    AVStream *stream = ffplaykmp_web_packet_stream(player, &format);
-    if (!stream || !values)
-        return FFPLAYKMP_ERROR_INVALID_STATE;
-    values[0] = stream->time_base.num;
-    values[1] = stream->time_base.den;
-    ffplaykmp_stream_timing(format, stream, &values[2], &values[3], &values[4]);
-    return 0;
+    ffplaykmp_session *session;
+    int result = FFPLAYKMP_ERROR_INVALID_STATE;
+    if (!player || !values)
+        return FFPLAYKMP_ERROR_INVALID_ARGUMENT;
+    pthread_mutex_lock(&player->session_mutex);
+    session = ffplaykmp_web_packet_session(player);
+    if (session) {
+        values[0] = session->stream->time_base.num;
+        values[1] = session->stream->time_base.den;
+        ffplaykmp_stream_timing(session->input.format, session->stream, &values[2], &values[3], &values[4]);
+        result = 0;
+    }
+    pthread_mutex_unlock(&player->session_mutex);
+    return result;
 }
 
 int ffplaykmp_web_player_seek_packets(ffplaykmp_player *player, int64_t target) {
+    ffplaykmp_session *session;
     AVFormatContext *format;
-    AVStream *stream = ffplaykmp_web_packet_stream(player, &format);
-    int result;
-    if (!stream)
-        return FFPLAYKMP_ERROR_INVALID_STATE;
-    /* The keyframe at or before the target, never after it, as the pull decoder seeks. */
-    result = avformat_seek_file(format, stream->index, INT64_MIN, target, target, AVSEEK_FLAG_BACKWARD);
-    if (result < 0)
-        result = avformat_seek_file(format, stream->index, INT64_MIN, target, INT64_MAX, AVSEEK_FLAG_BACKWARD);
+    int index;
+    int result = FFPLAYKMP_ERROR_INVALID_STATE;
+    if (!player)
+        return FFPLAYKMP_ERROR_INVALID_ARGUMENT;
+    pthread_mutex_lock(&player->session_mutex);
+    session = ffplaykmp_web_packet_session(player);
+    if (session) {
+        format = session->input.format;
+        index = session->video_stream;
+        /* The keyframe at or before the target, never after it, as the pull decoder seeks. */
+        result = avformat_seek_file(format, index, INT64_MIN, target, target, AVSEEK_FLAG_BACKWARD);
+        if (result < 0)
+            result = avformat_seek_file(format, index, INT64_MIN, target, INT64_MAX, AVSEEK_FLAG_BACKWARD);
+    }
+    pthread_mutex_unlock(&player->session_mutex);
     return result;
 }
 
 int64_t ffplaykmp_web_player_keyframe_before(ffplaykmp_player *player, int64_t target) {
-    AVFormatContext *format;
-    AVStream *stream = ffplaykmp_web_packet_stream(player, &format);
-    const AVIndexEntry *entry;
+    ffplaykmp_session *session;
+    const AVIndexEntry *entry = NULL;
     int index;
-    if (!stream)
+    if (!player)
         return AV_NOPTS_VALUE;
-    index = av_index_search_timestamp(stream, target, AVSEEK_FLAG_BACKWARD);
-    entry = index >= 0 ? avformat_index_get_entry(stream, index) : NULL;
+    pthread_mutex_lock(&player->session_mutex);
+    session = ffplaykmp_web_packet_session(player);
+    if (session) {
+        AVStream *stream = session->input.format->streams[session->video_stream];
+        index = av_index_search_timestamp(stream, target, AVSEEK_FLAG_BACKWARD);
+        entry = index >= 0 ? avformat_index_get_entry(stream, index) : NULL;
+    }
+    pthread_mutex_unlock(&player->session_mutex);
     return entry ? entry->timestamp : AV_NOPTS_VALUE;
 }
 
@@ -2370,23 +2471,19 @@ int ffplaykmp_web_player_webcodecs_pause(ffplaykmp_player *player) {
 int ffplaykmp_web_player_webcodecs_seek(
         ffplaykmp_player *player,
         int64_t position_us) {
-    ffplaykmp_web_callbacks *callbacks;
-    ffplaykmp_web_packet_reader *reader;
-    AVStream *stream;
+    ffplaykmp_session *session;
     int64_t target;
     int play_when_ready;
     int result;
     if (!player || position_us < 0 || ffplaykmp_require_prepared(player) < 0)
         return FFPLAYKMP_ERROR_INVALID_ARGUMENT;
-    callbacks = player->opaque;
-    reader = callbacks ? callbacks->packet_reader : NULL;
-    if (!reader || !reader->input.format)
+    pthread_mutex_lock(&player->session_mutex);
+    session = ffplaykmp_web_packet_session(player);
+    if (!session) {
+        pthread_mutex_unlock(&player->session_mutex);
         return FFPLAYKMP_ERROR_INVALID_STATE;
-    stream = reader->input.format->streams[reader->video_stream];
-    target = av_rescale_q(
-            ffplaykmp_media_start_us(reader->input.format) + position_us,
-            AV_TIME_BASE_Q,
-            stream->time_base);
+    }
+    target = av_rescale_q(session->media_start_us + position_us, AV_TIME_BASE_Q, session->stream->time_base);
     pthread_mutex_lock(&player->mutex);
     play_when_ready = player->play_when_ready;
     player->snapshot.state = FFPLAYKMP_STATE_SEEKING;
@@ -2395,12 +2492,13 @@ int ffplaykmp_web_player_webcodecs_seek(
     pthread_mutex_unlock(&player->mutex);
     ffplaykmp_publish(player);
     result = avformat_seek_file(
-            reader->input.format,
-            reader->video_stream,
+            session->input.format,
+            session->video_stream,
             INT64_MIN,
             target,
             INT64_MAX,
             AVSEEK_FLAG_BACKWARD);
+    pthread_mutex_unlock(&player->session_mutex);
     pthread_mutex_lock(&player->mutex);
     if (result < 0) {
         player->snapshot.last_error = result;

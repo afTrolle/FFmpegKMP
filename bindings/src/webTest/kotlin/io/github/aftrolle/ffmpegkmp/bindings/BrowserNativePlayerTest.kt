@@ -37,9 +37,17 @@ import okio.Buffer
  * player was.
  */
 class BrowserNativePlayerTest {
+    /** The worker copies each frame out of the heap once, and its player opened the input once, for the prepare. */
     @Test
     fun softwarePlaysTheClipThroughTheLifecycle() = playerTest("software lifecycle") {
-        Playing("software").use { playing -> playThroughTheLifecycle(playing) }
+        Playing("software").use { playing ->
+            playThroughTheLifecycle(playing)
+            val statistics = playing.statistics()
+            log("software: $statistics")
+            assertTrue(statistics.frames >= playing.softwareFrames, "$statistics for ${playing.softwareFrames} frames shown")
+            assertEquals(statistics.frames, statistics.heapSlices, "copies out of the heap, one a frame: $statistics")
+            assertEquals(1, statistics.inputOpens, "inputs opened")
+        }
     }
 
     /** The WebCodecs packet path: FFmpeg demuxes in the worker, packet by packet, and WebCodecs decodes. */
@@ -52,8 +60,103 @@ class BrowserNativePlayerTest {
         Playing("WebCodecs", NativePlayerDecoderPreference.AUTO, webCodecs = true).use { playing ->
             playThroughTheLifecycle(playing)
             assertEquals(0, playing.softwareFrames, "frames copied through the software path")
+            // The packet reader reads the input prepare opened, and WebCodecs takes its packets from the heap: the
+            // one copy out of it is the decoder's description, once.
+            val statistics = playing.statistics()
+            log("WebCodecs: $statistics")
+            assertEquals(1, statistics.inputOpens, "inputs opened")
+            assertTrue(statistics.packets > 5 * FPS, "$statistics")
+            assertTrue(statistics.chunksFromHeap, "Chrome takes chunk data from the shared heap: $statistics")
+            assertEquals(1, statistics.heapSlices, "copies out of the heap: $statistics")
         }
         assertEquals(0, browserPlayerVideoFrameRegistrySize(), "VideoFrames left in the registry")
+    }
+
+    /** Setting the output again replaces the WebCodecs decoder, closing the one before, and reads the input anew. */
+    @Test
+    fun webCodecsOutputSetAgainKeepsOneDecoder() = playerTest("WebCodecs output set again") {
+        if (!browserSupportsWebCodecs()) {
+            log("skipped: this browser has no VideoDecoder or EncodedVideoChunk")
+            return@playerTest
+        }
+        Playing("WebCodecs set again", NativePlayerDecoderPreference.AUTO, webCodecs = true).use { playing ->
+            playing.prepareAndShow()
+            for (again in 1..3) {
+                val before = playing.shown.value.count
+                assertEquals(0, playing.bridge.setOutput(NativePlayerOutputCapabilities(hardwareFrameImport = true, softwareFrameUpload = true)))
+                playing.awaitShown("the preview of output $again") { it.count > before && it.number == 0 }
+                assertEquals(1, playing.statistics().webCodecsDecoders, "WebCodecs decoders open after output $again")
+            }
+            playing.seekWhilePaused(1_000_000L)
+            assertEquals(0, playing.bridge.play())
+            playing.await("playback past 1.5s") { it.positionUs >= 1_500_000L }
+            assertEquals(0, playing.bridge.stop())
+            playing.await("stopped") { it.state == NativePlayerState.STOPPED }
+            val statistics = playing.statistics()
+            assertEquals(0, statistics.webCodecsDecoders, "WebCodecs decoders open after stop")
+            assertEquals(1, statistics.inputOpens, "inputs opened")
+            assertEquals(0, playing.softwareFrames, "frames through the software path")
+            playing.check()
+        }
+        assertEquals(0, browserPlayerVideoFrameRegistrySize(), "VideoFrames left in the registry")
+    }
+
+    /**
+     * The worker converts software frames to the size the page draws them at: each frame is that size × 4 bytes,
+     * copied out of the heap once. A size not at the video's aspect, or larger than it, gives the video's own.
+     */
+    @Test
+    fun softwareFramesComeAtTheSizeAskedFor() = playerTest("frames at the drawn size") {
+        Playing("drawn size").use { playing ->
+            val bridge = playing.bridge
+            playing.prepareAndShow()
+            val sizes = listOf(64 to 64, 32 to 32, 64 to 32, 256 to 256, 0 to 0, 48 to 48)
+            val expected = listOf(64 to 64, 32 to 32, SIZE to SIZE, SIZE to SIZE, SIZE to SIZE, 48 to 48)
+            for ((index, size) in sizes.withIndex()) {
+                bridge.setFrameSize(size.first, size.second)
+                val target = 500_000L + index * 400_000L
+                playing.seekWhilePaused(target)
+                val shown = playing.shown.value
+                assertEquals(expected[index], shown.width to shown.height, "the frame asked for at $size")
+                assertEquals(shown.width * shown.height * 4, shown.bytes, "the bytes of a ${shown.width}x${shown.height} frame")
+            }
+            val before = playing.shown.value.count
+            assertEquals(0, bridge.play())
+            playing.await("playback past 4s") { it.positionUs >= 4_000_000L }
+            assertEquals(0, bridge.pause())
+            playing.await("paused") { it.state == NativePlayerState.PAUSED }
+            playing.settled()
+            val played = playing.shownSince(before)
+            assertTrue(played.size >= FPS / 2, "${played.size} frames played")
+            assertEquals(listOf(48 * 48 * 4), played.map { it.bytes }.distinct(), "bytes a frame")
+            val numbers = played.map { it.number }
+            assertEquals(numbers.sorted().distinct(), numbers, "frames in order")
+            val statistics = playing.statistics()
+            assertEquals(statistics.frames, statistics.heapSlices, "copies out of the heap, one a frame: $statistics")
+            playing.check()
+        }
+    }
+
+    /**
+     * The worker's player takes over the buffer the input is copied into, so a prepare grows the heap by the input
+     * once at most. The input is the clip with 80 MB of zeros after it, which the demuxer never reads: more than the
+     * 64 MB heap the worker starts with, so two copies would grow it by more than one input and its first 64 MB.
+     */
+    @Test
+    fun aPreparedInputLiesInTheHeapOnce() = playerTest("the input in the heap once") {
+        Playing("80 MB input", padding = PADDING).use { playing ->
+            val started = playing.statistics()
+            playing.prepareAndShow()
+            val prepared = playing.statistics()
+            val growth = prepared.heapBytes - started.heapBytes
+            log("the heap grew from ${started.heapBytes} to ${prepared.heapBytes} bytes for a ${PADDING}-byte input")
+            assertTrue(growth < 1.1 * PADDING, "the heap grew by $growth bytes for a ${PADDING}-byte input")
+            assertEquals(1, prepared.inputOpens, "inputs opened")
+            playing.seekWhilePaused(2_000_000L)
+            assertEquals(0, playing.bridge.play())
+            playing.await("playback past 2.5s") { it.positionUs >= 2_500_000L }
+            playing.check()
+        }
     }
 
     /**
@@ -136,6 +239,7 @@ class BrowserNativePlayerTest {
                 playing.await("stopped $ending") { it.state == NativePlayerState.STOPPED }
                 log("cycle $cycle, stopped $ending, took ${started.elapsedNow()}")
             }
+            assertEquals(6, playing.statistics().inputOpens, "inputs opened in six prepares")
             playing.check()
         }
     }
@@ -315,6 +419,8 @@ class BrowserNativePlayerTest {
         val height: Int = 0,
         val presentationTimeUs: Long = -1,
         val queueSerial: UInt = 0u,
+        /** The software frame's bytes, as the worker handed them over; 0 for a WebCodecs frame. */
+        val bytes: Int = 0,
     )
 
     /**
@@ -328,10 +434,15 @@ class BrowserNativePlayerTest {
         val webCodecs: Boolean = false,
         val index: Int = 0,
         codecReleaseDelayUs: Long = 2_000_000,
+        private val padding: Int = 0,
     ) {
         val snapshot = MutableStateFlow(NativePlayerSnapshot())
         val shown = MutableStateFlow(Shown())
         private val numbers = mutableListOf<Int>()
+        private val history = mutableListOf<Shown>()
+
+        /** The bridge's worker, the next one the page starts. */
+        private val workerIndex = recordBrowserWorkers().let { browserWorkersStarted() }
         private val failures = mutableListOf<NativePlayerSnapshot>()
         private var outputSet = false
         var softwareFrames = 0
@@ -344,7 +455,8 @@ class BrowserNativePlayerTest {
             },
             frame = { frame ->
                 softwareFrames++
-                show(frame.number(), frame.width, frame.height, frame.presentationTimeUs, frame.queueSerial)
+                val bytes = frame.frame.usePlanes { planes -> (planes.single().memory as ByteArray).size }
+                show(frame.number(), frame.width, frame.height, frame.presentationTimeUs, frame.queueSerial, bytes)
                 frame.frame.close()
             },
             platformFrame = { frame ->
@@ -354,17 +466,22 @@ class BrowserNativePlayerTest {
             },
         )
 
-        private fun show(number: Int, width: Int, height: Int, presentationTimeUs: Long, queueSerial: UInt) {
+        private fun show(number: Int, width: Int, height: Int, presentationTimeUs: Long, queueSerial: UInt, bytes: Int = 0) {
             numbers += number
-            shown.update { Shown(it.count + 1, number, width, height, presentationTimeUs, queueSerial) }
+            shown.update { Shown(it.count + 1, number, width, height, presentationTimeUs, queueSerial, bytes).also(history::add) }
         }
 
         fun numbersSince(count: Int): List<Int> = numbers.drop(count)
 
+        fun shownSince(count: Int): List<Shown> = history.drop(count)
+
+        /** The worker's statistics, once the commands posted before have run. */
+        suspend fun statistics(): BrowserWorkerStatistics = browserWorkerStatistics(workerIndex)
+
         /** Prepares the clip, sets the output the first time once the stream is known, and waits for the preview of its first frame. */
         suspend fun prepareAndShow() {
             val before = shown.value.count
-            assertEquals(0, bridge.prepare(source()))
+            assertEquals(0, bridge.prepare(source(padding)))
             val prepared = within("${name}'s preparation") { bridge.awaitPreparation() }
             assertEquals(0, prepared, "$name prepared: ${snapshot.value}")
             // Once set, the bridge sends the output again after each prepare.
@@ -455,8 +572,12 @@ class BrowserNativePlayerTest {
         suspend fun clipBytes(): ByteArray =
             clip ?: loadBrowserPlayerTestResource("/base/kotlin/video-decoder/$CLIP").also { clip = it }
 
-        suspend fun source(): NativePlayerSource {
-            val bytes = clipBytes()
+        /** 80 MB, more than the heap a worker starts with. */
+        const val PADDING = 80 shl 20
+
+        /** The clip, with [padding] zero bytes after it, which the demuxer never reads. */
+        suspend fun source(padding: Int = 0): NativePlayerSource {
+            val bytes = clipBytes().let { if (padding > 0) it.copyOf(it.size + padding) else it }
             return NativePlayerSource(
                 input = CLIP,
                 mounts = listOf(NativeMountedIo(path = CLIP, resource = NativeSourceResource(Buffer().write(bytes)))),
@@ -487,13 +608,16 @@ private suspend fun <T> within(what: String, timeout: Duration = 15.seconds, blo
 /** The frame on screen at [timeUs]; a frame's own start time, in whole microseconds, may fall just short of it. */
 private fun frameAt(timeUs: Long): Int = floor(timeUs * 30 / 1e6 + 1e-3).toInt()
 
-/** The number cfr-30-h264-128.mp4 draws in a frame: 12 cells of 16x16, the green channel lit for a set bit. */
+/**
+ * The number cfr-30-h264-128.mp4 draws in a frame: 12 cells of 16x16, the green channel lit for a set bit, read at
+ * any size the frame was scaled to.
+ */
 private fun NativeVideoFrame.number(): Int = frame.usePlanes { planes ->
     val plane = planes.single()
     val bytes = plane.memory as ByteArray
     (0 until 12).sumOf { bit ->
-        val x = (bit % 6) * 16 + 8
-        val y = (bit / 6) * 16 + 8
+        val x = ((bit % 6) * 16 + 8) * width / 128
+        val y = ((bit / 6) * 16 + 8) * height / 128
         if ((bytes[plane.offset + y * plane.rowBytes + x * 4 + 1].toInt() and 0xff) > 128) 1 shl bit else 0
     }
 }

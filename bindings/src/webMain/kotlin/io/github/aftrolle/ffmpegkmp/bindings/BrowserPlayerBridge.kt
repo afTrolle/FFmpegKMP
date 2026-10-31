@@ -18,6 +18,9 @@ internal interface BrowserPlayerWorker {
     fun prepare(source: NativePlayerSource, mountBytes: Array<ByteArray>)
     fun setOutput(flags: Int)
     fun clearOutput()
+
+    /** Converts software frames to [width] × [height] from the next one on; 0 × 0 for their own size. */
+    fun setFrameSize(width: Int, height: Int)
     fun play()
     fun pause()
     fun seek(positionUs: Long)
@@ -78,6 +81,10 @@ private class BrowserNativePlayerBridge(
     private var output: NativePlayerOutputCapabilities? = null
     private var closed = false
     private var workerGeneration = 0
+
+    /** What [setFrameSize] asked for, which each new worker is told too. */
+    private var frameWidth = 0
+    private var frameHeight = 0
     private var worker: BrowserPlayerWorker? = startWorker()
     private var pendingPreparation: PendingBrowserPreparation? = null
     private var audio: BrowserPlayerAudio? = null
@@ -145,6 +152,16 @@ private class BrowserNativePlayerBridge(
     override fun seek(positionUs: Long): Int {
         if (positionUs < 0) return NativePlayerError.INVALID_ARGUMENT
         return preparedCall { it.seek(positionUs) }
+    }
+
+    override fun setFrameSize(width: Int, height: Int) {
+        // A drawing may still ask as the player closes.
+        if (closed) return
+        val (sizeWidth, sizeHeight) = if (width > 0 && height > 0) width to height else 0 to 0
+        if (sizeWidth == frameWidth && sizeHeight == frameHeight) return
+        frameWidth = sizeWidth
+        frameHeight = sizeHeight
+        worker?.setFrameSize(sizeWidth, sizeHeight)
     }
 
     override fun setMasterClock(mediaTimeUs: Long) {
@@ -217,7 +234,9 @@ private class BrowserNativePlayerBridge(
 
     private fun startWorker(): BrowserPlayerWorker {
         val generation = ++workerGeneration
-        return workerFactory(configuration, BrowserPlayerListener(generation))
+        return workerFactory(configuration, BrowserPlayerListener(generation)).also { started ->
+            if (frameWidth > 0) started.setFrameSize(frameWidth, frameHeight)
+        }
     }
 
     private inner class BrowserPlayerListener(

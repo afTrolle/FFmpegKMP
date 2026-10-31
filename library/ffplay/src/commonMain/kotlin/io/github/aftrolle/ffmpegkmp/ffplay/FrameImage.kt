@@ -127,7 +127,8 @@ public class FrameImage internal constructor(private val bitmaps: Int) : AutoClo
      * and never larger than the frame. A target that moves allocates bitmaps only as it crosses a
      * step: at once when it grows, and only two steps or more down when it shrinks. A
      * [PixelLayout.RGBA_F16] frame, which converts pixel for pixel, and every frame in the browser
-     * are converted at their own size whatever this says.
+     * are converted at their own size whatever this says; there a player's frames arrive at the
+     * size its surface draws them, converted by its worker.
      *
      * Setting it costs nothing and may happen on any thread, as often as a drawing does: the next
      * [update] reads it. Until then the frame on screen is drawn scaled from the size it has. A
@@ -171,8 +172,13 @@ public class FrameImage internal constructor(private val bitmaps: Int) : AutoClo
         check(updateIfOpen(frame)) { "The frame image is closed" }
     }
 
-    /** [update], or false once this image is closed, when a frame may still arrive from another thread. */
-    internal fun updateIfOpen(frame: VideoFrame): Boolean = lock.withLock {
+    /**
+     * [update], or false once this image is closed, when a frame may still arrive from another thread.
+     * [videoSize] is the size of the video [frame] shows when a bridge converted it smaller, as the
+     * browser's worker converts a player's frames to the size they are drawn at: [displaySize] then
+     * stays the video's.
+     */
+    internal fun updateIfOpen(frame: VideoFrame, videoSize: IntSize? = null): Boolean = lock.withLock {
         if (closed) return@withLock false
         if (frame.gpuBuffer != null) {
             showGpuFrame(frame)
@@ -180,6 +186,7 @@ public class FrameImage internal constructor(private val bitmaps: Int) : AutoClo
         }
         val format = frame.bitmapFormat()
         val size = sizing.sizeFor(frame, targetSize ?: drawnSize(frame))
+        val frameSize = videoSize ?: IntSize(frame.width, frame.height)
         val previous = shown
         if (front?.holds(size, format) != true || frame.pts != convertedPts) {
             // A failed conversion leaves the bitmap on screen as it was.
@@ -194,13 +201,13 @@ public class FrameImage internal constructor(private val bitmaps: Int) : AutoClo
             front?.let(behind::addLast)
             front = written
             convertedPts = frame.pts
-        } else if (previous != null && previous.frameSize == IntSize(frame.width, frame.height) &&
+        } else if (previous != null && previous.frameSize == frameSize &&
             previous.rotationDegrees == frame.rotationDegrees && previous.sampleAspectRatio == frame.sampleAspectRatio
         ) {
             return@withLock true
         }
         val shown = checkNotNull(front)
-        show(Shown(shown.image, shown.source, IntSize(frame.width, frame.height), frame.rotationDegrees, frame.sampleAspectRatio, gpu = false))
+        show(Shown(shown.image, shown.source, frameSize, frame.rotationDegrees, frame.sampleAspectRatio, gpu = false))
         if (held.isNotEmpty()) hold(null)
         true
     }
@@ -370,12 +377,49 @@ internal class BitmapSizing {
     private var step = BITMAP_STEPS
 
     /** The size to convert [frame] to when it is drawn upright at [drawn]; its own size for null. */
-    fun sizeFor(frame: VideoFrame, drawn: IntSize?): IntSize {
-        val own = IntSize(frame.width, frame.height)
-        val needed = if (drawn == null || !frame.scalesIntoBitmaps()) BITMAP_STEPS else own.stepCovering(drawn, frame.rotationDegrees)
+    fun sizeFor(frame: VideoFrame, drawn: IntSize?): IntSize =
+        sizeFor(IntSize(frame.width, frame.height), frame.rotationDegrees, drawn?.takeIf { frame.scalesIntoBitmaps() })
+
+    /** The size to convert a frame of [own] size, turned by [rotationDegrees], to when it is drawn upright at [drawn]. */
+    fun sizeFor(own: IntSize, rotationDegrees: Double, drawn: IntSize?): IntSize {
+        val needed = if (drawn == null) BITMAP_STEPS else own.stepCovering(drawn, rotationDegrees)
         if (own != frameSize || needed > step || needed <= step - 2) step = needed
         frameSize = own
         return own.atStep(step)
+    }
+}
+
+/**
+ * Tells a bridge that converts a player's frames itself, as the browser's worker does, the size an
+ * output draws them at: the step of the video's size that covers the picture placed in the drawn
+ * area, as [FrameImage.targetSize] takes it, in the video's own orientation. It tells only a change
+ * of step, so drawing costs no message, and a size that wobbles about a step's edge none either.
+ * The output's drawing thread uses it.
+ */
+internal class BridgeFrameSize {
+    private val sizing = BitmapSizing()
+    private var sink: ((width: Int, height: Int) -> Unit)? = null
+    private var told: IntSize? = null
+
+    /** Where to tell the size while an engine has the output attached; null once it is detached. */
+    fun bind(sink: ((width: Int, height: Int) -> Unit)?) {
+        this.sink = sink
+        told = null
+    }
+
+    /**
+     * Says that a picture of a [video]-sized frame turned by [rotationDegrees], [display] upright, is
+     * placed by [contentScale] in [area], all in pixels.
+     */
+    fun drawnIn(video: IntSize, rotationDegrees: Double, display: Size, area: Size, contentScale: ContentScale) {
+        val sink = sink ?: return
+        if (video.width <= 0 || video.height <= 0 || area.width <= 0f || area.height <= 0f) return
+        val placed = contentScale.place(display, area).size
+        val drawn = IntSize(placed.width.roundToInt(), placed.height.roundToInt())
+        val size = sizing.sizeFor(video, rotationDegrees, drawn)
+        if (size == told) return
+        told = size
+        sink(size.width, size.height)
     }
 }
 

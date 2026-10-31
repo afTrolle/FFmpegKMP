@@ -227,13 +227,19 @@ AVRational ffmpegkmp_scaled_aspect(AVRational aspect, int width, int height, int
 
 /*
  * Prepares `output` for one of the bridge's CPU outputs of `source`: packed
- * RGBA (AV_PIX_FMT_RGBA) or RGBA half floats (AV_PIX_FMT_RGBAF16) at the
- * source's size, reusing its buffer when it can. RGBA F16 is linear extended
- * sRGB. RGBA keeps the source's primaries and transfer, so only the matrix
- * changes, except that with `tone_map_hdr` PQ and HLG sources are tone mapped
- * to sRGB.
+ * RGBA (AV_PIX_FMT_RGBA) or RGBA half floats (AV_PIX_FMT_RGBAF16) of `width`
+ * x `height`, or of the source's size for 0 x 0, reusing its buffer when it
+ * can. RGBA F16 is linear extended sRGB. RGBA keeps the source's primaries
+ * and transfer, so only the matrix changes, except that with `tone_map_hdr`
+ * PQ and HLG sources are tone mapped to sRGB.
  */
-int ffplaykmp_rgb_output(AVFrame *output, const AVFrame *source, enum AVPixelFormat format, int tone_map_hdr);
+int ffplaykmp_rgb_output(
+        AVFrame *output,
+        const AVFrame *source,
+        enum AVPixelFormat format,
+        int width,
+        int height,
+        int tone_map_hdr);
 
 /* Downloads a hardware frame into `software`, keeping the frame properties. */
 int ffplaykmp_download_frame(AVFrame *software, const AVFrame *hardware);

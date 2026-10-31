@@ -261,6 +261,7 @@ private class FakeBrowserPlayerWorker(
     override fun prepare(source: NativePlayerSource, mountBytes: Array<ByteArray>) = Unit
     override fun setOutput(flags: Int) = Unit
     override fun clearOutput() = Unit
+    override fun setFrameSize(width: Int, height: Int) = Unit
     override fun play() = Unit
     override fun pause() = Unit
     override fun seek(positionUs: Long) = Unit

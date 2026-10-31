@@ -7,9 +7,11 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.RememberObserver
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.unit.IntSize
 import io.github.aftrolle.ffmpegkmp.codec.ColorPrimaries
 import io.github.aftrolle.ffmpegkmp.codec.VideoFrame
 import io.github.aftrolle.ffmpegkmp.codec.VideoInfo
@@ -83,6 +85,7 @@ internal fun ComposeCanvasFFplaySurface(
     Canvas(modifier) {
         drawRect(backgroundColor)
         drawFrameImage(output.image, contentScale)
+        output.drawnIn(size, contentScale)
     }
 }
 
@@ -99,7 +102,23 @@ private class ComposeCanvasOutput : FFplayVideoOutput, AutoCloseable {
         toneMapHdrToSdr = true,
     )
 
-    override fun submitNative(frame: VideoFrame, video: VideoInfo?): Boolean = frame.use { image.updateIfOpen(it) }
+    /** Where bitmaps cannot scale frames, in the browser, the bridge converts them to the size they are drawn at. */
+    private val frameSize = BridgeFrameSize()
+
+    override fun submitNative(frame: VideoFrame, video: VideoInfo?): Boolean = frame.use {
+        // The browser's frames come at the drawn size: layout follows the video they show.
+        image.updateIfOpen(it, video?.takeUnless { bitmapsScale }?.let { info -> IntSize(info.width, info.height) })
+    }
+
+    override fun bindFrameSize(sink: ((width: Int, height: Int) -> Unit)?) {
+        if (!bitmapsScale) frameSize.bind(sink)
+    }
+
+    /** Tells the bridge, where it converts frames, the size the picture is drawn at in [area]. */
+    fun drawnIn(area: Size, contentScale: ContentScale) {
+        val shown = image.shown ?: return
+        frameSize.drawnIn(shown.frameSize, shown.rotationDegrees, shown.displaySize, area, contentScale)
+    }
 
     override fun discard() = image.clear()
 

@@ -1,10 +1,11 @@
 # One open per source in the FFplay player
 
-Status: phases 1, 1b, 2, 3, 4, 5 and 6 are built on `feature/ffplay-reopen`;
-phase 2's web packet reader reuse moved to phase 7. Phase 0's macOS native
+Status: phases 1, 1b, 2, 3, 4, 5, 6 and 7 are built on `feature/ffplay-reopen`;
+phase 7 also did phase 2's web packet reader reuse. Phase 0's macOS native
 baselines are measured (2b); its Android, JVM and browser measurements are not,
-except the Android hardware decoder counts phase 6 measured.
-Phases 7 and 8 are not built. The audio-cleanup and small-cleanups work this plan builds
+except the Android hardware decoder counts phase 6 measured and the browser
+heap, open and copy counts phase 7 measured.
+Phase 8 is not built. The audio-cleanup and small-cleanups work this plan builds
 on is merged into main as of f9f92c1.
 
 `FFplayPlayer` opens and probes its input again on nearly every transition:
@@ -558,6 +559,121 @@ Decisions the plan left open:
   hardware decoder for the stream, including Android memory output of sources
   deeper than 8 bits) and FAILED (the start fallback), not only BUDGET; it is
   null under SOFTWARE and REQUIRE_HARDWARE and in the browser.
+
+### Phase 7 results
+
+The browser's player and decoder open their input once and hold it in the Wasm
+heap once, give WebCodecs its packets without copying them, copy a software
+frame once (out of the heap, the inherent copy), and convert software frames at
+the size the page draws them.
+
+- **One open, owned bytes (W5, W7).** `ffplaykmp_web_player_prepare_bytes`
+  takes over the buffer the worker `_malloc`ed, whatever it returns, and frees
+  it with the next prepare or destroy (documented in the header); the worker no
+  longer frees it. The packet reader opens no input of its own: `open_packets`
+  ends any software playback, takes `session_mutex` and reads the session's
+  input, the one the inspect opened and kept, from the start of its video
+  stream (no seek while the input has not been read past its probe). Phase 2's
+  concern, that `ffplaykmp_input` points into itself, does not arise: the
+  reader uses the input where it is, and every reader call takes
+  `session_mutex`. `close_packets` parks it, and the next software run seeks. A
+  software output (`ffplaykmp_web_player_set_output`) closes the packets: the
+  two outputs are exclusive. The decoder's `openPacketReader` is one
+  `ffplaykmp_web_player_prepare_packets` (prepare without an output, then
+  `open_packets`), so `VideoDecoder` opens its input once.
+- **Packets (WK1, WK3).** Each packet goes to `new EncodedVideoChunk` as
+  `HEAPU8.subarray(...)`, inside the reader's callback; the decoder's packet
+  handling moved into that callback (`decodeVideoPacket`). Headless Chrome 156
+  takes views of the shared heap. A browser whose constructor throws a
+  `TypeError` for one gets one `slice` a packet from then on, with a console
+  warning. Now that the C caller holds `session_mutex` while it calls back,
+  nothing may throw through it: the callbacks catch, and the worker rethrows
+  or falls back once the read has returned. The reader's `AVPacket` is
+  allocated once instead of once a packet.
+- **Software frames (F9).** The mailbox is double buffered: the session thread
+  converts into the frame not published and swaps it in under the mailbox
+  mutex; `ffplaykmp_web_player_poll` hands the page the front frame, which the
+  page copies out of the heap (F10, the inherent copy) before the lock goes.
+- **Frames at the drawn size (4h, web; this finishes phase 1b there).**
+  `ffplaykmp_web_player_set_frame_size(player, width, height)` (0 × 0 for the
+  frame's own) makes the worker convert at that size; `ffplaykmp_rgb_output`
+  takes a size for it. The worker applies a size only when it is no larger than
+  the frame and at its aspect to within rounding (|w·H − h·W| < max(W, H)), so a
+  size asked for a source of another aspect, before the page saw the new one,
+  gives the frame's own; a packed RGB source, which the converter will not scale,
+  converts at its own size. `NativePlayerBridge.setFrameSize` (a no-op but in the
+  browser, whose bridge posts `player-frame-size` and tells each new worker
+  again), `FFplayVideoOutput.bindFrameSize` (the engine binds it once an output
+  is attached, and unbinds it and goes back to 0 × 0 on detach, replacement and
+  close) and `BridgeFrameSize` (phase 1b's `BitmapSizing` ladder against the
+  video's size from `VideoInfo`, telling only a change of step) carry the size.
+  The Compose Canvas output tells it from its draw, after `drawFrameImage`,
+  where `bitmapsScale` is false (the browser only); the HTML canvas output tells
+  it from each frame it draws (its client size × `devicePixelRatio`, placed by
+  its `ContentScale`). Both take the display size from `VideoInfo`:
+  `FrameImage.updateIfOpen(frame, videoSize)` keeps `displaySize` at the
+  video's while the bitmap holds the smaller frame, and `drawRgba` takes the
+  display size from the video rather than the converted frame. `bitmapsScale`
+  stays false on the web; the frames arrive at the step.
+- **Fix.** Setting the output again on the WebCodecs path replaced
+  `webCodecsDecoder` without closing it, leaving a `VideoDecoder` open (the test
+  agent's finding was real). Every `player-set-output` now closes the WebCodecs
+  decoder and the packets first.
+
+Measured in headless Chrome 156 on macOS (Kotlin/JS and Kotlin/Wasm alike), with
+the worker's new `statistics` message (`HEAPU8.buffer.byteLength`, a count of
+`HEAPU8.slice` calls, frames, packets, WebCodecs decoders open, and input opens
+through `ffplaykmp_web_player_input_opens`) and a test harness that records
+the page's Workers:
+
+| Check | Before (by construction) | After |
+|---|---|---|
+| heap growth, player prepare of an 80 MB input | two copies live at once: more than 80 MB + the first 64 MB | 64 → 110 MB (46 MB: the starting heap had room) |
+| heap growth, `VideoDecoder` open of the same input | the same | 64 → 110 MB (46 MB) |
+| input opens per prepare | software 1, WebCodecs 2, decoder 2 | 1, 1, 1 (6 in six prepare/stop cycles) |
+| `slice` per WebCodecs packet | 1 | 0 (360 packets, 1 slice: the avcC description) |
+| heap copies per software frame | a `memcpy` in the heap + the `slice` | the `slice` only (56 frames, 56 slices) |
+| bytes per software frame | the source's | drawn size × 4: 64×64, 32×32, 48×48 asked, given; 64×32 (another aspect) and 256×256 (larger) give 128×128 |
+| WebCodecs decoders open after setting the output three times | up to 3 | 1, and 0 after stop |
+
+Not verified: Safari and Firefox (open question 9 holds for Chrome only), a
+Compose web app drawing through the Skiko Canvas output in a real page
+(ffplay's browser tests use fakes; `BridgeFrameSize` runs in commonTest on every
+target, `FrameImage` with a video size in the JVM and native system tests, and
+the engine's forwarding in `FFplayFrameBoundaryTest`), and a HiDPI display.
+What stays per 4g: W1, W2 (one copy on Kotlin/Wasm), W4, W6, WK2, F10, F11
+and F12 on Kotlin/Wasm (open question 10), and F13 (a `copyTo` buffer per
+WebCodecs frame; pooling needs the page to give buffers back, a follow-up).
+
+Verified: js and wasm bindings 27 each (worker relinked), ffplay 61 each, codec
+35 each; JVM bindings 48, codec 81, ffplay 102; macOS bindings 8, ffplay 88; iOS
+simulator 8 and 88; Samsung SM-S938B ffplay device suite with `hdrGpuCheck=true`
+103 tests, 102 pass, `CompositeExportBudgetDeviceTest.measure` gated. The native
+player is unchanged (the web facade is the only caller of the sized
+`ffplaykmp_rgb_output`): the player bench's transitions match phase 6 within
+noise (play after the grace 80/294/647/823/516 ms for 1080p SW, 4K H.264 SW and
+AUTO, 4K HEVC PQ SW and AUTO; phase 6: 75/297/631/835/493).
+
+Decisions the plan left open:
+- Open question 9: views of the shared heap, confirmed in Chrome; a browser that
+  refuses one gets one `slice` a packet, logged once.
+- Open question 10: the Kotlin/Wasm frame copy is accepted; nothing changed.
+- The frame size the page asks for is the exact ladder size, computed in Kotlin
+  from `VideoInfo`; the worker checks it against each frame (no larger, same
+  aspect) rather than forgetting it at prepare, so a new source of the same
+  size keeps its drawn size and one of another size is never distorted.
+- The size travels from the draw site, so the first frame after a prepare or an
+  attach comes at the source size; a paused player shows it scaled until its
+  next frame (4h's choice 4). The HTML canvas output has no draw of its own, so
+  it tells the size as it draws each frame, and a resize while paused takes
+  effect at the next frame.
+- Outputs get a sink (`bindFrameSize`) rather than a handle on the engine.
+- `open_packets` opens the input again only if a failed software run closed it.
+- After a second `player-set-output` while WebCodecs plays, the new decoder
+  starts paused at the start, as before (the position was never carried over);
+  only the leak is fixed.
+- `ffplaykmp_rgb_output` takes a size (0 × 0 for the source's); its other
+  callers, the benches, pass 0 × 0.
 
 ## 3. Design options (behaviour at 1 / 4 / 16 concurrent sources)
 

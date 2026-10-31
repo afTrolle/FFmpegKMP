@@ -70,6 +70,7 @@ private class WebBrowserPlayerWorker(private val controller: JsAny) : BrowserPla
 
     override fun setOutput(flags: Int) = postPlayerCommand(controller, "player-set-output", flags, 0L)
     override fun clearOutput() = postPlayerCommand(controller, "player-clear-output", 0, 0L)
+    override fun setFrameSize(width: Int, height: Int) = postPlayerFrameSize(controller, width, height)
     override fun play() = postPlayerCommand(controller, "player-play", 0, 0L)
     override fun pause() = postPlayerCommand(controller, "player-pause", 0, 0L)
     override fun seek(positionUs: Long) = postPlayerCommand(controller, "player-seek", 0, positionUs)
@@ -180,6 +181,9 @@ private fun postPlayerCommand(controller: JsAny, type: String, flags: Int, posit
 
 private fun postPlayerCommand(controller: JsAny, type: String, flags: Int, positionUs: String): Unit =
     js("controller.post({ type, flags, positionUs })")
+
+private fun postPlayerFrameSize(controller: JsAny, width: Int, height: Int): Unit =
+    js("controller.post({ type: 'player-frame-size', width, height })")
 
 private fun terminateWorker(controller: JsAny): Unit = js("controller.terminate()")
 

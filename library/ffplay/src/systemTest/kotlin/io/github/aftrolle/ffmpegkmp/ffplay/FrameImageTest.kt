@@ -423,6 +423,24 @@ class FrameImageTest {
     }
 
     /**
+     * The browser's worker converts a player's frames at the size they are drawn at, so the frame is smaller than the
+     * video: the image holds it at its size and lays out at the video's, so layout never follows the drawn size.
+     */
+    @Test
+    fun aFrameABridgeConvertedSmallerShowsAtTheVideosDisplaySize() = runBlocking<Unit> {
+        decoder("cfr-30.mp4", VideoOutput.Memory(FrameFormat.Rgba8, FrameSize(48, 32))).use { decoder ->
+            playerFrameImage().use { image ->
+                decoder.frameAt(Duration.ZERO).use { assertTrue(image.updateIfOpen(it, videoSize = IntSize(96, 64))) }
+                assertEquals(IntSize(48, 32), shownSize(image))
+                assertEquals(Size(96f, 64f), image.displaySize)
+                // The same frame again at the same video size is the frame shown: no conversion.
+                decoder.frameAt(Duration.ZERO).use { assertTrue(image.updateIfOpen(it, videoSize = IntSize(96, 64))) }
+                assertEquals(1, image.conversions)
+            }
+        }
+    }
+
+    /**
      * Draws [frame] through a [FrameImage] into a renderer of its display size, which must be
      * [display], and checks each drawn pixel against the frame pixel it shows: the frame turned
      * anticlockwise by its rotation, as FFmpeg shows it, and stretched by its sample aspect ratio. Only

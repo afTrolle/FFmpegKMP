@@ -226,6 +226,15 @@ public interface NativePlayerBridge : AutoCloseable {
     public fun setMasterClock(mediaTimeUs: Long): Unit = Unit
 
     /**
+     * Asks for software frames of [width] × [height], the size the output draws them at, in the
+     * frame's own orientation; 0 × 0 for each frame's own size. A bridge whose frames the page
+     * cannot scale converts them to it (the browser's worker), from the next frame on, keeping the
+     * display aspect; one larger than the frame, or not at its aspect, gives the frame's own. The
+     * other bridges ignore it: their frames are converted where they are drawn.
+     */
+    public fun setFrameSize(width: Int, height: Int): Unit = Unit
+
+    /**
      * Opens the prepared source's audio in the bridge itself, or returns null where the platform
      * audio engine plays it instead. Close it before the next [prepare] or [stop].
      */

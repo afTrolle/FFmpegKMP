@@ -433,7 +433,7 @@ static void bench_conversions(const char *path, int hdr) {
     printf("\n%s (%dx%d %s)\n", file_name(path), source->width, source->height,
             av_get_pix_fmt_name(source->format));
     /* The decoder's RGBA8 output of an SDR source, and the player's without the tone map: swscale only. */
-    ffplaykmp_rgb_output(rgba, source, AV_PIX_FMT_RGBA, 0);
+    ffplaykmp_rgb_output(rgba, source, AV_PIX_FMT_RGBA, 0, 0, 0);
     ffmpegkmp_frame_convert(converter, rgba, source);
     start = now_ms();
     for (run = 0; run < runs; run++)
@@ -465,7 +465,7 @@ static void bench_conversions(const char *path, int hdr) {
         ffmpegkmp_frame_unref(handle);
     }
     if (hdr) {
-        ffplaykmp_rgb_output(rgba, source, AV_PIX_FMT_RGBA, 1);
+        ffplaykmp_rgb_output(rgba, source, AV_PIX_FMT_RGBA, 0, 0, 1);
         ffmpegkmp_frame_convert(converter, rgba, source);
         start = now_ms();
         for (run = 0; run < runs; run++)
@@ -473,7 +473,7 @@ static void bench_conversions(const char *path, int hdr) {
         printf("  PQ tone map to RGBA8, converter                 %8.2f ms\n", (now_ms() - start) / runs);
         printf("  PQ tone map to RGBA8 at 960x540, converter      %8.2f ms\n", convert_ms(
                 converter, source, AV_PIX_FMT_RGBA, AVCOL_PRI_BT709, AVCOL_TRC_IEC61966_2_1, 960, 540, runs));
-        ffplaykmp_rgb_output(linear, source, AV_PIX_FMT_RGBAF16, 0);
+        ffplaykmp_rgb_output(linear, source, AV_PIX_FMT_RGBAF16, 0, 0, 0);
         ffmpegkmp_frame_convert(converter, linear, source);
         start = now_ms();
         for (run = 0; run < runs; run++)

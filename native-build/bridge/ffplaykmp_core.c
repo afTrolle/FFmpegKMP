@@ -1844,14 +1844,24 @@ AVRational ffmpegkmp_scaled_aspect(AVRational aspect, int width, int height, int
     return scaled;
 }
 
-int ffplaykmp_rgb_output(AVFrame *output, const AVFrame *source, enum AVPixelFormat format, int tone_map_hdr) {
+int ffplaykmp_rgb_output(
+        AVFrame *output,
+        const AVFrame *source,
+        enum AVPixelFormat format,
+        int width,
+        int height,
+        int tone_map_hdr) {
     int result;
-    if (!output->buf[0] || output->format != format || output->width != source->width ||
-            output->height != source->height || !av_frame_is_writable(output)) {
+    if (width <= 0 || height <= 0) {
+        width = source->width;
+        height = source->height;
+    }
+    if (!output->buf[0] || output->format != format || output->width != width ||
+            output->height != height || !av_frame_is_writable(output)) {
         av_frame_unref(output);
         output->format = format;
-        output->width = source->width;
-        output->height = source->height;
+        output->width = width;
+        output->height = height;
         /* Packed rows: the outputs hand width * pixel size strides to Kotlin. */
         if ((result = av_frame_get_buffer(output, 1)) < 0)
             return result;

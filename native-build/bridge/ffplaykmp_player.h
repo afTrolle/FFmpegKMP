@@ -395,29 +395,68 @@ FFPLAYKMP_EXPORT ffplaykmp_player *ffplaykmp_web_player_create(
         ffplaykmp_web_video_frame_callback frame_callback,
         void *opaque);
 FFPLAYKMP_EXPORT void ffplaykmp_web_player_destroy(ffplaykmp_player *player);
+/*
+ * Prepares the `size` bytes at `bytes` as the player's input, opened and
+ * probed once and kept until the next prepare, stop or destroy. The player
+ * takes `bytes` over, whatever it returns: they must come from malloc (the
+ * worker's _malloc), the caller neither frees nor touches them again, and the
+ * player frees them with the next prepare or destroy. So the input lies in
+ * the heap once.
+ */
 FFPLAYKMP_EXPORT int ffplaykmp_web_player_prepare_bytes(
         ffplaykmp_player *player,
-        const uint8_t *bytes,
+        uint8_t *bytes,
         uint32_t size,
         const char *extension,
         uint32_t source_flags);
+/*
+ * The software output's frames: converted to RGBA once each, into one of two
+ * buffers the page reads in turn, so a frame is never copied within the heap.
+ */
 FFPLAYKMP_EXPORT int ffplaykmp_web_player_set_output(
         ffplaykmp_player *player,
         uint32_t output_flags);
 FFPLAYKMP_EXPORT void ffplaykmp_web_player_poll(ffplaykmp_player *player);
+/*
+ * Converts the software output's frames to `width` x `height`, the size the
+ * page draws them at, from the next frame on; 0 x 0, the default, for each
+ * frame's own size. A size larger than the frame, or not at its aspect to
+ * within rounding (one asked for another source), gives the frame's own. The
+ * frames keep their display aspect (ffmpegkmp_scaled_aspect).
+ */
+FFPLAYKMP_EXPORT void ffplaykmp_web_player_set_frame_size(ffplaykmp_player *player, int32_t width, int32_t height);
+/* How often the player opened its input: once a prepare, the packet reader's included. */
+FFPLAYKMP_EXPORT uint32_t ffplaykmp_web_player_input_opens(ffplaykmp_player *player);
 /**
- * Opens the prepared source as a packet stream for WebCodecs. The callbacks run
- * synchronously on the calling browser worker and borrowed bytes are valid only
- * for the duration of each callback.
+ * Reads the prepared input as a packet stream for WebCodecs: the input
+ * prepare opened, from the start of its video stream, with no second open
+ * (unless a failed software run closed it). It ends any software playback
+ * first; the two outputs are exclusive, and a
+ * software output (ffplaykmp_web_player_set_output) closes the packets. The
+ * callbacks run synchronously on the calling browser worker and borrowed bytes
+ * are valid only for the duration of each callback.
  */
 FFPLAYKMP_EXPORT int ffplaykmp_web_player_open_packets(
         ffplaykmp_player *player,
+        ffplaykmp_web_decoder_config_callback callback,
+        void *opaque);
+/*
+ * ffplaykmp_web_player_prepare_bytes, without an output, then
+ * ffplaykmp_web_player_open_packets: a demuxer for a decoder, which opens its
+ * input once. Takes `bytes` over as prepare_bytes does.
+ */
+FFPLAYKMP_EXPORT int ffplaykmp_web_player_prepare_packets(
+        ffplaykmp_player *player,
+        uint8_t *bytes,
+        uint32_t size,
+        const char *extension,
         ffplaykmp_web_decoder_config_callback callback,
         void *opaque);
 FFPLAYKMP_EXPORT int ffplaykmp_web_player_read_packet(
         ffplaykmp_player *player,
         ffplaykmp_web_encoded_packet_callback callback,
         void *opaque);
+/* Leaves the input where the packets left it; a software run after it seeks. */
 FFPLAYKMP_EXPORT void ffplaykmp_web_player_close_packets(ffplaykmp_player *player);
 /*
  * The packet reader's stream timing, for a caller that decodes frame by frame: `values` takes

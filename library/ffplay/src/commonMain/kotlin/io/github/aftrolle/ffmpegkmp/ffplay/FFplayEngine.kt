@@ -52,6 +52,14 @@ internal interface FFplayVideoOutput {
 
     /** Discards the currently retained frame, for example after a seek or target loss. */
     fun discard()
+
+    /**
+     * Gives the output, while attached, where to tell the size it draws software frames at, in the
+     * frame's own orientation, for a bridge that converts frames to it (the browser's,
+     * [NativePlayerBridge.setFrameSize]); null once detached. Outputs whose bitmaps scale the frames
+     * themselves ignore it.
+     */
+    fun bindFrameSize(sink: ((width: Int, height: Int) -> Unit)?) = Unit
 }
 
 internal data class FFplayOutputCapabilities(
@@ -234,6 +242,9 @@ private class FFplayBridgeEngine(
         checkOpen()
         val previous = this.output
         if (previous !== output) previous?.discard()
+        previous?.bindFrameSize(null)
+        // Frames at their own size until the new output says what it draws them at.
+        bridge.setFrameSize(0, 0)
         // Output replacement is transactional. Remove both the negotiated capabilities and the
         // platform object first so a rejected or failed replacement can never leave an old native
         // surface reachable behind a snapshot that reports no active output.
@@ -285,7 +296,12 @@ private class FFplayBridgeEngine(
             )
             update(snapshot)
             emit(FFplayEvent.Fatal(message, cause))
-        } else if (!rendererFallbackEmitted &&
+        } else {
+            output.bindFrameSize { width, height ->
+                if (!closed && this.output === output) bridge.setFrameSize(width, height)
+            }
+        }
+        if (result >= 0 && !rendererFallbackEmitted &&
             configuration.outputPreference == FFplayOutputPreference.AUTO &&
             output.kind == FFplayRendererKind.COMPOSE_CANVAS
         ) {
@@ -301,6 +317,8 @@ private class FFplayBridgeEngine(
     override fun detachOutput(output: FFplayVideoOutput) {
         if (this.output !== output) return
         output.discard()
+        output.bindFrameSize(null)
+        bridge.setFrameSize(0, 0)
         this.output = null
         clearBridgeOutput()
         emit(FFplayEvent.SurfaceLost("The video output was detached"))
@@ -308,6 +326,7 @@ private class FFplayBridgeEngine(
 
     override fun close() {
         output?.discard()
+        output?.bindFrameSize(null)
         closed = true
         bridge.cancel()
         bridge.setPlatformOutputTarget(null, false)
