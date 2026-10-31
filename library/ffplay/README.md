@@ -142,9 +142,12 @@ A frame as decoded is then in two buffers, the decoder's and the bitmap's, with 
 between. `toImageBitmap` leaves the frame open.
 
 The Compose Canvas fallback draws the player's frames the same way: the player hands over each
-frame as decoded (hardware frames downloaded), and the canvas output converts it with
-`toImageBitmap` on the player's thread. The browser's worker converts its frames into RGBA8 bytes
-before they cross to the page.
+frame as decoded (hardware frames downloaded), and the canvas output converts it into a
+[`FrameImage`](#two-bitmaps-per-source) on the player's thread. Since that thread updates the image
+at the video's rate, which drawing does not pace, the player's image keeps three bitmaps rather
+than two. Android's Surface fallback draws each frame onto the surface before it takes the next,
+so it converts every frame into one reused bitmap. The browser's worker converts its frames into
+RGBA8 bytes before they cross to the page.
 
 `FFplayConfiguration(threads = …)` sets the software decoder's threads, as `VideoDecoder.open`
 does (see [`codec`](../codec/README.md#decoder-threads)). The player decodes with FFmpeg's frame and

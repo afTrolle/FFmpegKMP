@@ -4,6 +4,8 @@
 package io.github.aftrolle.ffmpegkmp.ffplay
 
 import io.github.aftrolle.ffmpegkmp.codec.MediaSource
+import io.github.aftrolle.ffmpegkmp.codec.VideoFrame
+import io.github.aftrolle.ffmpegkmp.codec.VideoInfo
 import io.github.aftrolle.ffmpegkmp.core.AudioLevel
 import io.github.aftrolle.ffmpegkmp.player.AudioTrackInfo
 import io.github.aftrolle.ffmpegkmp.player.PlaybackState
@@ -162,6 +164,9 @@ private class FakeAudio : FFplayAudioOutput {
 private class CanvasOutput : FFplayVideoOutput {
     override val kind = FFplayRendererKind.COMPOSE_CANVAS
     override val capabilities = FFplayOutputCapabilities()
-    override fun submit(frame: FFplayFrame): Boolean = true
+    override fun submitNative(frame: VideoFrame, video: VideoInfo?): Boolean {
+        frame.close()
+        return true
+    }
     override fun discard() = Unit
 }

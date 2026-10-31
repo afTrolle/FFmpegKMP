@@ -57,7 +57,14 @@ import kotlin.time.Duration
  * draw it on an `RgbaF16` canvas, and take an SDR export's HDR sources from `Memory(canvasFormat)`,
  * which tone maps.
  */
-public class FrameImage : AutoCloseable {
+public class FrameImage internal constructor(private val bitmaps: Int) : AutoCloseable {
+    /** An image of two bitmaps: enough while each update is drawn before the one after next. */
+    public constructor() : this(2)
+
+    init {
+        require(bitmaps >= 2) { "A frame image needs at least two bitmaps: $bitmaps" }
+    }
+
     /**
      * What is drawn; a new value for each update, so that reading it is what invalidates. It is
      * snapshot state, written once the bitmap it shows is complete (see [show]), so a drawing in
@@ -69,9 +76,9 @@ public class FrameImage : AutoCloseable {
     /** Serializes updates and close, which own the fields below. */
     private val lock = FFplayOperationLock()
 
-    /** The bitmap [shown] draws, and the other, which the next conversion writes. */
+    /** The bitmap [shown] draws, and those shown before it, oldest first: the next conversion writes the oldest. */
     private var front: FrameBitmap? = null
-    private var back: FrameBitmap? = null
+    private val behind = ArrayDeque<FrameBitmap>()
     private var convertedPts: Duration? = null
     private var closed = false
 
@@ -103,30 +110,50 @@ public class FrameImage : AutoCloseable {
      * Throws [IllegalStateException] for a frame without pixels this image can reach, and once this
      * image is closed.
      */
-    public fun update(frame: VideoFrame): Unit = lock.withLock {
-        check(!closed) { "The frame image is closed" }
-        if (frame.gpuBuffer != null) return@withLock showGpuFrame(frame)
+    public fun update(frame: VideoFrame) {
+        check(updateIfOpen(frame)) { "The frame image is closed" }
+    }
+
+    /** [update], or false once this image is closed, when a frame may still arrive from another thread. */
+    internal fun updateIfOpen(frame: VideoFrame): Boolean = lock.withLock {
+        if (closed) return@withLock false
+        if (frame.gpuBuffer != null) {
+            showGpuFrame(frame)
+            return@withLock true
+        }
         val format = frame.bitmapFormat()
         val previous = shown
         if (front?.holds(frame, format) != true || frame.pts != convertedPts) {
             // A failed conversion leaves the bitmap on screen as it was.
-            val written = back?.takeIf { it.holds(frame, format) }?.apply { write(frame) }
+            val oldest = behind.firstOrNull()?.takeIf { behind.size == bitmaps - 1 }
+            val written = oldest?.takeIf { it.holds(frame, format) }?.apply { write(frame) }
                 ?: frame.toFrameBitmap(format).also {
                     allocations++
-                    back?.close()
+                    oldest?.close()
                 }
+            if (oldest != null) behind.removeFirst()
             conversions++
-            back = front
+            front?.let(behind::addLast)
             front = written
             convertedPts = frame.pts
         } else if (previous != null && previous.rotationDegrees == frame.rotationDegrees &&
             previous.sampleAspectRatio == frame.sampleAspectRatio
         ) {
-            return@withLock
+            return@withLock true
         }
         val shown = checkNotNull(front)
         show(Shown(shown.image, shown.source, frame.rotationDegrees, frame.sampleAspectRatio, gpu = false))
         if (held.isNotEmpty()) hold(null)
+        true
+    }
+
+    /** Whether a frame is shown: from the first update until [clear] or [close]. Reading it observes changes. */
+    internal val showsFrame: Boolean get() = shown != null
+
+    /** Shows nothing until the next update, keeping the bitmaps for it. */
+    internal fun clear(): Unit = lock.withLock {
+        if (closed || shown == null) return@withLock
+        show(null)
     }
 
     /** Frees the bitmaps and closes the frames held. Whatever draws the image draws nothing from then on. */
@@ -135,9 +162,9 @@ public class FrameImage : AutoCloseable {
         closed = true
         show(null)
         front?.close()
-        back?.close()
+        behind.forEach { it.close() }
         front = null
-        back = null
+        behind.clear()
         held.forEach { it?.close() }
         held.clear()
         wraps.close()

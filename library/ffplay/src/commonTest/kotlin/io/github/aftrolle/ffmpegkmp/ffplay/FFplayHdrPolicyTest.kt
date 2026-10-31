@@ -7,10 +7,12 @@ import io.github.aftrolle.ffmpegkmp.bindings.NativePlayerBridge
 import io.github.aftrolle.ffmpegkmp.bindings.NativePlayerOutputCapabilities
 import io.github.aftrolle.ffmpegkmp.bindings.NativePlayerVideoInfo
 import io.github.aftrolle.ffmpegkmp.bindings.createInMemoryPlayerBridge
+import io.github.aftrolle.ffmpegkmp.codec.CodecPreference
 import io.github.aftrolle.ffmpegkmp.codec.ColorPrimaries
 import io.github.aftrolle.ffmpegkmp.codec.ColorTransfer
-import io.github.aftrolle.ffmpegkmp.codec.CodecPreference
 import io.github.aftrolle.ffmpegkmp.codec.MediaSource
+import io.github.aftrolle.ffmpegkmp.codec.VideoFrame
+import io.github.aftrolle.ffmpegkmp.codec.VideoInfo
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -105,6 +107,9 @@ private class HdrSurface : FFplayVideoOutput {
         colorSpaces = setOf(ColorPrimaries.BT709, ColorPrimaries.BT2020),
         toneMapHdrToSdr = true,
     )
-    override fun submit(frame: FFplayFrame): Boolean = true
+    override fun submitNative(frame: VideoFrame, video: VideoInfo?): Boolean {
+        frame.close()
+        return true
+    }
     override fun discard() = Unit
 }

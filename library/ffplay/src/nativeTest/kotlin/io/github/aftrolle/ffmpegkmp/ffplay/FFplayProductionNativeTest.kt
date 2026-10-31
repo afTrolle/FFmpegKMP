@@ -59,8 +59,6 @@ private class NativeProductionOutput : FFplayVideoOutput {
     var framesReceived = 0
         private set
 
-    override fun submit(frame: FFplayFrame): Boolean = true
-
     override fun submitNative(frame: VideoFrame, video: VideoInfo?): Boolean {
         frame.close()
         framesReceived++

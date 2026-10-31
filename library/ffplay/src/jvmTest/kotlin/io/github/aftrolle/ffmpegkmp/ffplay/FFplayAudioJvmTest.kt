@@ -204,8 +204,6 @@ class FFplayAudioJvmTest {
         @Volatile
         var presentedFrames: Int = 0
 
-        override fun submit(frame: FFplayFrame): Boolean = true
-
         override fun submitNative(frame: VideoFrame, video: VideoInfo?): Boolean {
         frame.close()
             presentedFrames++

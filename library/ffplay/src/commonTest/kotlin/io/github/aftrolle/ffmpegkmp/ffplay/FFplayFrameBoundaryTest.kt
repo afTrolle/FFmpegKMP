@@ -321,7 +321,10 @@ private class PlatformOutput(
     override val capabilities: FFplayOutputCapabilities = FFplayOutputCapabilities(),
 ) : FFplayVideoOutput {
     override val kind = FFplayRendererKind.NATIVE_SURFACE
-    override fun submit(frame: FFplayFrame): Boolean = true
+    override fun submitNative(frame: VideoFrame, video: VideoInfo?): Boolean {
+        frame.close()
+        return true
+    }
     override fun discard() = Unit
 }
 
@@ -334,11 +337,6 @@ private class CountingOutput(
         private set
     var platformSubmitCount = 0
         private set
-
-    override fun submit(frame: FFplayFrame): Boolean {
-        submitCount++
-        return acceptFrames
-    }
 
     override fun submitNative(frame: VideoFrame, video: VideoInfo?): Boolean {
         frame.close()
