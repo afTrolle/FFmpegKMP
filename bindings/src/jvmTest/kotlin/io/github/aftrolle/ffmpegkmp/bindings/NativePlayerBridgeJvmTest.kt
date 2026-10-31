@@ -172,6 +172,69 @@ class NativePlayerBridgeJvmTest {
     }
 
     @Test
+    fun everyDecodeRunsOnThePlayersSessionThread() {
+        val decodingThreads = CopyOnWriteArrayList<Thread>()
+        val played = CountDownLatch(8)
+        createPlatformPlayerBridge(
+            NativePlayerConfiguration(NativePlayerDecoderPreference.SOFTWARE),
+            update = {},
+            frame = { frame ->
+                decodingThreads += Thread.currentThread()
+                frame.frame.close()
+                played.countDown()
+            },
+        ).use { bridge ->
+            assertEquals(0, bridge.setOutput(NativePlayerOutputCapabilities()))
+            assertEquals(0, bridge.prepare(clearVideoSource()))
+            listOf(500_000L, 100_000L).forEach { assertEquals(0, bridge.seek(it)) }
+            assertEquals(0, bridge.play())
+            assertTrue(played.await(3, TimeUnit.SECONDS), "playback presented no frames")
+            assertEquals(0, bridge.pause())
+            assertEquals(0, bridge.seek(700_000))
+
+            // Previews and playback share one thread, so a codec kept between them stays on it.
+            assertEquals(1, decodingThreads.distinct().size, "frames came from ${decodingThreads.distinct()}")
+            assertNotEquals(Thread.currentThread(), decodingThreads.first())
+        }
+    }
+
+    @Test
+    fun seeksFromTwoThreadsEndWhenThePlayerIsCancelledAndClosed() {
+        val bridge = createPlatformPlayerBridge(
+            NativePlayerConfiguration(NativePlayerDecoderPreference.SOFTWARE),
+            update = {},
+            frame = { it.frame.close() },
+        )
+        assertEquals(0, bridge.setOutput(NativePlayerOutputCapabilities()))
+        assertEquals(0, bridge.prepare(clearVideoSource()))
+        val seeks = AtomicInteger()
+        val finished = CountDownLatch(2)
+        val seekers = List(2) { index ->
+            Thread {
+                var position = index * 100_000L
+                try {
+                    while (true) {
+                        // Fails once cancelled, and throws once closed: both end the storm.
+                        bridge.seek(position % 1_000_000L)
+                        if (index == 0 && seeks.get() % 7 == 0) bridge.play()
+                        seeks.incrementAndGet()
+                        position += 130_000L
+                    }
+                } catch (_: IllegalStateException) {
+                } finally {
+                    finished.countDown()
+                }
+            }.apply { start() }
+        }
+        while (seeks.get() < 40) Thread.sleep(5)
+        bridge.cancel()
+        bridge.close()
+
+        assertTrue(finished.await(5, TimeUnit.SECONDS), "a seek was still blocked after close")
+        seekers.forEach { it.join(1_000) }
+    }
+
+    @Test
     fun aSeekShowsTheFrameOnScreenAtTheTarget() {
         val frames = mutableListOf<NativeVideoFrame>()
         createPlatformPlayerBridge(

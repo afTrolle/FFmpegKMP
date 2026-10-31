@@ -1,8 +1,8 @@
 # One open per source in the FFplay player
 
-Status: phases 1, 1b and 2 are built on `feature/ffplay-reopen`; phase 2's
+Status: phases 1, 1b, 2 and 3 are built on `feature/ffplay-reopen`; phase 2's
 web packet reader reuse moved to phase 7. Phase 0's macOS native baselines are
-measured (2b); its Android, JVM and browser measurements are not. Phases 3–8
+measured (2b); its Android, JVM and browser measurements are not. Phases 4–8
 are not built. The audio-cleanup and small-cleanups work this plan builds on is
 merged into main as of f9f92c1.
 
@@ -227,6 +227,23 @@ keyframe and, for HDR, the tone map at the source size (phase 1b covers Canvas
 outputs). A JVM test (`NativePlayerBridgeJvmTest.theInputIsProbedOncePerPrepare`)
 checks through a counting mount that previews, seeks, play and pause never
 reopen the input and that a new prepare does.
+
+### Phase 3 results
+
+Every decode, previews included, now runs on one session thread per player,
+started by the first job and ended at stop, reset, destroy and a failed prepare,
+just before the input closes. A preview's caller blocks on its job as it blocked
+on the decode before; play queues a job and returns. The player bench's times
+match phase 2 within noise: the hand-off costs nothing measurable. Two JVM tests
+check that previews and playback share one thread that is not the caller's, and
+that seeks from two threads end when the player is cancelled and closed.
+
+Checked before moving decodes off the caller's thread: no frame or state
+callback takes a lock a caller holds while it waits (the Kotlin callbacks take
+none, the Android Surface output never calls the player under its lock, the
+Apple outputs dispatch to the main queue asynchronously), and the web callbacks
+only fill the mailbox the page polls. On the web the session thread takes one
+of the 32 pooled pthreads, as the play worker did.
 
 ## 3. Design options (behaviour at 1 / 4 / 16 concurrent sources)
 

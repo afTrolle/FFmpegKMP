@@ -41,6 +41,21 @@ typedef struct ffplaykmp_session {
     AVFrame *held;
 } ffplaykmp_session;
 
+typedef enum ffplaykmp_job_kind {
+    FFPLAYKMP_JOB_NONE = 0,
+    /* Decodes one frame at the start position and presents it; the poster waits for it. */
+    FFPLAYKMP_JOB_PREVIEW,
+    /* Plays from the snapshot's position until the end, an abort or a failure. */
+    FFPLAYKMP_JOB_PLAY,
+    FFPLAYKMP_JOB_EXIT,
+} ffplaykmp_job_kind;
+
+/* A preview's poster waits on its ticket, on its own stack, for the job's result. */
+typedef struct ffplaykmp_job_ticket {
+    int result;
+    int done;
+} ffplaykmp_job_ticket;
+
 struct ffplaykmp_player {
     ffplaykmp_configuration configuration;
     ffplaykmp_state_callback callback;
@@ -57,10 +72,23 @@ struct ffplaykmp_player {
     pthread_mutex_t mutex;
     pthread_mutex_t session_mutex;
     ffplaykmp_session session;
-    pthread_t worker;
+    /*
+     * The session thread runs every decode, previews included, so a codec kept
+     * between runs is only ever used from one thread (MediaCodec requires it).
+     * It takes one job at a time from `job`; job_mutex and job_cond guard and
+     * signal the job fields both ways.
+     */
+    pthread_mutex_t job_mutex;
+    pthread_cond_t job_cond;
+    pthread_t session_thread;
+    int session_thread_running;
+    ffplaykmp_job_kind job;
+    int64_t job_start_us;
+    ffplaykmp_job_ticket *job_ticket;
+    ffplaykmp_job_kind job_running;
     atomic_bool cancelled;
+    /* Ends the running play job; the session thread clears it once that job has ended. */
     atomic_bool worker_abort;
-    int worker_running;
     int play_when_ready;
     int has_output;
     /* Host-reported media time (normally the audible audio position) and when
@@ -423,8 +451,14 @@ static void ffplaykmp_session_close_input(ffplaykmp_session *session) {
     session->at_start = 0;
 }
 
-/* Closes the player's input once no run uses it, before the host may unmount what it reads. */
+static void ffplaykmp_end_session_thread(ffplaykmp_player *player);
+
+/*
+ * Ends the session thread and closes the player's input, before the host may
+ * unmount what it reads. The next job starts a new thread.
+ */
 static void ffplaykmp_player_close_input(ffplaykmp_player *player) {
+    ffplaykmp_end_session_thread(player);
     pthread_mutex_lock(&player->session_mutex);
     ffplaykmp_session_close_input(&player->session);
     pthread_mutex_unlock(&player->session_mutex);
@@ -737,8 +771,8 @@ static int ffplaykmp_fail(ffplaykmp_player *player, int error) {
     return error;
 }
 
-static void *ffplaykmp_playback_worker(void *opaque) {
-    ffplaykmp_player *player = opaque;
+/* Plays from the snapshot's position, then publishes ENDED or FAILED unless it was aborted. */
+static void ffplaykmp_run_play_job(ffplaykmp_player *player) {
     const char *input;
     int64_t start_position_us;
     int result;
@@ -749,7 +783,7 @@ static void *ffplaykmp_playback_worker(void *opaque) {
     result = ffplaykmp_decode_frames(player, input, start_position_us, 1,
                 player->configuration.decoder_preference);
     if (ffplaykmp_is_aborted(player))
-        return NULL;
+        return;
     ffplaykmp_invalidate_master_clock(player);
     pthread_mutex_lock(&player->mutex);
     if (result < 0) {
@@ -763,35 +797,137 @@ static void *ffplaykmp_playback_worker(void *opaque) {
     }
     pthread_mutex_unlock(&player->mutex);
     ffplaykmp_publish(player);
+}
+
+static int ffplaykmp_run_preview_job(ffplaykmp_player *player, int64_t start_position_us) {
+    const char *input;
+    pthread_mutex_lock(&player->mutex);
+    input = player->input;
+    pthread_mutex_unlock(&player->mutex);
+    return ffplaykmp_decode_frames(player, input, start_position_us, 0,
+            player->configuration.decoder_preference);
+}
+
+static void *ffplaykmp_session_main(void *opaque) {
+    ffplaykmp_player *player = opaque;
+    pthread_mutex_lock(&player->job_mutex);
+    for (;;) {
+        ffplaykmp_job_kind kind;
+        ffplaykmp_job_ticket *ticket;
+        int64_t start_us;
+        int result = 0;
+        while (player->job == FFPLAYKMP_JOB_NONE)
+            pthread_cond_wait(&player->job_cond, &player->job_mutex);
+        kind = player->job;
+        player->job = FFPLAYKMP_JOB_NONE;
+        if (kind == FFPLAYKMP_JOB_EXIT)
+            break;
+        start_us = player->job_start_us;
+        ticket = player->job_ticket;
+        player->job_ticket = NULL;
+        player->job_running = kind;
+        pthread_mutex_unlock(&player->job_mutex);
+        if (kind == FFPLAYKMP_JOB_PREVIEW)
+            result = ffplaykmp_run_preview_job(player, start_us);
+        else
+            ffplaykmp_run_play_job(player);
+        pthread_mutex_lock(&player->job_mutex);
+        player->job_running = FFPLAYKMP_JOB_NONE;
+        /* An abort meant for this job must not reach the next one. */
+        atomic_store(&player->worker_abort, 0);
+        if (ticket) {
+            ticket->result = result;
+            ticket->done = 1;
+        }
+        pthread_cond_broadcast(&player->job_cond);
+    }
+    pthread_mutex_unlock(&player->job_mutex);
     return NULL;
 }
 
-static void ffplaykmp_stop_worker(ffplaykmp_player *player) {
-    pthread_t worker;
-    int should_join = 0;
-    pthread_mutex_lock(&player->mutex);
-    if (player->worker_running) {
-        atomic_store(&player->worker_abort, 1);
-        worker = player->worker;
-        player->worker_running = 0;
-        should_join = 1;
-    }
-    pthread_mutex_unlock(&player->mutex);
-    if (should_join) {
-        pthread_join(worker, NULL);
-        atomic_store(&player->worker_abort, 0);
-    }
+/* Waits, with job_mutex held, until no job is queued or running. */
+static void ffplaykmp_wait_idle(ffplaykmp_player *player) {
+    while (player->job != FFPLAYKMP_JOB_NONE || player->job_running != FFPLAYKMP_JOB_NONE)
+        pthread_cond_wait(&player->job_cond, &player->job_mutex);
 }
 
+/*
+ * Queues a job on the session thread, starting the thread if needed, once the
+ * job before it has finished. With a ticket it waits for the job and returns
+ * its result; without one it returns as soon as the job is queued.
+ */
+static int ffplaykmp_post_job(
+        ffplaykmp_player *player,
+        ffplaykmp_job_kind kind,
+        int64_t start_us,
+        ffplaykmp_job_ticket *ticket) {
+    int result = 0;
+    pthread_mutex_lock(&player->job_mutex);
+    if (!player->session_thread_running) {
+        result = pthread_create(&player->session_thread, NULL, ffplaykmp_session_main, player);
+        if (result != 0) {
+            pthread_mutex_unlock(&player->job_mutex);
+            return -result;
+        }
+        player->session_thread_running = 1;
+    }
+    ffplaykmp_wait_idle(player);
+    player->job = kind;
+    player->job_start_us = start_us;
+    player->job_ticket = ticket;
+    pthread_cond_broadcast(&player->job_cond);
+    if (ticket) {
+        while (!ticket->done)
+            pthread_cond_wait(&player->job_cond, &player->job_mutex);
+        result = ticket->result;
+    }
+    pthread_mutex_unlock(&player->job_mutex);
+    return result;
+}
+
+/* Decodes and presents the frame at `start_position_us` on the session thread, waiting for it. */
+static int ffplaykmp_preview(ffplaykmp_player *player, int64_t start_position_us) {
+    ffplaykmp_job_ticket ticket = { 0, 0 };
+    return ffplaykmp_post_job(player, FFPLAYKMP_JOB_PREVIEW, start_position_us, &ticket);
+}
+
+/* Ends playback, queued or running, and waits for it to stop; a preview runs to its end. */
+static void ffplaykmp_stop_worker(ffplaykmp_player *player) {
+    pthread_mutex_lock(&player->job_mutex);
+    if (player->job == FFPLAYKMP_JOB_PLAY) {
+        player->job = FFPLAYKMP_JOB_NONE;
+        pthread_cond_broadcast(&player->job_cond);
+    }
+    if (player->job_running == FFPLAYKMP_JOB_PLAY) {
+        atomic_store(&player->worker_abort, 1);
+        while (player->job_running == FFPLAYKMP_JOB_PLAY)
+            pthread_cond_wait(&player->job_cond, &player->job_mutex);
+    }
+    pthread_mutex_unlock(&player->job_mutex);
+}
+
+/* Starts playback on the session thread, after ending any that runs. */
 static int ffplaykmp_start_worker(ffplaykmp_player *player) {
-    int result;
     ffplaykmp_stop_worker(player);
-    pthread_mutex_lock(&player->mutex);
-    result = pthread_create(&player->worker, NULL, ffplaykmp_playback_worker, player);
-    if (result == 0)
-        player->worker_running = 1;
-    pthread_mutex_unlock(&player->mutex);
-    return result == 0 ? 0 : -result;
+    return ffplaykmp_post_job(player, FFPLAYKMP_JOB_PLAY, 0, NULL);
+}
+
+/* Ends playback, waits for any preview, and ends the session thread. */
+static void ffplaykmp_end_session_thread(ffplaykmp_player *player) {
+    pthread_t thread;
+    ffplaykmp_stop_worker(player);
+    pthread_mutex_lock(&player->job_mutex);
+    if (!player->session_thread_running) {
+        pthread_mutex_unlock(&player->job_mutex);
+        return;
+    }
+    ffplaykmp_wait_idle(player);
+    player->job = FFPLAYKMP_JOB_EXIT;
+    pthread_cond_broadcast(&player->job_cond);
+    thread = player->session_thread;
+    player->session_thread_running = 0;
+    pthread_mutex_unlock(&player->job_mutex);
+    pthread_join(thread, NULL);
 }
 
 static int ffplaykmp_require_prepared(ffplaykmp_player *player) {
@@ -867,6 +1003,19 @@ ffplaykmp_player *ffplaykmp_player_create(
         return NULL;
     }
     if (pthread_mutex_init(&player->session_mutex, NULL) != 0) {
+        pthread_mutex_destroy(&player->mutex);
+        free(player);
+        return NULL;
+    }
+    if (pthread_mutex_init(&player->job_mutex, NULL) != 0) {
+        pthread_mutex_destroy(&player->session_mutex);
+        pthread_mutex_destroy(&player->mutex);
+        free(player);
+        return NULL;
+    }
+    if (pthread_cond_init(&player->job_cond, NULL) != 0) {
+        pthread_mutex_destroy(&player->job_mutex);
+        pthread_mutex_destroy(&player->session_mutex);
         pthread_mutex_destroy(&player->mutex);
         free(player);
         return NULL;
@@ -966,18 +1115,20 @@ void ffplaykmp_player_destroy(ffplaykmp_player *player) {
     if (!player)
         return;
     atomic_store(&player->cancelled, 1);
-    ffplaykmp_stop_worker(player);
+    /* The cancel ends any job, so this returns once the thread has exited. */
+    ffplaykmp_end_session_thread(player);
 #if defined(__ANDROID__)
     ffplaykmp_release_android_surface(player);
 #endif
     free(player->input);
-    /* Waits for a run on another thread, which the cancel ends, before freeing what it uses. */
     pthread_mutex_lock(&player->session_mutex);
     ffplaykmp_session_close_input(&player->session);
     av_packet_free(&player->session.packet);
     av_frame_free(&player->session.frame);
     av_frame_free(&player->session.held);
     pthread_mutex_unlock(&player->session_mutex);
+    pthread_cond_destroy(&player->job_cond);
+    pthread_mutex_destroy(&player->job_mutex);
     pthread_mutex_destroy(&player->session_mutex);
     pthread_mutex_destroy(&player->mutex);
     free(player);
@@ -1042,8 +1193,7 @@ int ffplaykmp_player_prepare(
         }
     }
     if (has_output && ffplaykmp_can_decode(player, output_flags)) {
-        result = ffplaykmp_decode_frames(player, input, 0, 0,
-                player->configuration.decoder_preference);
+        result = ffplaykmp_preview(player, 0);
         if (result < 0) {
             return ffplaykmp_prepare_failed(player, result);
         }
@@ -1081,8 +1231,7 @@ int ffplaykmp_player_set_output(
     native_playback = input && ffplaykmp_can_decode(player, capabilities->flags);
     pthread_mutex_unlock(&player->mutex);
     if (native_playback) {
-        result = ffplaykmp_decode_frames(player, input, position_us, 0,
-                player->configuration.decoder_preference);
+        result = ffplaykmp_preview(player, position_us);
         if (result < 0)
             return ffplaykmp_fail(player, result);
     }
@@ -1164,7 +1313,6 @@ int ffplaykmp_player_seek(ffplaykmp_player *player, int64_t position_us) {
     int result = ffplaykmp_require_prepared(player);
     int play_when_ready;
     int native_playback;
-    const char *input;
     if (result < 0)
         return result;
     if (position_us < 0)
@@ -1176,14 +1324,12 @@ int ffplaykmp_player_seek(ffplaykmp_player *player, int64_t position_us) {
     player->snapshot.position_us = position_us;
     player->snapshot.queue_serial++;
     play_when_ready = player->play_when_ready;
-    input = player->input;
     native_playback = player->has_output &&
             ffplaykmp_can_decode(player, player->snapshot.output_flags);
     pthread_mutex_unlock(&player->mutex);
     ffplaykmp_publish(player);
     if (native_playback) {
-        result = ffplaykmp_decode_frames(player, input, position_us, 0,
-                player->configuration.decoder_preference);
+        result = ffplaykmp_preview(player, position_us);
         if (result < 0)
             return ffplaykmp_fail(player, result);
     }
