@@ -96,14 +96,17 @@ is reported to the video worker through `ffplaykmp_player_set_master_clock`, so 
 clock: frames are scheduled against what the listener hears, and late frames are dropped. When the
 audio ends before the video, scheduling continues on the wall clock from that point.
 
-Volume, mute and track controls apply live and are published on `FFplayPlayer.audio`:
+`FFplayPlayer.audio` holds the prepared source's `AudioMixControls`, the same controls as
+`AudioPlayer`'s; they apply live. While there is no audio it has no tracks, but its master level
+belongs to the player: it is kept across sources and can be set before the first one.
 
 ```kotlin
-player.setVolume(0.8)            // master level, kept across sources
-player.setMuted(true)
-player.selectAudioTrack(1)       // switch language
-player.setAudioTrackEnabled(2, true)  // mix in commentary
-player.setAudioTrackVolume(2, 0.4)
+val audio = player.audio.value
+audio.setVolume(0.8)             // master level, kept across sources
+audio.setMuted(true)
+audio.selectTrack(1)             // switch language
+audio.setTrackEnabled(2, true)   // mix in commentary
+audio.setTrackVolume(2, 0.4)
 ```
 
 Levels are the same `AudioLevel`s the command and filter DSLs render, so a preview matches an

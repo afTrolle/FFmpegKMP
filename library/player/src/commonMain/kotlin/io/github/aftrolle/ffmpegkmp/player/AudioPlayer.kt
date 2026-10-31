@@ -1,13 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
-@file:OptIn(
-    io.github.aftrolle.ffmpegkmp.core.InternalFFmpegKmpApi::class,
-    kotlin.concurrent.atomics.ExperimentalAtomicApi::class,
-)
+@file:OptIn(kotlin.concurrent.atomics.ExperimentalAtomicApi::class)
 
 package io.github.aftrolle.ffmpegkmp.player
 
-import io.github.aftrolle.ffmpegkmp.core.AudioLevel
-import io.github.aftrolle.ffmpegkmp.core.applyLatest
 import kotlin.concurrent.atomics.AtomicBoolean
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.microseconds
@@ -24,7 +19,6 @@ import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -48,14 +42,14 @@ public enum class PlaybackState {
  * Plays an input's audio through the platform's audio output (AudioTrack on Android, Java Sound
  * on desktop, AVAudioEngine on Apple platforms), decoded and mixed by FFmpeg via [AudioDecoder].
  *
- * Volume, mute and track controls apply live, without restarting playback:
+ * Its [AudioMixControls] apply live, without restarting playback:
  * - [setVolume]/[setMuted] (or [setLevel]) control the master output level;
  * - [setTrackVolume]/[setTrackMuted] (or [setTrackLevel]) control each track in the mix;
  * - [selectTrack] switches to one track (e.g. another language); [setTrackEnabled] adds or
  *   removes tracks from the mix, for example music plus a commentary track.
  *
  * Controls are safe from any thread, including the main thread; they never block. State is
- * published through the [StateFlow]s below. On iOS, configure the app's `AVAudioSession`
+ * published through [StateFlow]s. On iOS, configure the app's `AVAudioSession`
  * category (e.g. `.playback`) before playing; the player does not change it.
  */
 public class AudioPlayer internal constructor(
@@ -63,9 +57,8 @@ public class AudioPlayer internal constructor(
     private val output: PlatformAudioOutput,
     dispatcher: CoroutineDispatcher,
     private val chunkFrames: Int = DEFAULT_CHUNK_FRAMES,
-) : AutoCloseable {
+) : AudioMixControls by decoder, AutoCloseable {
     public val format: PcmFormat get() = decoder.format
-    public val tracks: List<AudioTrackInfo> get() = decoder.tracks
     public val duration: Duration? get() = decoder.duration
 
     private val mutableState = MutableStateFlow(PlaybackState.PAUSED)
@@ -75,15 +68,6 @@ public class AudioPlayer internal constructor(
 
     /** Playback position, compensated for the audio device's buffering. */
     public val position: StateFlow<Duration> = mutablePosition.asStateFlow()
-
-    private val mutableLevel = MutableStateFlow(AudioLevel.Unchanged)
-    public val level: StateFlow<AudioLevel> = mutableLevel.asStateFlow()
-
-    private val mutableTrackLevels = MutableStateFlow(decoder.trackLevels)
-    public val trackLevels: StateFlow<List<AudioLevel>> = mutableTrackLevels.asStateFlow()
-
-    private val mutableEnabledTracks = MutableStateFlow(decoder.enabledTracks)
-    public val enabledTracks: StateFlow<Set<Int>> = mutableEnabledTracks.asStateFlow()
 
     /** The error that moved the player to [PlaybackState.FAILED], if any. */
     public var failure: Throwable? = null
@@ -111,62 +95,6 @@ public class AudioPlayer internal constructor(
     public fun seekTo(position: Duration) {
         require(!position.isNegative()) { "Seek position must not be negative" }
         commands.trySend(Command.Seek(position))
-    }
-
-    public fun setLevel(level: AudioLevel) {
-        updateLevel { level }
-    }
-
-    public fun setVolume(volume: Double) {
-        updateLevel { it.copy(volume = volume) }
-    }
-
-    public fun setMuted(muted: Boolean) {
-        updateLevel { it.copy(muted = muted) }
-    }
-
-    /**
-     * Atomic, so a volume and a mute change from different threads never lose one another.
-     * [transform] may run more than once when another update races it, so keep it pure.
-     */
-    public fun updateLevel(transform: (AudioLevel) -> AudioLevel) {
-        mutableLevel.update(transform)
-        applyLatest({ mutableLevel.value }) { decoder.level = it }
-    }
-
-    public fun setTrackLevel(track: Int, level: AudioLevel) {
-        updateTrackLevel(track) { level }
-    }
-
-    public fun setTrackVolume(track: Int, volume: Double) {
-        updateTrackLevel(track) { it.copy(volume = volume) }
-    }
-
-    public fun setTrackMuted(track: Int, muted: Boolean) {
-        updateTrackLevel(track) { it.copy(muted = muted) }
-    }
-
-    /** Atomic, like [updateLevel], for one track's level; [transform] may likewise run more than once. */
-    public fun updateTrackLevel(track: Int, transform: (AudioLevel) -> AudioLevel) {
-        decoder.updateTrackLevel(track, transform)
-        applyLatest({ decoder.trackLevels }) { mutableTrackLevels.value = it }
-    }
-
-    /** Adds [track] to, or removes it from, the mix. */
-    public fun setTrackEnabled(track: Int, enabled: Boolean) {
-        decoder.setTrackEnabled(track, enabled)
-        mutableEnabledTracks.value = decoder.enabledTracks
-    }
-
-    /** Plays [track] alone, replacing the current selection. */
-    public fun selectTrack(track: Int) {
-        selectTracks(setOf(track))
-    }
-
-    /** Mixes exactly [selected]. */
-    public fun selectTracks(selected: Set<Int>) {
-        decoder.selectTracks(selected)
-        mutableEnabledTracks.value = decoder.enabledTracks
     }
 
     /** Stops playback and releases the decoder and audio device. The player cannot be reused. */

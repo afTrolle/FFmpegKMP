@@ -21,6 +21,8 @@ import io.github.aftrolle.ffmpegkmp.core.AudioLevel
 import io.github.aftrolle.ffmpegkmp.core.CommandIo
 import io.github.aftrolle.ffmpegkmp.core.toNativeMounts
 import io.github.aftrolle.ffmpegkmp.ffmpeg.FFmpegClient
+import io.github.aftrolle.ffmpegkmp.player.setTrackMuted
+import io.github.aftrolle.ffmpegkmp.player.setVolume
 import java.util.concurrent.CopyOnWriteArrayList
 import kotlin.io.path.createTempDirectory
 import kotlin.test.AfterTest
@@ -90,19 +92,18 @@ class FFplayAudioJvmTest {
             player.prepare(MediaSource(AV_FIXTURE, CommandIo { input(AV_FIXTURE, fileHandle) }))
 
             val audio = player.audio.value
-            if (!audio.available && !hasAudioDevice()) {
+            if (audio.tracks.isEmpty() && !hasAudioDevice()) {
                 println("Skipping: this machine has no audio output device")
                 return@runBlocking
             }
-            assertTrue(audio.available, "The fixture's audio track should be playable")
-            assertEquals(1, audio.tracks.size)
-            assertEquals(setOf(0), audio.enabledTracks)
+            assertEquals(1, audio.tracks.size, "The fixture's audio track should be playable")
+            assertEquals(setOf(0), audio.enabledTracks.value)
 
-            player.setVolume(0.5)
-            player.setAudioTrackMuted(0, true)
-            assertEquals(AudioLevel(volume = 0.5), player.audio.value.level)
-            assertEquals(listOf(AudioLevel.Muted), player.audio.value.trackLevels)
-            player.setAudioTrackMuted(0, false)
+            audio.setVolume(0.5)
+            audio.setTrackMuted(0, true)
+            assertEquals(AudioLevel(volume = 0.5), audio.level.value)
+            assertEquals(listOf(AudioLevel.Muted), audio.trackLevels.value)
+            audio.setTrackMuted(0, false)
 
             val started = TimeSource.Monotonic.markNow()
             player.play()

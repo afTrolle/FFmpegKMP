@@ -19,7 +19,8 @@ binding details.
   description (`VideoInfo`, with its colour as a `FrameColor` and its `HdrMetadata`). The decoder
   runs outside the command FIFO.
 - `player` owns audio decoding (`AudioDecoder`) and playback (`AudioPlayer`)
-  with live per-track and master `AudioLevel`s and track selection. It uses the
+  with live per-track and master `AudioLevel`s and track selection, the
+  `AudioMixControls` that `FFplayPlayer.audio` also exposes. It uses the
   bridge's libav-based engine, not fftools, so it does not join the FIFO.
 - `ffplay` owns Compose video playback (`FFplayPlayer`, `FFplaySurface`) on its
   own engine, with audio played through `player` and slaved to the video clock,

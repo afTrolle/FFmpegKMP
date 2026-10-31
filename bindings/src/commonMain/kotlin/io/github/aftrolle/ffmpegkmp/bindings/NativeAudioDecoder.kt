@@ -19,24 +19,33 @@ public data class NativeAudioTrackInfo(
 )
 
 /**
- * The native audio decode/mix engine (`ffmpegkmp_player.c`). [read], [seek] and [close] must
- * not overlap; the gain, track-enable and [abort] calls are safe from any thread, and become
- * no-ops once the decoder is closed.
+ * The audio engine's mixer (`ffmpegkmp_player.c`), whether Kotlin reads its PCM
+ * ([NativeAudioDecoder]) or a bridge plays it itself ([NativePlayerAudio]).
  */
 @InternalFFmpegKmpApi
-public interface NativeAudioDecoder : AutoCloseable {
-    public val sampleRate: Int
-    public val channels: Int
+public interface NativeAudioMixer {
     public val tracks: List<NativeAudioTrackInfo>
 
     /** Negative when the input does not report a duration. */
     public val durationMicros: Long
-    public val positionMicros: Long
 
     public fun isTrackEnabled(track: Int): Boolean
     public fun setTrackEnabled(track: Int, enabled: Boolean)
     public fun setTrackGain(track: Int, gain: Float)
     public fun setMasterGain(gain: Float)
+}
+
+/**
+ * The native audio decode/mix engine (`ffmpegkmp_player.c`). [read], [seek] and [close] must
+ * not overlap; the gain, track-enable and [abort] calls are safe from any thread, and become
+ * no-ops once the decoder is closed.
+ */
+@InternalFFmpegKmpApi
+public interface NativeAudioDecoder : NativeAudioMixer, AutoCloseable {
+    public val sampleRate: Int
+    public val channels: Int
+    public val positionMicros: Long
+
     public fun seek(positionMicros: Long)
 
     /**

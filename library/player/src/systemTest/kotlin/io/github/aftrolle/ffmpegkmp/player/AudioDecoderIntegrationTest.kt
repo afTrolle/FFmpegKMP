@@ -83,7 +83,7 @@ class AudioDecoderIntegrationTest {
         assertEquals(listOf("eng", "fra"), decoder.tracks.map(AudioTrackInfo::language))
         assertEquals(listOf("pcm_f32le", "pcm_f32le"), decoder.tracks.map(AudioTrackInfo::codec))
         assertTrue(decoder.tracks.all(AudioTrackInfo::isDecodable))
-        assertEquals(setOf(0), decoder.enabledTracks)
+        assertEquals(setOf(0), decoder.enabledTracks.value)
         // The container's duration is FFmpeg's estimate; the frame count below is the exact truth.
         assertTrue(decoder.duration!! in 900.milliseconds..1_000.milliseconds, "${decoder.duration}")
 
@@ -112,11 +112,11 @@ class AudioDecoderIntegrationTest {
         decoder.setTrackLevel(1, AudioLevel(volume = 2.0, muted = true))
         assertAll(read(decoder, 500), 0.1f)
 
-        decoder.setTrackLevel(1, decoder.trackLevel(1).copy(muted = false))
-        decoder.level = AudioLevel(volume = 2.0)
+        decoder.setTrackMuted(1, false)
+        decoder.setLevel(AudioLevel(volume = 2.0))
         assertAll(read(decoder, 500), (0.1f + 0.3f) * 2f)
 
-        decoder.level = AudioLevel.Muted
+        decoder.setLevel(AudioLevel.Muted)
         assertAll(read(decoder, 500), 0f)
     }
 

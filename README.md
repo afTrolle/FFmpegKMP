@@ -112,8 +112,7 @@ val mix = FilterGraph {
 ```
 
 `ffplay` plays video with its audio in sync (audio is the master clock) and
-exposes the same controls: `setVolume`, `setMuted`, `selectAudioTrack`,
-`setAudioTrackEnabled`, and per-track levels on `FFplayPlayer`.
+exposes the same controls, `AudioMixControls`, as `FFplayPlayer.audio`.
 
 The optional `player` artifact plays or decodes audio on its own with live controls.
 `AudioPlayer` outputs through AudioTrack (Android), Java Sound (desktop) or

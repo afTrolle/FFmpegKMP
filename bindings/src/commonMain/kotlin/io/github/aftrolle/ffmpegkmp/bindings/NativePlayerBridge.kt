@@ -193,19 +193,11 @@ public data class NativeAudioProgress(
 )
 
 /**
- * Audio a bridge plays itself, mirroring [NativeAudioDecoder]'s track model. Gains apply live;
- * track changes reach what is heard after the little audio decoded ahead.
+ * Audio a bridge plays itself, with [NativeAudioDecoder]'s mixer. Gains apply live; track changes
+ * reach what is heard after the little audio decoded ahead.
  */
 @InternalFFmpegKmpApi
-public interface NativePlayerAudio : AutoCloseable {
-    public val tracks: List<NativeAudioTrackInfo>
-
-    /** Negative when the input does not report a duration. */
-    public val durationMicros: Long
-    public fun isTrackEnabled(track: Int): Boolean
-    public fun setTrackEnabled(track: Int, enabled: Boolean)
-    public fun setTrackGain(track: Int, gain: Float)
-    public fun setMasterGain(gain: Float)
+public interface NativePlayerAudio : NativeAudioMixer, AutoCloseable {
     public fun play()
     public fun pause()
     public fun seek(positionMicros: Long)
