@@ -30,6 +30,17 @@ class NativeDecoderBudgetJvmTest {
     @AfterTest
     fun restoreLimit() = setNativeDecoderBudget(limit)
 
+    /** VideoToolbox says whether it decodes a codec, and not how many at once; other desktops say neither. */
+    @Test
+    fun theHostSaysWhetherItDecodesACodecInHardware() {
+        val h264 = nativeHardwareDecoderSupport("h264", 3840, 2160)
+        if (isMac()) assertEquals(NativeHardwareDecoderSupport(available = true, maxInstances = null), h264)
+        else assertEquals(NativeHardwareDecoderSupport(available = null, maxInstances = null), h264)
+        // Not a video codec, and not a codec at all: nothing to say.
+        assertEquals(null, nativeHardwareDecoderSupport("aac", 1920, 1080).available)
+        assertEquals(null, nativeHardwareDecoderSupport("not-a-codec", 1920, 1080).available)
+    }
+
     @Test
     fun aBudgetOfTwoGivesTwoOfFourPlayersHardware() {
         if (!isMac()) return

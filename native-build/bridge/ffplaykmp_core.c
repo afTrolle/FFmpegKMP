@@ -15,6 +15,7 @@
 #endif
 #if defined(__APPLE__)
 #include <TargetConditionals.h>
+#include <dlfcn.h>
 #endif
 #include <libavutil/cpu.h>
 #include <libavutil/csp.h>
@@ -543,6 +544,49 @@ int32_t ffplaykmp_decoder_budget_in_use(void) {
     in_use = ffplaykmp_budget_in_use;
     pthread_mutex_unlock(&ffplaykmp_budget_mutex);
     return in_use;
+}
+
+#if defined(__APPLE__)
+/* The CMVideoCodecType, a big-endian four-character code, VideoToolbox knows `id` by; 0 for none. */
+static uint32_t ffplaykmp_video_codec_type(enum AVCodecID id) {
+    switch (id) {
+    case AV_CODEC_ID_H264: return MKBETAG('a', 'v', 'c', '1');
+    case AV_CODEC_ID_HEVC: return MKBETAG('h', 'v', 'c', '1');
+    case AV_CODEC_ID_VP9: return MKBETAG('v', 'p', '0', '9');
+    case AV_CODEC_ID_AV1: return MKBETAG('a', 'v', '0', '1');
+    case AV_CODEC_ID_PRORES: return MKBETAG('a', 'p', 'c', 'n');
+    case AV_CODEC_ID_MPEG4: return MKBETAG('m', 'p', '4', 'v');
+    case AV_CODEC_ID_MPEG2VIDEO: return MKBETAG('m', 'p', '2', 'v');
+    case AV_CODEC_ID_MPEG1VIDEO: return MKBETAG('m', 'p', '1', 'v');
+    case AV_CODEC_ID_H263: return MKBETAG('h', '2', '6', '3');
+    default: return 0;
+    }
+}
+#endif
+
+int ffplaykmp_hardware_decoder_available(const char *codec_name) {
+    const AVCodecDescriptor *descriptor;
+    if (!codec_name)
+        return FFPLAYKMP_ERROR_INVALID_ARGUMENT;
+    descriptor = avcodec_descriptor_get_by_name(codec_name);
+    if (!descriptor || descriptor->type != AVMEDIA_TYPE_VIDEO)
+        return FFPLAYKMP_ERROR_UNSUPPORTED;
+#if defined(__APPLE__)
+    {
+        /*
+         * Looked up rather than linked: libavcodec has loaded VideoToolbox,
+         * and the JVM's bridge library links no Apple framework of its own.
+         */
+        typedef unsigned char (*supported_fn)(uint32_t);
+        supported_fn supported = (supported_fn)dlsym(RTLD_DEFAULT, "VTIsHardwareDecodeSupported");
+        uint32_t type = ffplaykmp_video_codec_type(descriptor->id);
+        if (!supported)
+            return FFPLAYKMP_ERROR_UNSUPPORTED;
+        return type && supported(type) ? 1 : 0;
+    }
+#else
+    return FFPLAYKMP_ERROR_UNSUPPORTED;
+#endif
 }
 
 /* Takes a place for `codec`, or returns FFPLAYKMP_ERROR_BUSY with every one taken. */

@@ -94,3 +94,8 @@ public actual fun setNativeDecoderBudget(hardwareDecoders: Int) {
     require(hardwareDecoders >= 0) { "The hardware decoder budget must not be negative: $hardwareDecoders" }
     browserDecoderBudget = hardwareDecoders
 }
+
+/** WebCodecs answers only asynchronously, and says nothing of hardware for certain: the browser says neither. */
+@InternalFFmpegKmpApi
+public actual fun nativeHardwareDecoderSupport(codec: String, width: Int, height: Int): NativeHardwareDecoderSupport =
+    NativeHardwareDecoderSupport(available = null, maxInstances = null)

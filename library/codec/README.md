@@ -286,6 +286,13 @@ taken, `AUTO` opens the software decoder at once and `decoderFallback` reports
 `decoderFallback` is fixed when the decoder opens, like `decoderKind`; `hardwareDecodersInUse`
 says how many places are taken.
 
+The limit defaults to 8 on macOS and other desktops and 4 on Android and iOS.
+`DecoderBudget.hardwareSupport(codec, width, height)` asks the platform what to set it to, for a
+codec by FFmpeg's name: Android's `MediaCodecList` says whether the decoder FFmpeg would open takes
+the size and how many may be open at once (`maxInstances`, the platform's hint); VideoToolbox, on iOS
+and macOS and the JVM there, says only whether it decodes the codec; other desktops and the browser
+say neither, and answer null.
+
 Hardware decoders do not degrade gracefully past what the device sustains. On an M4 Pro,
 VideoToolbox plays fourteen 4K H.264 players at their full 24 frames a second, fifteen at 10 and
 sixteen at under 5 each, so the default there, 8, leaves room for higher frame rates and other

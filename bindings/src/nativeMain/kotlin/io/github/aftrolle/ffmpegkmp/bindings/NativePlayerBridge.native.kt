@@ -41,6 +41,7 @@ import io.github.aftrolle.ffmpegkmp.bindings.cinterop.ffplaykmp_get_statistics
 import io.github.aftrolle.ffmpegkmp.bindings.cinterop.ffplaykmp_decoder_budget_get
 import io.github.aftrolle.ffmpegkmp.bindings.cinterop.ffplaykmp_decoder_budget_in_use
 import io.github.aftrolle.ffmpegkmp.bindings.cinterop.ffplaykmp_decoder_budget_set
+import io.github.aftrolle.ffmpegkmp.bindings.cinterop.ffplaykmp_hardware_decoder_available
 import io.github.aftrolle.ffmpegkmp.bindings.cinterop.ffplaykmp_video_frame
 import io.github.aftrolle.ffmpegkmp.bindings.cinterop.ffplaykmp_platform_video_frame
 import kotlinx.cinterop.COpaquePointer
@@ -313,3 +314,15 @@ public actual fun setNativeDecoderBudget(hardwareDecoders: Int) {
     require(hardwareDecoders >= 0) { "The hardware decoder budget must not be negative: $hardwareDecoders" }
     ffplaykmp_decoder_budget_set(hardwareDecoders)
 }
+
+/** VideoToolbox says whether, per codec, and not how many may be open at once. */
+@InternalFFmpegKmpApi
+public actual fun nativeHardwareDecoderSupport(codec: String, width: Int, height: Int): NativeHardwareDecoderSupport =
+    NativeHardwareDecoderSupport(
+        available = when (ffplaykmp_hardware_decoder_available(codec)) {
+            1 -> true
+            0 -> false
+            else -> null
+        },
+        maxInstances = null,
+    )

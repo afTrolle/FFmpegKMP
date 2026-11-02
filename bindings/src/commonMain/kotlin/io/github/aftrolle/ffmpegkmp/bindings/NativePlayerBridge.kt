@@ -221,6 +221,22 @@ public expect fun nativeDecoderBudget(): NativeDecoderBudget
 @InternalFFmpegKmpApi
 public expect fun setNativeDecoderBudget(hardwareDecoders: Int)
 
+/**
+ * What the platform says about decoding a video codec in hardware: whether it [available] has a
+ * decoder for it at a size, and the most of them it says may be open at once, [maxInstances]; each
+ * null where the platform does not say.
+ */
+@InternalFFmpegKmpApi
+public data class NativeHardwareDecoderSupport(val available: Boolean?, val maxInstances: Int?)
+
+/**
+ * Asks the platform about decoding the codec FFmpeg names [codec] in hardware at [width] × [height]:
+ * Android's MediaCodecList says both, VideoToolbox (`ffplaykmp_hardware_decoder_available`) only
+ * whether, per codec, and other desktops and the browser neither.
+ */
+@InternalFFmpegKmpApi
+public expect fun nativeHardwareDecoderSupport(codec: String, width: Int, height: Int): NativeHardwareDecoderSupport
+
 @InternalFFmpegKmpApi
 public interface NativePlayerBridge : AutoCloseable {
     /** Joins any cancelled worker and clears the cancellation before the next [prepare]. */

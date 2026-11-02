@@ -378,6 +378,15 @@ FFPLAYKMP_EXPORT int ffplaykmp_decoder_budget_set(int32_t hardware_decoders);
 FFPLAYKMP_EXPORT int32_t ffplaykmp_decoder_budget_get(void);
 /* The hardware decoders open now, by players and pull decoders together. */
 FFPLAYKMP_EXPORT int32_t ffplaykmp_decoder_budget_in_use(void);
+/*
+ * Whether the platform has a hardware decoder for the codec FFmpeg names
+ * `codec_name` ("h264", "hevc", "vp9", "av1", ...): 1 if it has, 0 if not.
+ * Only Apple's platforms say, through VideoToolbox, which answers per codec,
+ * not per size, and not how many may be open at once; elsewhere, and for a
+ * name FFmpeg does not know, it returns FFPLAYKMP_ERROR_UNSUPPORTED. Android
+ * asks MediaCodecList from Kotlin. FFPLAYKMP_ERROR_INVALID_ARGUMENT for null.
+ */
+FFPLAYKMP_EXPORT int ffplaykmp_hardware_decoder_available(const char *codec_name);
 
 /*
  * Flat callback facade used by the browser worker. It keeps C structure layout out of

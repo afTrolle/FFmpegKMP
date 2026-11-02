@@ -3,6 +3,11 @@
 
 package io.github.aftrolle.ffmpegkmp.bindings
 
+/** VideoToolbox says whether on macOS, per codec; no desktop says how many may be open at once. */
+@InternalFFmpegKmpApi
+public actual fun nativeHardwareDecoderSupport(codec: String, width: Int, height: Int): NativeHardwareDecoderSupport =
+    NativeHardwareDecoderSupport(available = javaCppHardwareDecoderAvailable(codec), maxInstances = null)
+
 @InternalFFmpegKmpApi
 public actual fun createPlatformPlayerBridge(
     configuration: NativePlayerConfiguration,

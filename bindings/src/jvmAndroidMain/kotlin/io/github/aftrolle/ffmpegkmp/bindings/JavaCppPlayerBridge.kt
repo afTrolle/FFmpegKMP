@@ -272,3 +272,13 @@ public actual fun setNativeDecoderBudget(hardwareDecoders: Int) {
     JavaCppBridgeLoader.load()
     bridge.ffplaykmp_decoder_budget_set(hardwareDecoders)
 }
+
+/** `ffplaykmp_hardware_decoder_available` for [codec]; null where the platform does not say. */
+internal fun javaCppHardwareDecoderAvailable(codec: String): Boolean? {
+    JavaCppBridgeLoader.load()
+    return when (bridge.ffplaykmp_hardware_decoder_available(codec)) {
+        1 -> true
+        0 -> false
+        else -> null
+    }
+}

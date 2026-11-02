@@ -10,6 +10,7 @@ import io.github.aftrolle.ffmpegkmp.core.MediaSource
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertNotEquals
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import kotlin.time.Duration
@@ -18,6 +19,18 @@ import okio.Buffer
 
 /** [DecoderBudget] as video decoders see it, where the host decodes H.264 in hardware (VideoToolbox takes this 128x128 clip). */
 class DecoderBudgetSystemTest {
+    /** A host that opens a hardware H.264 decoder does not say it has none; nothing says it decodes a codec that is not one. */
+    @Test
+    fun hardwareSupportAgreesWithTheDecoderTheHostOpens() = runBlocking<Unit> {
+        val support = DecoderBudget.hardwareSupport("h264", 128, 128)
+        decoder(CodecPreference.AUTO).use { decoder ->
+            if (decoder.decoderKind == DecoderKind.HARDWARE) assertNotEquals(false, support.available, "$support")
+        }
+        assertNotEquals(true, DecoderBudget.hardwareSupport("not-a-codec", 128, 128).available)
+        assertFailsWith<IllegalArgumentException> { DecoderBudget.hardwareSupport("h264", 0, 128) }
+        assertFailsWith<IllegalArgumentException> { DecoderBudget.hardwareSupport(" ", 128, 128) }
+    }
+
     @Test
     fun aFullBudgetOpensSoftwareUnderAutoAndFailsRequireHardware() = runBlocking {
         val limit = DecoderBudget.hardwareDecoders
