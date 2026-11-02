@@ -3,7 +3,8 @@ const ffmpegKmpPlayerAssets = [
     "kotlin/ffmpegkmp.mjs",
     "kotlin/ffmpegkmp.wasm",
     "kotlin/hardware-h264.mp4",
-    "kotlin/video-decoder/cfr-30-h264-128.mp4"
+    "kotlin/video-decoder/cfr-30-h264-128.mp4",
+    "kotlin/video-decoder/cfr-30.mp4"
 ];
 
 config.client.useIframe = false;

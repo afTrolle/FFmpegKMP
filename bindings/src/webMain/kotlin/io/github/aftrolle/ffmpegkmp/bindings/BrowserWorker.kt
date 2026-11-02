@@ -22,7 +22,7 @@ internal fun startBrowserPlayerWorker(
     configuration: NativePlayerConfiguration,
     listener: BrowserPlayerWorkerListener,
 ): BrowserPlayerWorker {
-    val onSnapshot: (String) -> Unit = listener::onSnapshot
+    val onSnapshot: (String, Int) -> Unit = listener::onSnapshot
     val onFrame: (JsAny) -> Unit = { data ->
         listener.onFrame(
             bytes = int8ArrayToByteArray(playerFrameBytes(data)),
@@ -115,7 +115,7 @@ private fun startPlayerWorker(
     decoderPreference: Int,
     decoderThreads: Int,
     codecReleaseDelayUs: Double,
-    onSnapshot: (String) -> Unit,
+    onSnapshot: (String, Int) -> Unit,
     onFrame: (JsAny) -> Unit,
     onPlatformFrame: (JsAny) -> Boolean,
     onFailure: (String) -> Unit,
@@ -150,7 +150,7 @@ private fun startPlayerWorker(
           for (const [message, transfers] of pending.splice(0)) {
             worker.postMessage({ ...message, moduleUrl }, transfers);
           }
-        } else if (data.type === 'player-snapshot') onSnapshot(data.snapshot);
+        } else if (data.type === 'player-snapshot') onSnapshot(data.snapshot, data.decoderFallback | 0);
         else if (data.type === 'player-frame') onFrame(data);
         else if (data.type === 'player-diagnostic') console.warn(data.message);
         else if (data.type === 'player-video-frame') {

@@ -72,6 +72,36 @@ class BrowserNativePlayerTest {
         assertEquals(0, browserPlayerVideoFrameRegistrySize(), "VideoFrames left in the registry")
     }
 
+    /**
+     * WebCodecs has no name for MPEG-4 Part 2, so an output that asked for it is decoded by FFmpeg in software, and
+     * the snapshot says why; a stream WebCodecs takes, prepared next, clears it.
+     */
+    @Test
+    fun aCodecWebCodecsCannotTakeFallsBackToSoftwareAndSaysWhy() = playerTest("WebCodecs fallback") {
+        if (!browserSupportsWebCodecs()) {
+            log("skipped: this browser has no VideoDecoder or EncodedVideoChunk")
+            return@playerTest
+        }
+        Playing("WebCodecs fallback", NativePlayerDecoderPreference.AUTO, webCodecs = true).use { playing ->
+            assertEquals(0, playing.bridge.prepare(source(clip = MPEG4_CLIP)))
+            assertEquals(0, within("the MPEG-4 clip's preparation") { playing.bridge.awaitPreparation() })
+            assertEquals(0, playing.bridge.setOutput(NativePlayerOutputCapabilities(hardwareFrameImport = true, softwareFrameUpload = true)))
+            playing.await("the fallback reported") { it.decoderFallback == NativePlayerDecoderFallback.UNSUPPORTED }
+            playing.awaitShown("the software preview") { it.count > 0 }
+            assertEquals(NativePlayerDecoderKind.SOFTWARE, playing.snapshot.value.activeDecoder)
+            assertEquals(0, playing.statistics().webCodecsDecoders, "WebCodecs decoders open")
+
+            // The bridge sends the output again after a prepare: WebCodecs takes H.264, and the reason is gone.
+            assertEquals(0, playing.bridge.prepare(source()))
+            assertEquals(0, within("the H.264 clip's preparation") { playing.bridge.awaitPreparation() })
+            playing.await("WebCodecs decoding") {
+                it.state == NativePlayerState.READY && it.decoderFallback == NativePlayerDecoderFallback.NONE
+            }
+            assertEquals(1, playing.statistics().webCodecsDecoders, "WebCodecs decoders open")
+            playing.check()
+        }
+    }
+
     /** Setting the output again replaces the WebCodecs decoder, closing the one before, and reads the input anew. */
     @Test
     fun webCodecsOutputSetAgainKeepsOneDecoder() = playerTest("WebCodecs output set again") {
@@ -564,23 +594,26 @@ class BrowserNativePlayerTest {
     private companion object {
         /** 128x128 H.264 at 30 fps, five seconds, with keyframes every 12 frames: the frame code over cfr-30.mp4. */
         const val CLIP = "cfr-30-h264-128.mp4"
+
+        /** The 96x64 MPEG-4 Part 2 clip [CLIP] was made from, which WebCodecs has no codec for. */
+        const val MPEG4_CLIP = "cfr-30.mp4"
         const val SIZE = 128
         const val FPS = 30
 
-        private var clip: ByteArray? = null
+        private val clips = mutableMapOf<String, ByteArray>()
 
-        suspend fun clipBytes(): ByteArray =
-            clip ?: loadBrowserPlayerTestResource("/base/kotlin/video-decoder/$CLIP").also { clip = it }
+        suspend fun clipBytes(clip: String = CLIP): ByteArray =
+            clips[clip] ?: loadBrowserPlayerTestResource("/base/kotlin/video-decoder/$clip").also { clips[clip] = it }
 
         /** 80 MB, more than the heap a worker starts with. */
         const val PADDING = 80 shl 20
 
-        /** The clip, with [padding] zero bytes after it, which the demuxer never reads. */
-        suspend fun source(padding: Int = 0): NativePlayerSource {
-            val bytes = clipBytes().let { if (padding > 0) it.copyOf(it.size + padding) else it }
+        /** The [clip], with [padding] zero bytes after it, which the demuxer never reads. */
+        suspend fun source(padding: Int = 0, clip: String = CLIP): NativePlayerSource {
+            val bytes = clipBytes(clip).let { if (padding > 0) it.copyOf(it.size + padding) else it }
             return NativePlayerSource(
-                input = CLIP,
-                mounts = listOf(NativeMountedIo(path = CLIP, resource = NativeSourceResource(Buffer().write(bytes)))),
+                input = clip,
+                mounts = listOf(NativeMountedIo(path = clip, resource = NativeSourceResource(Buffer().write(bytes)))),
             )
         }
     }

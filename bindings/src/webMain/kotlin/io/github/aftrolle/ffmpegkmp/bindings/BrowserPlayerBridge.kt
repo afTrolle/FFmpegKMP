@@ -32,7 +32,8 @@ internal interface BrowserPlayerWorker {
 }
 
 internal interface BrowserPlayerWorkerListener {
-    fun onSnapshot(snapshotJson: String)
+    /** A snapshot, and why WebCodecs did not decode an output that asked for it, as `ffplaykmp_decoder_fallback`. */
+    fun onSnapshot(snapshotJson: String, decoderFallback: Int)
     fun onFrame(
         bytes: ByteArray,
         width: Int,
@@ -242,9 +243,9 @@ private class BrowserNativePlayerBridge(
     private inner class BrowserPlayerListener(
         private val generation: Int,
     ) : BrowserPlayerWorkerListener {
-        override fun onSnapshot(snapshotJson: String) {
+        override fun onSnapshot(snapshotJson: String, decoderFallback: Int) {
             if (closed || generation != workerGeneration) return
-            current = snapshotJson.toBrowserNativePlayerSnapshot()
+            current = snapshotJson.toBrowserNativePlayerSnapshot(decoderFallback)
             if (current.state == NativePlayerState.FAILED) source = null
             update(current)
             when (current.state) {
@@ -333,9 +334,10 @@ private class PendingBrowserPreparation(
     val completion: CompletableDeferred<Int>,
 )
 
-internal fun String.toBrowserNativePlayerSnapshot(): NativePlayerSnapshot {
+internal fun String.toBrowserNativePlayerSnapshot(decoderFallback: Int = 0): NativePlayerSnapshot {
     val value = Json.parseToJsonElement(this) as JsonObject
     return nativePlayerSnapshot(
+        decoderFallback = decoderFallback,
         state = value.int("state"),
         positionUs = value.long("positionUs"),
         durationUs = value.long("durationUs"),

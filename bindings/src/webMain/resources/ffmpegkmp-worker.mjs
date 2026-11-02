@@ -32,6 +32,11 @@ let webCodecsPresentationId = 1;
 let webCodecsOutputFlags = 0;
 // What the packet callback failed with, for pumpWebCodecs to fall back on once the read returns.
 let webCodecsPacketFailure = null;
+// Why an output that asked for WebCodecs is decoded in software, as ffplaykmp_decoder_fallback: sent with each snapshot.
+const FALLBACK_NONE = 0;
+const FALLBACK_UNSUPPORTED = 1;
+const FALLBACK_FAILED = 2;
+let webCodecsFallback = FALLBACK_NONE;
 const webCodecsPresentations = new Map();
 let playerMessageTail = Promise.resolve();
 
@@ -471,6 +476,7 @@ function pumpWebCodecs(module, previewOnly = false) {
 
 function fallbackFromWebCodecs(module, error) {
   if (!webCodecsActive) return;
+  webCodecsFallback = FALLBACK_FAILED;
   const message = `FFmpegKMP WebCodecs fallback: ${String(error?.stack || error)}`;
   console.warn(message);
   self.postMessage({ type: 'player-diagnostic', message });
@@ -490,7 +496,10 @@ function fallbackFromWebCodecs(module, error) {
 }
 
 async function configureWebCodecs(module, outputFlags) {
+  // Each return of false below leaves the output to software: FAILED unless the browser refused the stream.
+  webCodecsFallback = FALLBACK_FAILED;
   if (typeof VideoDecoder !== 'function' || typeof EncodedVideoChunk !== 'function') {
+    webCodecsFallback = FALLBACK_UNSUPPORTED;
     self.postMessage({
       type: 'player-diagnostic',
       message: 'FFmpegKMP WebCodecs unavailable: VideoDecoder or EncodedVideoChunk is missing',
@@ -504,6 +513,8 @@ async function configureWebCodecs(module, outputFlags) {
     0,
   );
   if (result < 0) {
+    // A codec WebCodecs has no name for.
+    if (result === ERROR_UNSUPPORTED) webCodecsFallback = FALLBACK_UNSUPPORTED;
     self.postMessage({
       type: 'player-diagnostic',
       message: `FFmpegKMP WebCodecs packet setup failed (${result})`,
@@ -538,6 +549,7 @@ async function configureWebCodecs(module, outputFlags) {
     return false;
   }
   if (!support.supported) {
+    webCodecsFallback = FALLBACK_UNSUPPORTED;
     module._ffplaykmp_web_player_close_packets(playerHandle);
     self.postMessage({
       type: 'player-diagnostic',
@@ -559,6 +571,7 @@ async function configureWebCodecs(module, outputFlags) {
   };
   webCodecsDecoder.configure(webCodecsConfig);
   webCodecsActive = true;
+  webCodecsFallback = FALLBACK_NONE;
   webCodecsPositionUs = 0;
   webCodecsQueueSerial = 0;
   webCodecsNeedsResumeSeek = false;
@@ -568,6 +581,7 @@ async function configureWebCodecs(module, outputFlags) {
   );
   if (outputResult < 0) {
     resetWebCodecs(module, true);
+    webCodecsFallback = FALLBACK_FAILED;
     self.postMessage({
       type: 'player-diagnostic',
       message: `FFmpegKMP WebCodecs output negotiation failed (${outputResult})`,
@@ -649,6 +663,7 @@ async function handlePlayerMessage(data) {
         self.postMessage({
           type: 'player-snapshot',
           snapshot: decodeUtf8(module.HEAPU8, json, Number(size)),
+          decoderFallback: webCodecsFallback,
         });
       }, 'viii');
       playerFrameCallback = module.addFunction(
@@ -736,6 +751,7 @@ async function handlePlayerMessage(data) {
       // The audio reads the input this replaces.
       closeAudio(module);
       resetWebCodecs(module, true);
+      webCodecsFallback = FALLBACK_NONE;
       const mount = (data.mounts || []).find(candidate => candidate.path === data.input);
       if (!mount?.bytes?.length) {
         throw new Error('Browser playback requires a non-empty mounted input');
@@ -762,6 +778,7 @@ async function handlePlayerMessage(data) {
     } else if (data.type === 'player-set-output') {
       // A new output replaces the WebCodecs decoder and the packet reader, if any: each output opens its own.
       resetWebCodecs(module, true);
+      webCodecsFallback = FALLBACK_NONE;
       const canTryWebCodecs = playerDecoderPreference !== 2 && (data.flags & 1) !== 0;
       if (canTryWebCodecs && await configureWebCodecs(module, data.flags)) {
         result = 0;
