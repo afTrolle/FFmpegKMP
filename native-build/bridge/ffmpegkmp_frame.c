@@ -545,9 +545,15 @@ struct ffmpegkmp_frame_pool {
     int references;
     /* Freed by its owner: what still holds it only returns frames. */
     int closed;
+    /* The next bounded pool of ffmpegkmp_rings. */
+    struct ffmpegkmp_frame_pool *next_ring;
 };
 
 static ffmpegkmp_frame_pool ffmpegkmp_shared_pool = { PTHREAD_MUTEX_INITIALIZER, PTHREAD_COND_INITIALIZER };
+
+/* Every bounded pool until it is destroyed, so ffmpegkmp_frame_is_ringed can tell a ring's memory. */
+static pthread_mutex_t ffmpegkmp_rings_lock = PTHREAD_MUTEX_INITIALIZER;
+static ffmpegkmp_frame_pool *ffmpegkmp_rings;
 
 static AVBufferRef *ffmpegkmp_pool_buffer_alloc(void *opaque, size_t size) {
     AVBufferRef *buffer = av_buffer_alloc(size);
@@ -558,6 +564,14 @@ static AVBufferRef *ffmpegkmp_pool_buffer_alloc(void *opaque, size_t size) {
 }
 
 static void ffmpegkmp_pool_destroy(ffmpegkmp_frame_pool *pool) {
+    ffmpegkmp_frame_pool **link;
+    if (pool->capacity) {
+        pthread_mutex_lock(&ffmpegkmp_rings_lock);
+        for (link = &ffmpegkmp_rings; *link != pool; link = &(*link)->next_ring)
+            continue;
+        *link = pool->next_ring;
+        pthread_mutex_unlock(&ffmpegkmp_rings_lock);
+    }
     pthread_cond_destroy(&pool->returned);
     pthread_mutex_destroy(&pool->lock);
     free(pool);
@@ -933,7 +947,30 @@ ffmpegkmp_frame_pool *ffmpegkmp_frame_pool_alloc(int32_t capacity) {
     }
     pool->capacity = capacity;
     pool->references = 1;
+    if (capacity) {
+        pthread_mutex_lock(&ffmpegkmp_rings_lock);
+        pool->next_ring = ffmpegkmp_rings;
+        ffmpegkmp_rings = pool;
+        pthread_mutex_unlock(&ffmpegkmp_rings_lock);
+    }
     return pool;
+}
+
+/*
+ * A bounded pool's buffers carry the pool as their opaque, and the pool lives
+ * while any of them is out, so a frame whose opaque is a listed pool is one of
+ * its frames: no other live object can share the pool's address.
+ */
+int ffmpegkmp_frame_is_ringed(const AVFrame *frame) {
+    const void *opaque = frame->buf[0] ? av_buffer_get_opaque(frame->buf[0]) : NULL;
+    const ffmpegkmp_frame_pool *pool;
+    if (!opaque)
+        return 0;
+    pthread_mutex_lock(&ffmpegkmp_rings_lock);
+    for (pool = ffmpegkmp_rings; pool && pool != opaque; pool = pool->next_ring)
+        continue;
+    pthread_mutex_unlock(&ffmpegkmp_rings_lock);
+    return pool != NULL;
 }
 
 void ffmpegkmp_frame_pool_free(ffmpegkmp_frame_pool *pool) {
