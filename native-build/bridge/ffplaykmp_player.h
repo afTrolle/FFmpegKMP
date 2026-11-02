@@ -46,6 +46,20 @@ typedef enum ffplaykmp_decoder_kind {
 } ffplaykmp_decoder_kind;
 
 /*
+ * Why a player whose output wanted a hardware decoder decodes in software:
+ * this host has no hardware decoder for the stream, opening or decoding with
+ * it failed, after which AUTO keeps to software for the source, or the
+ * process's hardware decoder budget (ffplaykmp_decoder_budget_set) was full
+ * when the decoder opened.
+ */
+typedef enum ffplaykmp_decoder_fallback {
+    FFPLAYKMP_DECODER_FALLBACK_NONE = 0,
+    FFPLAYKMP_DECODER_FALLBACK_UNSUPPORTED = 1,
+    FFPLAYKMP_DECODER_FALLBACK_FAILED = 2,
+    FFPLAYKMP_DECODER_FALLBACK_BUDGET = 3,
+} ffplaykmp_decoder_fallback;
+
+/*
  * Dynamic-metadata signalling a stream carries, as bits of ffplaykmp_snapshot.hdr_flags. Whether the
  * picture is HDR follows from color_transfer, never from these.
  */
@@ -69,6 +83,8 @@ typedef enum ffplaykmp_error {
     FFPLAYKMP_ERROR_TIMED_OUT = -1007,
     /* Every frame of a decoder's ring is held by the caller; the call fails and the decoder stays usable. */
     FFPLAYKMP_ERROR_RING_FULL = -1008,
+    /* Every hardware decoder the process's budget allows is open; REQUIRE_HARDWARE fails with it. */
+    FFPLAYKMP_ERROR_BUSY = -1009,
 } ffplaykmp_error;
 
 typedef enum ffplaykmp_source_flags {
@@ -92,6 +108,16 @@ typedef struct ffplaykmp_configuration {
      * for FFmpeg's automatic count capped at 8. Hardware decoders ignore it.
      */
     int32_t decoder_threads;
+    /*
+     * How long the player keeps its video decoder once it has nothing to
+     * decode (paused, ended, waiting for an output, or after a preview), so
+     * that a play or seek soon after needs no new one: 0 releases it as soon as
+     * the player is idle, a negative value keeps it until the source, the
+     * output's decoder or the Surface changes. ffplaykmp_configuration_default
+     * sets 2 s. The decoder that is released frees its frames and threads; the
+     * next play or seek opens one and decodes from the keyframe.
+     */
+    int64_t codec_release_delay_us;
 } ffplaykmp_configuration;
 
 typedef struct ffplaykmp_output_capabilities {
@@ -137,6 +163,8 @@ typedef struct ffplaykmp_snapshot {
     uint32_t max_content_light_level;
     uint32_t max_frame_average_light_level;
     uint64_t dropped_frames;
+    /* Why the open decoder is not the hardware one the output wanted; NONE while it is, or none was wanted. */
+    ffplaykmp_decoder_fallback decoder_fallback;
 } ffplaykmp_snapshot;
 
 /* One reference to a decoded frame (ffmpegkmp_frame.h). */
@@ -145,8 +173,9 @@ struct ffmpegkmp_frame;
 typedef struct ffplaykmp_video_frame {
     uint32_t size;
     /*
-     * The frame as decoded, hardware frames downloaded. Borrowed for the
-     * duration of the callback: ffmpegkmp_frame_ref it to keep it.
+     * The frame as decoded. A desktop hardware frame is downloaded on its
+     * first map or conversion, once, into memory the player reuses. Borrowed
+     * for the duration of the callback: ffmpegkmp_frame_ref it to keep it.
      */
     const struct ffmpegkmp_frame *frame;
     int32_t width;
@@ -281,6 +310,85 @@ FFPLAYKMP_EXPORT int ffplaykmp_player_get_snapshot(
         ffplaykmp_snapshot *snapshot);
 
 /*
+ * What prepare's probe of the player's input found, for the audio engine to
+ * open the same input without probing it again
+ * (ffmpegkmp_player_open_hinted): its demuxer, where its media time starts
+ * and how long it is, as the player measures them, and how many audio
+ * streams it has.
+ */
+typedef struct ffplaykmp_input_hint {
+    uint32_t size;
+    /* AVInputFormat.name, such as "mov,mp4,m4a,3gp,3g2,mj2". */
+    char format_name[64];
+    /* The container's start, from which both engines measure media time. */
+    int64_t start_us;
+    /* Negative when the container does not say. */
+    int64_t duration_us;
+    int32_t audio_streams;
+} ffplaykmp_input_hint;
+
+FFPLAYKMP_EXPORT void ffplaykmp_input_hint_init(ffplaykmp_input_hint *hint);
+/*
+ * Fills `hint` from the source the last prepare probed, or returns
+ * FFPLAYKMP_ERROR_INVALID_STATE when none is prepared (before prepare, after
+ * stop, or after a failed prepare).
+ */
+FFPLAYKMP_EXPORT int ffplaykmp_player_get_input_hint(
+        const ffplaykmp_player *player,
+        ffplaykmp_input_hint *hint);
+
+/* What the players and decoders of the process have done since it started, for tests and benchmarks. */
+typedef struct ffplaykmp_statistics {
+    uint32_t size;
+    /* Video decoders opened, hardware and software, by players and decoders alike. */
+    uint64_t codec_opens;
+    /* Of those, the ones closed again. */
+    uint64_t codec_closes;
+    /* Video packets the players read from their inputs. */
+    uint64_t video_packets;
+    /* Hardware frames downloaded into memory. */
+    uint64_t downloads;
+    /* Demuxers opened, by players, decoders and the audio engine alike. */
+    uint64_t input_opens;
+    /* Of those, the ones probed (avformat_find_stream_info): all but an audio open a player's probe let skip its own. */
+    uint64_t input_probes;
+} ffplaykmp_statistics;
+
+FFPLAYKMP_EXPORT void ffplaykmp_statistics_init(ffplaykmp_statistics *statistics);
+FFPLAYKMP_EXPORT void ffplaykmp_get_statistics(ffplaykmp_statistics *statistics);
+
+/*
+ * The process's budget of hardware video decoders, shared by every player and
+ * pull decoder (ffmpegkmp_decoder.h): at most `hardware_decoders` are open at
+ * once, 0 for no limit. A decoder takes its place when it opens and gives it
+ * back when it closes, which a player does once it has been idle for its
+ * codec_release_delay_us. A decoder that finds the budget full opens in
+ * software under FFPLAYKMP_DECODER_AUTO, reporting
+ * FFPLAYKMP_DECODER_FALLBACK_BUDGET, and fails with FFPLAYKMP_ERROR_BUSY under
+ * REQUIRE_HARDWARE; nothing waits for a place. Lowering the limit closes no
+ * open decoder: the next ones open in software until fewer are open. Returns
+ * FFPLAYKMP_ERROR_INVALID_ARGUMENT for a negative limit. The default is 8 on
+ * macOS, where VideoToolbox gives sixteen 4K decoders a session each and then
+ * decodes a few frames a second on every one, 4 on Android, where a phone opens
+ * eight 4K MediaCodec decoders and fails the next, and on iOS, 8 on other
+ * desktops, and 0 in the browser, whose player decodes in software only.
+ */
+FFPLAYKMP_EXPORT int ffplaykmp_decoder_budget_set(int32_t hardware_decoders);
+/* The budget's limit, 0 for none. */
+FFPLAYKMP_EXPORT int32_t ffplaykmp_decoder_budget_get(void);
+/* The hardware decoders open now, by players and pull decoders together. */
+FFPLAYKMP_EXPORT int32_t ffplaykmp_decoder_budget_in_use(void);
+/*
+ * Whether the platform has a hardware decoder for the codec FFmpeg names
+ * `codec_name` ("h264", "hevc", "vp9", "av1", ...): 1 if it has, 0 if not.
+ * Only Apple's platforms say, through VideoToolbox, which answers per codec,
+ * not per size, and not how many may be open at once; elsewhere, and for a
+ * name FFmpeg does not know, it returns FFPLAYKMP_ERROR_UNSUPPORTED. Android
+ * asks MediaCodecList from Kotlin. FFPLAYKMP_ERROR_INVALID_ARGUMENT for null.
+ */
+FFPLAYKMP_EXPORT int ffplaykmp_hardware_decoder_available(const char *codec_name);
+
+/*
  * Flat callback facade used by the browser worker. It keeps C structure layout out of
  * JavaScript/Wasm interop while still running the exact same per-player engine.
  */
@@ -319,36 +427,79 @@ typedef void (*ffplaykmp_web_encoded_packet_callback)(
         int64_t pts,
         int64_t duration);
 
+/* `decoder_threads` and `codec_release_delay_us` are ffplaykmp_configuration's. */
 FFPLAYKMP_EXPORT ffplaykmp_player *ffplaykmp_web_player_create(
         int32_t decoder_preference,
         int32_t decoder_threads,
+        int64_t codec_release_delay_us,
         ffplaykmp_web_state_callback state_callback,
         ffplaykmp_web_video_frame_callback frame_callback,
         void *opaque);
 FFPLAYKMP_EXPORT void ffplaykmp_web_player_destroy(ffplaykmp_player *player);
+/*
+ * Prepares the `size` bytes at `bytes` as the player's input, opened and
+ * probed once and kept until the next prepare, stop or destroy. The player
+ * takes `bytes` over, whatever it returns: they must come from malloc (the
+ * worker's _malloc), the caller neither frees nor touches them again, and the
+ * player frees them with the next prepare or destroy. So the input lies in
+ * the heap once.
+ */
 FFPLAYKMP_EXPORT int ffplaykmp_web_player_prepare_bytes(
         ffplaykmp_player *player,
-        const uint8_t *bytes,
+        uint8_t *bytes,
         uint32_t size,
         const char *extension,
         uint32_t source_flags);
+/*
+ * The software output's frames: converted to RGBA once each, into one of two
+ * buffers the page reads in turn, so a frame is never copied within the heap.
+ */
 FFPLAYKMP_EXPORT int ffplaykmp_web_player_set_output(
         ffplaykmp_player *player,
         uint32_t output_flags);
 FFPLAYKMP_EXPORT void ffplaykmp_web_player_poll(ffplaykmp_player *player);
+/*
+ * Converts the software output's frames to `width` x `height`, the size the
+ * page draws them at, from the next frame on; 0 x 0, the default, for each
+ * frame's own size. A size larger than the frame, or not at its aspect to
+ * within rounding (one asked for another source), gives the frame's own. The
+ * frames keep their display aspect (ffmpegkmp_scaled_aspect).
+ */
+FFPLAYKMP_EXPORT void ffplaykmp_web_player_set_frame_size(ffplaykmp_player *player, int32_t width, int32_t height);
+/* How often the player opened its input: once a prepare, the packet reader's included. */
+FFPLAYKMP_EXPORT uint32_t ffplaykmp_web_player_input_opens(ffplaykmp_player *player);
+/* ffplaykmp_statistics.input_probes, for the worker: the inputs its players, decoders and audio probed. */
+FFPLAYKMP_EXPORT uint32_t ffplaykmp_web_input_probes(void);
 /**
- * Opens the prepared source as a packet stream for WebCodecs. The callbacks run
- * synchronously on the calling browser worker and borrowed bytes are valid only
- * for the duration of each callback.
+ * Reads the prepared input as a packet stream for WebCodecs: the input
+ * prepare opened, from the start of its video stream, with no second open
+ * (unless a failed software run closed it). It ends any software playback
+ * first; the two outputs are exclusive, and a
+ * software output (ffplaykmp_web_player_set_output) closes the packets. The
+ * callbacks run synchronously on the calling browser worker and borrowed bytes
+ * are valid only for the duration of each callback.
  */
 FFPLAYKMP_EXPORT int ffplaykmp_web_player_open_packets(
         ffplaykmp_player *player,
+        ffplaykmp_web_decoder_config_callback callback,
+        void *opaque);
+/*
+ * ffplaykmp_web_player_prepare_bytes, without an output, then
+ * ffplaykmp_web_player_open_packets: a demuxer for a decoder, which opens its
+ * input once. Takes `bytes` over as prepare_bytes does.
+ */
+FFPLAYKMP_EXPORT int ffplaykmp_web_player_prepare_packets(
+        ffplaykmp_player *player,
+        uint8_t *bytes,
+        uint32_t size,
+        const char *extension,
         ffplaykmp_web_decoder_config_callback callback,
         void *opaque);
 FFPLAYKMP_EXPORT int ffplaykmp_web_player_read_packet(
         ffplaykmp_player *player,
         ffplaykmp_web_encoded_packet_callback callback,
         void *opaque);
+/* Leaves the input where the packets left it; a software run after it seeks. */
 FFPLAYKMP_EXPORT void ffplaykmp_web_player_close_packets(ffplaykmp_player *player);
 /*
  * The packet reader's stream timing, for a caller that decodes frame by frame: `values` takes

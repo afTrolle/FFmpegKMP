@@ -206,6 +206,36 @@ class FFplayFrameBoundaryTest {
         player.close()
     }
 
+    /**
+     * The size an output draws frames at reaches the bridge, the browser's worker converting to it, while the output
+     * is attached; detaching it, or attaching another, goes back to the frames' own size.
+     */
+    @Test
+    fun theDrawnFrameSizeReachesTheBridgeWhileItsOutputIsAttached() = runTest {
+        val harness = FrameBridgeHarness()
+        val player = harness.player()
+        val output = SizingOutput()
+        player.attachOutput(output)
+        player.prepare(MediaSource("movie.mp4"))
+        assertEquals(listOf(0 to 0), harness.frameSizes())
+
+        output.draws(64, 36)
+        output.draws(32, 18)
+        assertEquals(listOf(0 to 0, 64 to 36, 32 to 18), harness.frameSizes())
+
+        val next = SizingOutput()
+        player.attachOutput(next)
+        output.draws(16, 9)
+        next.draws(128, 72)
+        assertEquals(listOf(0 to 0, 64 to 36, 32 to 18, 0 to 0, 128 to 72), harness.frameSizes())
+
+        player.detachOutput(next)
+        next.draws(64, 36)
+        assertEquals(0 to 0, harness.frameSizes().last())
+        assertEquals(6, harness.frameSizes().size)
+        player.close()
+    }
+
     @Test
     fun nativeOutputFailureRemainsFailedAfterCapabilitiesAreCleared() = runTest {
         val harness = FrameBridgeHarness()
@@ -263,6 +293,8 @@ private class FrameBridgeHarness {
         bridge.nextOutputFailure = errorCode
     }
 
+    fun frameSizes(): List<Pair<Int, Int>> = bridge.frameSizes
+
 }
 
 private class ControllablePlayerBridge(
@@ -276,6 +308,11 @@ private class ControllablePlayerBridge(
         private set
     var rejectedPlatformTarget: Any? = null
     var nextOutputFailure: Int? = null
+    val frameSizes = mutableListOf<Pair<Int, Int>>()
+
+    override fun setFrameSize(width: Int, height: Int) {
+        frameSizes += width to height
+    }
 
     fun emitFrame(serial: UInt) {
         frame(NativeVideoFrame(frame = PixelFreeFrame(), width = 2, height = 2, presentationTimeUs = 0, queueSerial = serial))
@@ -314,6 +351,28 @@ private class ControllablePlayerBridge(
     override fun cancel() = delegate.cancel()
     override fun snapshot(): NativePlayerSnapshot = delegate.snapshot()
     override fun close() = delegate.close()
+}
+
+/** A software output that tells the engine each size it is drawn at. */
+private class SizingOutput : FFplayVideoOutput {
+    override val kind = FFplayRendererKind.COMPOSE_CANVAS
+    override val capabilities = FFplayOutputCapabilities()
+    private var sink: ((Int, Int) -> Unit)? = null
+
+    fun draws(width: Int, height: Int) {
+        sink?.invoke(width, height)
+    }
+
+    override fun bindFrameSize(sink: ((width: Int, height: Int) -> Unit)?) {
+        this.sink = sink
+    }
+
+    override fun submitNative(frame: VideoFrame, video: VideoInfo?): Boolean {
+        frame.close()
+        return true
+    }
+
+    override fun discard() = Unit
 }
 
 private class PlatformOutput(

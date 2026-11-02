@@ -16,18 +16,20 @@ import kotlinx.cinterop.interpretCPointer
 import org.jetbrains.skia.Bitmap
 import org.jetbrains.skia.ImageInfo
 
+internal actual val bitmapsScale: Boolean = true
+
 /**
  * Converts the frame straight into the bitmap's own pixels (`peekPixels().addr`), which the first
- * call allocates.
+ * call allocates, scaling it to [info]'s size in the same pass.
  */
 internal fun VideoFrame.fillBitmap(bitmap: Bitmap, info: ImageInfo, format: FrameFormat) {
     if (bitmap.isNull) {
-        check(bitmap.allocPixels(info)) { "Skia could not allocate a ${width}x$height ${info.colorType} bitmap" }
+        check(bitmap.allocPixels(info)) { "Skia could not allocate a ${info.width}x${info.height} ${info.colorType} bitmap" }
     }
-    val pixels = checkNotNull(bitmap.peekPixels()) { "Skia has no pixels for a ${width}x$height bitmap" }
+    val pixels = checkNotNull(bitmap.peekPixels()) { "Skia has no pixels for a ${info.width}x${info.height} bitmap" }
     try {
         val address = checkNotNull(interpretCPointer<ByteVar>(pixels.addr)) { "Skia has no pixels for a bitmap" }
-        VideoFrame.of(wrapNativeFrame(format.toNative(), width, height, address, pixels.rowBytes), pts, duration)
+        VideoFrame.of(wrapNativeFrame(format.toNative(), info.width, info.height, address, pixels.rowBytes), pts, duration)
             .use { target -> convertInto(target) }
     } finally {
         pixels.close()

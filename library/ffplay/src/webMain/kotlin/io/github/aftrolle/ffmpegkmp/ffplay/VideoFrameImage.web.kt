@@ -9,6 +9,12 @@ import org.jetbrains.skia.Bitmap
 import org.jetbrains.skia.ImageInfo
 
 /**
+ * The browser copies frames of the bitmap's size only. A player's worker converts its frames at the
+ * size they are drawn at instead, which the Canvas outputs tell it (BridgeFrameSize).
+ */
+internal actual val bitmapsScale: Boolean = false
+
+/**
  * The browser's frames are RGBA8 in Kotlin memory, the bytes the FFmpeg worker transferred, and
  * Skia's are in its own heap: [Bitmap.installPixels] copies them across once, into new pixels
  * that replace the bitmap's earlier ones.

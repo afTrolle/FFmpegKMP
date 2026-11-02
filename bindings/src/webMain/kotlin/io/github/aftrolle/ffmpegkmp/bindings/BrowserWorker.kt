@@ -22,7 +22,7 @@ internal fun startBrowserPlayerWorker(
     configuration: NativePlayerConfiguration,
     listener: BrowserPlayerWorkerListener,
 ): BrowserPlayerWorker {
-    val onSnapshot: (String) -> Unit = listener::onSnapshot
+    val onSnapshot: (String, Int) -> Unit = listener::onSnapshot
     val onFrame: (JsAny) -> Unit = { data ->
         listener.onFrame(
             bytes = int8ArrayToByteArray(playerFrameBytes(data)),
@@ -49,6 +49,7 @@ internal fun startBrowserPlayerWorker(
         startPlayerWorker(
             configuration.decoderPreference.ordinal,
             configuration.decoderThreads,
+            configuration.codecReleaseDelayUs.toDouble(),
             onSnapshot,
             onFrame,
             onPlatformFrame,
@@ -69,6 +70,7 @@ private class WebBrowserPlayerWorker(private val controller: JsAny) : BrowserPla
 
     override fun setOutput(flags: Int) = postPlayerCommand(controller, "player-set-output", flags, 0L)
     override fun clearOutput() = postPlayerCommand(controller, "player-clear-output", 0, 0L)
+    override fun setFrameSize(width: Int, height: Int) = postPlayerFrameSize(controller, width, height)
     override fun play() = postPlayerCommand(controller, "player-play", 0, 0L)
     override fun pause() = postPlayerCommand(controller, "player-pause", 0, 0L)
     override fun seek(positionUs: Long) = postPlayerCommand(controller, "player-seek", 0, positionUs)
@@ -112,7 +114,8 @@ private fun pushMount(mounts: JsAny, path: String, bytes: JsAny): Unit = js("mou
 private fun startPlayerWorker(
     decoderPreference: Int,
     decoderThreads: Int,
-    onSnapshot: (String) -> Unit,
+    codecReleaseDelayUs: Double,
+    onSnapshot: (String, Int) -> Unit,
     onFrame: (JsAny) -> Unit,
     onPlatformFrame: (JsAny) -> Boolean,
     onFailure: (String) -> Unit,
@@ -147,7 +150,7 @@ private fun startPlayerWorker(
           for (const [message, transfers] of pending.splice(0)) {
             worker.postMessage({ ...message, moduleUrl }, transfers);
           }
-        } else if (data.type === 'player-snapshot') onSnapshot(data.snapshot);
+        } else if (data.type === 'player-snapshot') onSnapshot(data.snapshot, data.decoderFallback | 0);
         else if (data.type === 'player-frame') onFrame(data);
         else if (data.type === 'player-diagnostic') console.warn(data.message);
         else if (data.type === 'player-video-frame') {
@@ -159,7 +162,7 @@ private fun startPlayerWorker(
       worker.onerror = event => {
         onFailure(event.message || `Could not load the FFmpegKMP player worker at ${'$'}{workerUrl}`);
       };
-      controller.post({ type: 'player-init', decoderPreference, decoderThreads });
+      controller.post({ type: 'player-init', decoderPreference, decoderThreads, codecReleaseDelayUs });
       return controller;
     })()
     """,
@@ -178,6 +181,9 @@ private fun postPlayerCommand(controller: JsAny, type: String, flags: Int, posit
 
 private fun postPlayerCommand(controller: JsAny, type: String, flags: Int, positionUs: String): Unit =
     js("controller.post({ type, flags, positionUs })")
+
+private fun postPlayerFrameSize(controller: JsAny, width: Int, height: Int): Unit =
+    js("controller.post({ type: 'player-frame-size', width, height })")
 
 private fun terminateWorker(controller: JsAny): Unit = js("controller.terminate()")
 

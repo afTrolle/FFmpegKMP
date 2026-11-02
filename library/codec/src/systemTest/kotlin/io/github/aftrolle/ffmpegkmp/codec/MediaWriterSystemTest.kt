@@ -29,6 +29,7 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.launch
@@ -318,6 +319,25 @@ class MediaWriterSystemTest {
         assertEquals(48_000, audio.sampleRate)
         assertEquals(2, audio.channels)
         assertEquals(1, streams.count { it.codecType == "video" })
+    }
+
+    @Test
+    fun framesFromADecodersRingGoBackOnceWritten() = runBlocking {
+        val config = VideoEncoderConfig(128, 128, FrameRate(30))
+        if (!encodes(config)) return@runBlocking
+        MediaWriter.open(MediaOutput.File((directory / "ring.mp4").toString())).use { writer ->
+            val track = writer.addVideoTrack(config)
+            // In the track's input format, but from the decoder's ring: an encoder that keeps its input
+            // (VideoToolbox, until it gives the frame's packet) would hold the ring the decoder needs.
+            decoder("cfr-30-h264-128.mp4", VideoOutput.Memory(track.inputFormat)).use { decoder ->
+                for (index in 0 until 3) track.write(decoder.frameAt(1.seconds * index / 30))
+                writer.progress.first { it.videoFrames == 3L }
+                val held = (3 until 6).map { index -> decoder.frameAt(1.seconds * index / 30) }
+                assertEquals(listOf(3, 4, 5), held.map { it.number() })
+                held.forEach(VideoFrame::close)
+            }
+            assertEquals(3, writer.finish().videoFrames)
+        }
     }
 
     @Test

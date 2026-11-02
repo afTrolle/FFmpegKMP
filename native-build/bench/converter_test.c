@@ -986,7 +986,7 @@ static int check_matrix_only(const char *fixtures, const char *clip) {
     int y;
     snprintf(path, sizeof(path), "%s/%s", fixtures, clip);
     source = first_frame(path);
-    if (!source || !rgba || !converter || ffplaykmp_rgb_output(rgba, source, AV_PIX_FMT_RGBA, 0) < 0 ||
+    if (!source || !rgba || !converter || ffplaykmp_rgb_output(rgba, source, AV_PIX_FMT_RGBA, 0, 0, 0) < 0 ||
             ffmpegkmp_frame_convert(converter, rgba, source) < 0) {
         printf("FAIL %s matrix-only RGBA8: convert failed\n", clip);
         return 1;

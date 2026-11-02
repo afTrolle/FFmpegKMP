@@ -2,12 +2,14 @@
 package io.github.aftrolle.ffmpegkmp.ffplay
 
 import io.github.aftrolle.ffmpegkmp.codec.ColorPrimaries
+import io.github.aftrolle.ffmpegkmp.codec.DecoderFallbackReason
 import io.github.aftrolle.ffmpegkmp.codec.DecoderKind
 import io.github.aftrolle.ffmpegkmp.codec.CodecPreference
 import io.github.aftrolle.ffmpegkmp.codec.DecoderThreads
 import io.github.aftrolle.ffmpegkmp.codec.VideoInfo
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.ZERO
+import kotlin.time.Duration.Companion.seconds
 
 /** Whether a source's decoded pixels may leave a platform-protected path. */
 public enum class FFplayContentProtection {
@@ -44,7 +46,24 @@ public data class FFplayConfiguration(
     val audio: Boolean = true,
     /** The software video decoder's threads; see [DecoderThreads]. */
     val threads: DecoderThreads = DecoderThreads.Auto,
-)
+    /**
+     * How long the player keeps its video decoder once it has nothing to decode: paused, ended,
+     * waiting for an output, or showing a seek's frame. A play or seek within it uses that decoder,
+     * going on from the frame on screen where it can; one after it opens a decoder and decodes from
+     * the keyframe before the position. Releasing frees the decoder's frames and threads, and a
+     * hardware decoder's place in [io.github.aftrolle.ffmpegkmp.codec.DecoderBudget] for other
+     * players and video decoders; the frame on screen stays. [Duration.ZERO] releases it as soon as
+     * nothing decodes; null keeps it, and its place in the budget, until the source, the output or
+     * its surface changes.
+     */
+    val releaseDecoderWhenPaused: Duration? = 2.seconds,
+) {
+    init {
+        require(releaseDecoderWhenPaused == null || !releaseDecoderWhenPaused.isNegative()) {
+            "The decoder release delay must not be negative: $releaseDecoderWhenPaused"
+        }
+    }
+}
 
 public enum class FFplayState {
     IDLE,
@@ -72,6 +91,8 @@ public data class FFplayOutputInfo(
     val outputColorSpace: ColorPrimaries? = null,
     val hdrResult: FFplayHdrResult = FFplayHdrResult.NOT_HDR,
     val securePath: Boolean = false,
+    /** Why [decoder] is software when the output wanted hardware; null when it is not, or none was wanted. */
+    val decoderFallback: DecoderFallbackReason? = null,
 )
 
 public data class FFplayFailure(
@@ -94,7 +115,11 @@ public sealed interface FFplayEvent {
     public val message: String
 
     public data class Warning(override val message: String) : FFplayEvent
-    public data class DecoderFallback(override val message: String) : FFplayEvent
+    /** Hardware decoding was wanted and software decodes instead, for [reason]; mirrored by [FFplayOutputInfo.decoderFallback]. */
+    public data class DecoderFallback(
+        override val message: String,
+        val reason: DecoderFallbackReason = DecoderFallbackReason.FAILED,
+    ) : FFplayEvent
     public data class RendererFallback(override val message: String) : FFplayEvent
     public data class SurfaceLost(override val message: String) : FFplayEvent
     public data class ProtectionRequired(override val message: String) : FFplayEvent

@@ -58,6 +58,21 @@ int ffplaykmp_parse_resource_id(const char *input, int64_t *resource_id);
 
 /* Opens and probes `url`; on failure the caller still closes `input`. */
 int ffplaykmp_open_input(const ffplaykmp_io_host *host, const char *url, ffplaykmp_input *input);
+/*
+ * Opens `url` with the demuxer `format`, or the one its first bytes suggest
+ * when NULL, and reads its header without probing its streams: what the
+ * header leaves out (a pixel or sample format, or a stream a headerless
+ * container has not shown yet) and the container's start and duration stay
+ * unknown until ffplaykmp_probe_input. On failure the caller still closes
+ * `input`.
+ */
+int ffplaykmp_open_input_unprobed(
+        const ffplaykmp_io_host *host,
+        const char *url,
+        const AVInputFormat *format,
+        ffplaykmp_input *input);
+/* Probes the streams of an input opened unprobed (avformat_find_stream_info), reading and decoding their start. */
+int ffplaykmp_probe_input(ffplaykmp_input *input);
 void ffplaykmp_close_input(ffplaykmp_input *input);
 
 /*
@@ -96,6 +111,8 @@ typedef struct ffplaykmp_video_codec {
     AVCodecContext *decoder;
     int stream_index;
     int hardware;
+    /* Holds one of the hardware decoder budget's places, which closing gives back. */
+    int leased;
 #if defined(__ANDROID__)
     AVMediaCodecContext *mediacodec_context;
 #else
@@ -124,7 +141,11 @@ int ffplaykmp_decoder_thread_count(int threads);
  * Opens `stream_index`'s decoder. When `hardware` is requested but this host
  * has no hardware decoder for the codec, the software decoder is opened and
  * codec->hardware stays 0; `require_hardware` turns that into
- * FFPLAYKMP_ERROR_UNSUPPORTED instead. A software decoder decodes with
+ * FFPLAYKMP_ERROR_UNSUPPORTED instead. A hardware decoder takes a place in the
+ * process's budget (ffplaykmp_decoder_budget_set), held until the codec
+ * closes or its open fails; with the budget full the call opens nothing and
+ * returns FFPLAYKMP_ERROR_BUSY, leaving the software retry, or the failure, to
+ * the caller. A software decoder decodes with
  * ffplaykmp_decoder_thread_count(`threads`) threads of `thread_type`:
  * FF_THREAD_FRAME | FF_THREAD_SLICE as ffplay's `-threads` sets them, where
  * FFmpeg takes frame threading wherever the codec has it and keeps about one
@@ -221,16 +242,25 @@ AVRational ffmpegkmp_scaled_aspect(AVRational aspect, int width, int height, int
 
 /*
  * Prepares `output` for one of the bridge's CPU outputs of `source`: packed
- * RGBA (AV_PIX_FMT_RGBA) or RGBA half floats (AV_PIX_FMT_RGBAF16) at the
- * source's size, reusing its buffer when it can. RGBA F16 is linear extended
- * sRGB. RGBA keeps the source's primaries and transfer, so only the matrix
- * changes, except that with `tone_map_hdr` PQ and HLG sources are tone mapped
- * to sRGB.
+ * RGBA (AV_PIX_FMT_RGBA) or RGBA half floats (AV_PIX_FMT_RGBAF16) of `width`
+ * x `height`, or of the source's size for 0 x 0, reusing its buffer when it
+ * can. RGBA F16 is linear extended sRGB. RGBA keeps the source's primaries
+ * and transfer, so only the matrix changes, except that with `tone_map_hdr`
+ * PQ and HLG sources are tone mapped to sRGB.
  */
-int ffplaykmp_rgb_output(AVFrame *output, const AVFrame *source, enum AVPixelFormat format, int tone_map_hdr);
+int ffplaykmp_rgb_output(
+        AVFrame *output,
+        const AVFrame *source,
+        enum AVPixelFormat format,
+        int width,
+        int height,
+        int tone_map_hdr);
 
 /* Downloads a hardware frame into `software`, keeping the frame properties. */
 int ffplaykmp_download_frame(AVFrame *software, const AVFrame *hardware);
+
+/* Counts a video packet a player read, for ffplaykmp_get_statistics. */
+void ffplaykmp_count_video_packet(void);
 
 /*
  * Frame handles (ffmpegkmp_frame.c). A handle is one reference to an AVFrame;
@@ -240,6 +270,8 @@ struct ffmpegkmp_frame {
     AVFrame *frame;
     /* A hardware frame's download, made on its first map or conversion. */
     AVFrame *download;
+    /* Where the download takes its buffer while one is free; NULL for a new one (ffmpegkmp_frame_set_download_pool). */
+    ffmpegkmp_frame_pool *download_pool;
     /* CVPixelBuffer read locks the handle's maps hold. */
     int locks;
     /* A map for writing is open (ffmpegkmp_frame_map_writable). */
@@ -266,6 +298,22 @@ ffmpegkmp_frame *ffmpegkmp_frame_from_av(const AVFrame *frame);
  */
 ffmpegkmp_frame_pool *ffmpegkmp_frame_pool_alloc(int32_t capacity);
 void ffmpegkmp_frame_pool_free(ffmpegkmp_frame_pool *pool);
+/* Drops a reference ffmpegkmp_frame_set_download_pool took; NULL is a no-op. */
+void ffmpegkmp_pool_release(ffmpegkmp_frame_pool *pool);
+
+/*
+ * Downloads `hardware` into `software`, an empty frame, keeping the frame
+ * properties: into a buffer of `pool` while it has one free for the layout and
+ * size, never a CVPixelBuffer, and otherwise (or with `pool` NULL) into a new one.
+ */
+int ffmpegkmp_download_into_pool(ffmpegkmp_frame_pool *pool, AVFrame *software, const AVFrame *hardware);
+
+/*
+ * Makes `frame`'s download, and that of every reference made from it, take
+ * its buffer from `pool` while one is free. The handle keeps the pool alive;
+ * a pool its owner has freed gives none.
+ */
+void ffmpegkmp_frame_set_download_pool(ffmpegkmp_frame *frame, ffmpegkmp_frame_pool *pool);
 
 /*
  * ffmpegkmp_frame_pool_get, except that a full ring fails with
@@ -281,7 +329,8 @@ int ffmpegkmp_frame_pool_take(
 
 /*
  * Converts `source` into `destination` with `converter`, reading a
- * CVPixelBuffer in place and downloading other hardware frames. The
+ * CVPixelBuffer in place and downloading other hardware frames, into a buffer
+ * of `download_pool` (may be NULL; see ffmpegkmp_download_into_pool). The
  * destination keeps its format, except that with `keep_colour` it takes the
  * source's colour: a layout-only conversion. Otherwise SDR curves convert as
  * they are shown, without a curve change: BT.709-coded video is sRGB.
@@ -290,6 +339,7 @@ int ffmpegkmp_frame_convert_with(
         ffmpegkmp_converter *converter,
         ffmpegkmp_frame *destination,
         const AVFrame *source,
+        ffmpegkmp_frame_pool *download_pool,
         int keep_colour);
 
 /* Whether `format` names a layout and colour of the model; RGB layouts take the RGB matrix. */
@@ -297,6 +347,9 @@ int ffmpegkmp_frame_format_is_valid(const ffmpegkmp_frame_format *format);
 
 /* Whether `frame` is a CVPixelBuffer the bridge can lock: VideoToolbox's, or from a frame pool. */
 int ffmpegkmp_frame_is_pixel_buffer(const AVFrame *frame);
+
+/* Whether `frame`'s memory is a bounded pool's (a decoder's ring), which stays taken while anything references it. */
+int ffmpegkmp_frame_is_ringed(const AVFrame *frame);
 
 /* Counts pixel memory the bridge allocated, for ffmpegkmp_frame_get_statistics. */
 void ffmpegkmp_frame_count_allocation(size_t bytes);

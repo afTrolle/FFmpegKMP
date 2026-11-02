@@ -13,8 +13,10 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.viewinterop.HtmlElementView
 import io.github.aftrolle.ffmpegkmp.codec.ColorPrimaries
 import io.github.aftrolle.ffmpegkmp.codec.VideoFrame
@@ -32,14 +34,17 @@ internal actual fun PlatformFFplaySurface(
     modifier: Modifier,
     contentScale: ContentScale,
     backgroundColor: Color,
+    resolution: IntSize?,
 ) {
     // Drawn on the Compose canvas, a video stacks, clips and blends with the composables around it; the HTML canvas
     // below sits above all of them.
     if (player.configuration.outputPreference == FFplayOutputPreference.COMPOSE_CANVAS) {
-        ComposeCanvasFFplaySurface(player, modifier, contentScale, backgroundColor)
+        ComposeCanvasFFplaySurface(player, modifier, contentScale, backgroundColor, resolution)
         return
     }
     val output = remember(player) { WebCanvasOutput() }
+    output.contentScale = contentScale
+    output.resolution = resolution
     output.scaleMode = contentScale.webScaleMode()
     output.background = backgroundColor.cssColor()
     DisposableEffect(player, output) {
@@ -72,12 +77,24 @@ private class WebCanvasOutput : FFplayVideoOutput {
         colorSpaces = setOf(ColorPrimaries.BT709),
         toneMapHdrToSdr = true,
     )
+    var contentScale: ContentScale = ContentScale.Fit
+
+    /** The size the picture is rendered at, which the worker converts frames to; null for the canvas's size. */
+    var resolution: IntSize? = null
     var scaleMode: String = "fit"
     var background: String = "rgba(0,0,0,1)"
 
+    /** The worker converts frames to the size this canvas draws them at. */
+    private val frameSize = BridgeFrameSize()
+
+    override fun bindFrameSize(sink: ((width: Int, height: Int) -> Unit)?) = frameSize.bind(sink)
+
     override fun submitNative(frame: VideoFrame, video: VideoInfo?): Boolean = frame.use {
+        // The frame may be smaller than the video, converted at the drawn size: the picture takes the video's aspect.
+        val videoSize = video?.let { info -> IntSize(info.width, info.height) } ?: IntSize(it.width, it.height)
+        val display = displaySize(videoSize.width, videoSize.height, it.sampleAspectRatio, it.rotationDegrees)
         // The worker's RGBA8 bytes, packed, straight into ImageData.
-        it.usePlanes { planes ->
+        val drawn = it.usePlanes { planes ->
             planes.single().bytes.useArray { bytes, offset ->
                 check(offset == 0) { "The browser's frames start their array" }
                 drawRgba(
@@ -86,11 +103,15 @@ private class WebCanvasOutput : FFplayVideoOutput {
                     it.width,
                     it.height,
                     scaleMode,
-                    it.sampleAspectRatio,
+                    display.width.toDouble(),
+                    display.height.toDouble(),
                     it.rotationDegrees,
                 )
             }
         } != null
+        val area = Size(canvasPixels(canvas, width = true).toFloat(), canvasPixels(canvas, width = false).toFloat())
+        frameSize.drawnIn(videoSize, it.rotationDegrees, display, area, contentScale, resolution)
+        drawn
     }
 
     override fun submitPlatform(frame: NativePlatformVideoFrame, video: VideoInfo?): Boolean {
@@ -131,7 +152,8 @@ private fun drawRgba(
     width: Int,
     height: Int,
     scaleMode: String,
-    sampleAspectRatio: Double,
+    displayWidth: Double,
+    displayHeight: Double,
     rotationDegrees: Double,
 ): Unit = js(
     """
@@ -152,8 +174,6 @@ private fun drawRgba(
       scratchContext.putImageData(new ImageData(bytes, width, height), 0, 0);
       const normalizedRotation = ((rotationDegrees % 360) + 360) % 360;
       const quarterTurn = normalizedRotation === 90 || normalizedRotation === 270;
-      const displayWidth = quarterTurn ? height : width * sampleAspectRatio;
-      const displayHeight = quarterTurn ? width * sampleAspectRatio : height;
       let sx = targetWidth / displayWidth;
       let sy = targetHeight / displayHeight;
       let scale;
@@ -178,6 +198,11 @@ private fun drawRgba(
       context.restore();
     }
     """,
+)
+
+/** The canvas's drawing size in device pixels, as [drawRgba] sizes it; 0 while it is not laid out. */
+private fun canvasPixels(canvas: HTMLCanvasElement, width: Boolean): Int = js(
+    "Math.round((width ? canvas.clientWidth : canvas.clientHeight) * (globalThis.devicePixelRatio || 1))",
 )
 
 private fun clearCanvas(canvas: HTMLCanvasElement): Unit = js(

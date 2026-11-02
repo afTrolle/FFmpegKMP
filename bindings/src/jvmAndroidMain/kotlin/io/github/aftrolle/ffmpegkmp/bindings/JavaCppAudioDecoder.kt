@@ -4,19 +4,30 @@
 package io.github.aftrolle.ffmpegkmp.bindings
 
 import io.github.aftrolle.ffmpegkmp.bindings.generated.bridge.ffmpegkmp_player
+import io.github.aftrolle.ffmpegkmp.bindings.generated.bridge.ffplaykmp_input_hint
 import io.github.aftrolle.ffmpegkmp.bindings.generated.bridge.ffplaykmp_io_callback
 import io.github.aftrolle.ffmpegkmp.bindings.generated.bridge.global.bridge
 import org.bytedeco.javacpp.BytePointer
 import org.bytedeco.javacpp.FloatPointer
 
 @InternalFFmpegKmpApi
-public actual fun openPlatformAudioDecoder(source: NativePlayerSource, sampleRate: Int, channels: Int): NativeAudioDecoder {
+public actual fun openPlatformAudioDecoder(
+    source: NativePlayerSource,
+    sampleRate: Int,
+    channels: Int,
+    hint: NativeInputHint?,
+): NativeAudioDecoder {
     JavaCppBridgeLoader.load()
     val mounts = MountTable(source.mounts, replayableSources = true)
     val ioCallback = mountedIoCallback { mounts }
     val error = IntArray(1)
-    val player = bridge.ffmpegkmp_player_open(source.protocolInput(), ioCallback, null, sampleRate, channels, error)
-        ?.takeUnless(ffmpegkmp_player::isNull)
+    val nativeHint = hint?.toNative()
+    val player = try {
+        bridge.ffmpegkmp_player_open_hinted(source.protocolInput(), ioCallback, null, sampleRate, channels, nativeHint, error)
+            ?.takeUnless(ffmpegkmp_player::isNull)
+    } finally {
+        nativeHint?.close()
+    }
     if (player == null) {
         ioCallback.close()
         throw NativeAudioDecoderException("Could not open audio input '${source.input}' (error ${error[0]})", error[0])
@@ -73,3 +84,15 @@ private class JavaCppAudioEngine(
 private fun BytePointer?.text(): String? = this?.takeUnless(BytePointer::isNull)?.string?.takeIf(String::isNotEmpty)
 
 private const val DEFAULT_BUFFER_FRAMES = 4_096
+
+/** An `ffplaykmp_input_hint` holding [this]; a name too long for it is cut short, and the engine then probes. */
+private fun NativeInputHint.toNative(): ffplaykmp_input_hint {
+    val hint = ffplaykmp_input_hint()
+    bridge.ffplaykmp_input_hint_init(hint)
+    val name = formatName.encodeToByteArray()
+    for (index in 0 until minOf(name.size, FORMAT_NAME_CAPACITY - 1)) hint.format_name(index, name[index])
+    return hint.start_us(startUs).duration_us(durationUs).audio_streams(audioStreams)
+}
+
+/** `ffplaykmp_input_hint.format_name`'s size, its terminating zero included. */
+private const val FORMAT_NAME_CAPACITY = 64

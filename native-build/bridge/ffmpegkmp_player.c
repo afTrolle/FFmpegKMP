@@ -56,7 +56,9 @@ struct ffmpegkmp_player {
     int output_rate;
     int output_channels;
     AVChannelLayout output_layout;
+    /* Where media time starts and how long the input is (negative when unknown), from the probe or the hint. */
     int64_t start_time_us;
+    int64_t duration_us;
 
     player_track *tracks;
     int track_count;
@@ -345,22 +347,87 @@ static ffmpegkmp_player *player_create(int output_sample_rate, int output_channe
     return player;
 }
 
-/* Opens and probes the input and sets up its audio tracks. */
+/*
+ * Whether the header of an input opened unprobed says all the audio engine
+ * needs of `expected` audio streams: a container that declares its streams
+ * up front (not one that finds them as it reads, such as MPEG-TS), each with
+ * its codec, sample rate and channels. A decoder finds its sample format in
+ * the first frame, and the resampler is set up from the frames.
+ */
+static int header_describes_audio(const AVFormatContext *format, int expected) {
+    int found = 0;
+    if (format->ctx_flags & AVFMTCTX_NOHEADER)
+        return 0;
+    for (unsigned i = 0; i < format->nb_streams; i++) {
+        const AVCodecParameters *parameters = format->streams[i]->codecpar;
+        if (parameters->codec_type != AVMEDIA_TYPE_AUDIO)
+            continue;
+        if (parameters->codec_id == AV_CODEC_ID_NONE || parameters->sample_rate <= 0 ||
+                parameters->ch_layout.nb_channels <= 0)
+            return 0;
+        found++;
+    }
+    return found == expected;
+}
+
+/*
+ * Opens the input with the hint's demuxer and, when its header says enough,
+ * takes the start and duration from the hint instead of probing. Returns 1
+ * when the input is open that way, 0 when it is open and probed (the header
+ * was not enough), and a negative error when the hinted demuxer could not
+ * open it: the caller then closes it and opens it as if there were no hint.
+ */
+static int open_hinted(
+        ffmpegkmp_player *player,
+        const ffplaykmp_io_host *host,
+        const char *input,
+        const ffplaykmp_input_hint *hint) {
+    const AVInputFormat *format = av_find_input_format(hint->format_name);
+    int result;
+    if (!format)
+        return AVERROR_DEMUXER_NOT_FOUND;
+    if ((result = ffplaykmp_open_input_unprobed(host, input, format, &player->input)) < 0)
+        return result;
+    if (header_describes_audio(player->input.format, hint->audio_streams)) {
+        player->start_time_us = hint->start_us;
+        player->duration_us = hint->duration_us < 0 ? -1 : hint->duration_us;
+        return 1;
+    }
+    result = ffplaykmp_probe_input(&player->input);
+    return result < 0 ? result : 0;
+}
+
+/* Opens and probes the input, or skips the probe its hint makes needless, and sets up its audio tracks. */
 static int player_prepare(
         ffmpegkmp_player *player,
         const char *input,
         ffplaykmp_io_callback io_callback,
-        void *io_opaque) {
+        void *io_opaque,
+        const ffplaykmp_input_hint *hint) {
     const ffplaykmp_io_host host = {
         .callback = io_callback,
         .opaque = io_opaque,
         .interrupted = interrupt_requested,
         .interrupt_opaque = player,
     };
-    int result = ffplaykmp_open_input(&host, input, &player->input);
-    if (result < 0)
+    int hinted = AVERROR(EINVAL);
+    int result;
+    if (hint && hint->size >= sizeof(*hint)) {
+        hinted = open_hinted(player, &host, input, hint);
+        if (hinted < 0) {
+            /* The hinted demuxer did not take the input: open it as if there were no hint. */
+            ffplaykmp_close_input(&player->input);
+            memset(&player->input, 0, sizeof(player->input));
+            if (atomic_load(&player->abort_requested))
+                return AVERROR_EXIT;
+        }
+    }
+    if (hinted < 0 && (result = ffplaykmp_open_input(&host, input, &player->input)) < 0)
         return result;
-    player->start_time_us = ffplaykmp_media_start_us(player->input.format);
+    if (hinted <= 0) {
+        player->start_time_us = ffplaykmp_media_start_us(player->input.format);
+        player->duration_us = player->input.format->duration == AV_NOPTS_VALUE ? -1 : player->input.format->duration;
+    }
 
     for (unsigned i = 0; i < player->input.format->nb_streams; i++) {
         if (player->input.format->streams[i]->codecpar->codec_type == AVMEDIA_TYPE_AUDIO)
@@ -404,15 +471,42 @@ ffmpegkmp_player *ffmpegkmp_player_open(
         int output_sample_rate,
         int output_channels,
         int *error) {
+    return ffmpegkmp_player_open_hinted(input, io_callback, io_opaque, output_sample_rate, output_channels, NULL, error);
+}
+
+ffmpegkmp_player *ffmpegkmp_player_open_hinted(
+        const char *input,
+        ffplaykmp_io_callback io_callback,
+        void *io_opaque,
+        int output_sample_rate,
+        int output_channels,
+        const ffplaykmp_input_hint *hint,
+        int *error) {
     int result = AVERROR(EINVAL);
     ffmpegkmp_player *player = input ? player_create(output_sample_rate, output_channels, &result) : NULL;
-    if (player && (result = player_prepare(player, input, io_callback, io_opaque)) < 0) {
+    if (player && (result = player_prepare(player, input, io_callback, io_opaque, hint)) < 0) {
         ffmpegkmp_player_close(player);
         player = NULL;
     }
     if (error)
         *error = player ? 0 : result;
     return player;
+}
+
+ffmpegkmp_player *ffmpegkmp_player_open_prepared(
+        const ffplaykmp_player *prepared,
+        const char *input,
+        ffplaykmp_io_callback io_callback,
+        void *io_opaque,
+        int output_sample_rate,
+        int output_channels,
+        int *error) {
+    ffplaykmp_input_hint hint;
+    ffplaykmp_input_hint_init(&hint);
+    return ffmpegkmp_player_open_hinted(
+            input, io_callback, io_opaque, output_sample_rate, output_channels,
+            prepared && ffplaykmp_player_get_input_hint(prepared, &hint) == 0 ? &hint : NULL,
+            error);
 }
 
 void ffmpegkmp_player_abort(ffmpegkmp_player *player) {
@@ -513,7 +607,7 @@ int ffmpegkmp_player_set_master_gain(ffmpegkmp_player *player, float gain) {
 }
 
 int64_t ffmpegkmp_player_duration_us(const ffmpegkmp_player *player) {
-    return player && player->input.format->duration != AV_NOPTS_VALUE ? player->input.format->duration : -1;
+    return player ? player->duration_us : -1;
 }
 
 int64_t ffmpegkmp_player_position_us(const ffmpegkmp_player *player) {

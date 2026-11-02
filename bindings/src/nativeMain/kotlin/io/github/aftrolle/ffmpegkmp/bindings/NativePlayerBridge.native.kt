@@ -11,6 +11,9 @@ import io.github.aftrolle.ffmpegkmp.bindings.cinterop.ffmpegkmp_frame_ref
 import io.github.aftrolle.ffmpegkmp.bindings.cinterop.FFPLAYKMP_SOURCE_REQUIRE_SECURE_PATH
 import io.github.aftrolle.ffmpegkmp.bindings.cinterop.ffplaykmp_configuration
 import io.github.aftrolle.ffmpegkmp.bindings.cinterop.ffplaykmp_configuration_default
+import io.github.aftrolle.ffmpegkmp.bindings.cinterop.ffplaykmp_input_hint
+import io.github.aftrolle.ffmpegkmp.bindings.cinterop.ffplaykmp_input_hint_init
+import io.github.aftrolle.ffmpegkmp.bindings.cinterop.ffplaykmp_player_get_input_hint
 import io.github.aftrolle.ffmpegkmp.bindings.cinterop.ffplaykmp_pixel_format_name
 import io.github.aftrolle.ffmpegkmp.bindings.cinterop.ffplaykmp_output_capabilities
 import io.github.aftrolle.ffmpegkmp.bindings.cinterop.ffplaykmp_output_capabilities_init
@@ -32,6 +35,13 @@ import io.github.aftrolle.ffmpegkmp.bindings.cinterop.ffplaykmp_player_set_video
 import io.github.aftrolle.ffmpegkmp.bindings.cinterop.ffplaykmp_player_stop
 import io.github.aftrolle.ffmpegkmp.bindings.cinterop.ffplaykmp_snapshot
 import io.github.aftrolle.ffmpegkmp.bindings.cinterop.ffplaykmp_snapshot_init
+import io.github.aftrolle.ffmpegkmp.bindings.cinterop.ffplaykmp_statistics
+import io.github.aftrolle.ffmpegkmp.bindings.cinterop.ffplaykmp_statistics_init
+import io.github.aftrolle.ffmpegkmp.bindings.cinterop.ffplaykmp_get_statistics
+import io.github.aftrolle.ffmpegkmp.bindings.cinterop.ffplaykmp_decoder_budget_get
+import io.github.aftrolle.ffmpegkmp.bindings.cinterop.ffplaykmp_decoder_budget_in_use
+import io.github.aftrolle.ffmpegkmp.bindings.cinterop.ffplaykmp_decoder_budget_set
+import io.github.aftrolle.ffmpegkmp.bindings.cinterop.ffplaykmp_hardware_decoder_available
 import io.github.aftrolle.ffmpegkmp.bindings.cinterop.ffplaykmp_video_frame
 import io.github.aftrolle.ffmpegkmp.bindings.cinterop.ffplaykmp_platform_video_frame
 import kotlinx.cinterop.COpaquePointer
@@ -68,6 +78,7 @@ private class NativeCInteropPlayerEngine(
         ffplaykmp_configuration_default(nativeConfiguration.ptr)
         nativeConfiguration.decoder_preference = configuration.decoderPreference.ordinal.toUInt()
         nativeConfiguration.decoder_threads = configuration.decoderThreads
+        nativeConfiguration.codec_release_delay_us = configuration.codecReleaseDelayUs
         ffplaykmp_player_create(
             nativeConfiguration.ptr,
             staticCFunction(::receiveNativePlayerState),
@@ -132,6 +143,18 @@ private class NativeCInteropPlayerEngine(
         val result = ffplaykmp_player_get_snapshot(player, nativeSnapshot.ptr)
         check(result == 0) { "Native player snapshot failed with error $result" }
         nativeSnapshot.toNativeSnapshot()
+    }
+
+    override fun inputHint(): NativeInputHint? = memScoped {
+        val hint = alloc<ffplaykmp_input_hint>()
+        ffplaykmp_input_hint_init(hint.ptr)
+        if (ffplaykmp_player_get_input_hint(player, hint.ptr) != 0) return@memScoped null
+        NativeInputHint(
+            formatName = hint.format_name.toKString(),
+            startUs = hint.start_us,
+            durationUs = hint.duration_us,
+            audioStreams = hint.audio_streams,
+        )
     }
 
     override fun release() {
@@ -264,4 +287,42 @@ internal fun ffplaykmp_snapshot.toNativeSnapshot(): NativePlayerSnapshot = nativ
     contentLightPresent = content_light_present != 0,
     maxContentLightLevel = max_content_light_level.toInt(),
     maxFrameAverageLightLevel = max_frame_average_light_level.toInt(),
+    decoderFallback = decoder_fallback.toInt(),
 )
+
+@InternalFFmpegKmpApi
+public actual fun nativePlayerStatistics(): NativePlayerStatistics = memScoped {
+    val statistics = alloc<ffplaykmp_statistics>()
+    ffplaykmp_statistics_init(statistics.ptr)
+    ffplaykmp_get_statistics(statistics.ptr)
+    NativePlayerStatistics(
+        codecOpens = statistics.codec_opens.toLong(),
+        videoPackets = statistics.video_packets.toLong(),
+        downloads = statistics.downloads.toLong(),
+        codecCloses = statistics.codec_closes.toLong(),
+        inputOpens = statistics.input_opens.toLong(),
+        inputProbes = statistics.input_probes.toLong(),
+    )
+}
+
+@InternalFFmpegKmpApi
+public actual fun nativeDecoderBudget(): NativeDecoderBudget =
+    NativeDecoderBudget(hardwareDecoders = ffplaykmp_decoder_budget_get(), inUse = ffplaykmp_decoder_budget_in_use())
+
+@InternalFFmpegKmpApi
+public actual fun setNativeDecoderBudget(hardwareDecoders: Int) {
+    require(hardwareDecoders >= 0) { "The hardware decoder budget must not be negative: $hardwareDecoders" }
+    ffplaykmp_decoder_budget_set(hardwareDecoders)
+}
+
+/** VideoToolbox says whether, per codec, and not how many may be open at once. */
+@InternalFFmpegKmpApi
+public actual fun nativeHardwareDecoderSupport(codec: String, width: Int, height: Int): NativeHardwareDecoderSupport =
+    NativeHardwareDecoderSupport(
+        available = when (ffplaykmp_hardware_decoder_available(codec)) {
+            1 -> true
+            0 -> false
+            else -> null
+        },
+        maxInstances = null,
+    )

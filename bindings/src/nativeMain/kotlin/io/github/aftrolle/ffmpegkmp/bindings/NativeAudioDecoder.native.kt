@@ -11,7 +11,9 @@ import cnames.structs.ffmpegkmp_player
 import io.github.aftrolle.ffmpegkmp.bindings.cinterop.ffmpegkmp_player_abort
 import io.github.aftrolle.ffmpegkmp.bindings.cinterop.ffmpegkmp_player_close
 import io.github.aftrolle.ffmpegkmp.bindings.cinterop.ffmpegkmp_player_duration_us
-import io.github.aftrolle.ffmpegkmp.bindings.cinterop.ffmpegkmp_player_open
+import io.github.aftrolle.ffmpegkmp.bindings.cinterop.ffmpegkmp_player_open_hinted
+import io.github.aftrolle.ffmpegkmp.bindings.cinterop.ffplaykmp_input_hint
+import io.github.aftrolle.ffmpegkmp.bindings.cinterop.ffplaykmp_input_hint_init
 import io.github.aftrolle.ffmpegkmp.bindings.cinterop.ffmpegkmp_player_position_us
 import io.github.aftrolle.ffmpegkmp.bindings.cinterop.ffmpegkmp_player_read
 import io.github.aftrolle.ffmpegkmp.bindings.cinterop.ffmpegkmp_player_seek
@@ -35,22 +37,40 @@ import kotlinx.cinterop.addressOf
 import kotlinx.cinterop.alloc
 import kotlinx.cinterop.memScoped
 import kotlinx.cinterop.ptr
+import kotlinx.cinterop.set
 import kotlinx.cinterop.staticCFunction
 import kotlinx.cinterop.toKString
 import kotlinx.cinterop.usePinned
 import kotlinx.cinterop.value
 
 @InternalFFmpegKmpApi
-public actual fun openPlatformAudioDecoder(source: NativePlayerSource, sampleRate: Int, channels: Int): NativeAudioDecoder =
+public actual fun openPlatformAudioDecoder(
+    source: NativePlayerSource,
+    sampleRate: Int,
+    channels: Int,
+    hint: NativeInputHint?,
+): NativeAudioDecoder =
     memScoped {
         val error = alloc<IntVar>()
+        val nativeHint = hint?.let { known ->
+            alloc<ffplaykmp_input_hint>().apply {
+                ffplaykmp_input_hint_init(ptr)
+                // A name too long for the field is cut short, and the engine then probes.
+                val name = known.formatName.encodeToByteArray()
+                for (index in 0 until minOf(name.size, FORMAT_NAME_CAPACITY - 1)) format_name[index] = name[index]
+                start_us = known.startUs
+                duration_us = known.durationUs
+                audio_streams = known.audioStreams
+            }
+        }
         val mounts = StableRef.create(MountTable(source.mounts, replayableSources = true))
-        val player = ffmpegkmp_player_open(
+        val player = ffmpegkmp_player_open_hinted(
             source.protocolInput(),
             staticCFunction(::receiveMountedIo),
             mounts.asCPointer(),
             sampleRate,
             channels,
+            nativeHint?.ptr,
             error.ptr,
         ) ?: run {
             mounts.dispose()
@@ -96,3 +116,6 @@ private class CInteropAudioEngine(
 }
 
 private fun CPointer<ByteVar>?.text(): String? = this?.toKString()?.takeIf(String::isNotEmpty)
+
+/** `ffplaykmp_input_hint.format_name`'s size, its terminating zero included. */
+private const val FORMAT_NAME_CAPACITY = 64

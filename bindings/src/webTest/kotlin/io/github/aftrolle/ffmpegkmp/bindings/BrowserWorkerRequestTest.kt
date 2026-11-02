@@ -73,5 +73,9 @@ class BrowserWorkerRequestTest {
         assertEquals(1000.0, result.videoInfo?.masteringDisplay?.maxLuminance)
         assertEquals(400, result.videoInfo?.maxFrameAverageLightLevel)
         assertEquals(3L, result.droppedFrames)
+        assertEquals(NativePlayerDecoderFallback.NONE, result.decoderFallback)
+        // The worker sends why WebCodecs did not decode next to the C player's snapshot.
+        assertEquals(NativePlayerDecoderFallback.UNSUPPORTED, snapshot.toBrowserNativePlayerSnapshot(1).decoderFallback)
+        assertEquals(NativePlayerDecoderFallback.FAILED, snapshot.toBrowserNativePlayerSnapshot(2).decoderFallback)
     }
 }

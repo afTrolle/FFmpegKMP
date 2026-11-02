@@ -19,6 +19,8 @@ class BrowserPlayerAudioTest {
     fun playsTheSourcesAudioInTheWorkerAndReportsTheAudibleClock() = runTest {
         configureBrowserPlayerTestRuntime()
         val media = encodeAudioVideoFixture()
+        // The bridge's worker, the next one the page starts.
+        val worker = recordBrowserWorkers().let { browserWorkersStarted() }
         val bridge = createPlatformPlayerBridge(
             configuration = NativePlayerConfiguration(),
             update = {},
@@ -41,6 +43,8 @@ class BrowserPlayerAudioTest {
             assertEquals(0, prepared, "prepare failed with $prepared: ${bridge.snapshot()}")
 
             val audio = assertNotNull(bridge.openAudio())
+            // The audio opens the input with what the player's probe found, and does not probe it again.
+            assertEquals(1, browserWorkerStatistics(worker).inputProbes, "inputs probed by the prepare and the audio")
             assertEquals(1, audio.tracks.size)
             assertEquals("pcm_s16le", audio.tracks.single().codec)
             assertTrue(audio.isTrackEnabled(0))

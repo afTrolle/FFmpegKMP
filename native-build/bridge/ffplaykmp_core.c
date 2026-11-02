@@ -5,12 +5,17 @@
 #include <limits.h>
 #include <math.h>
 #include <pthread.h>
+#include <stdatomic.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
 #if defined(__ANDROID__)
 #include <libavcodec/jni.h>
+#endif
+#if defined(__APPLE__)
+#include <TargetConditionals.h>
+#include <dlfcn.h>
 #endif
 #include <libavutil/cpu.h>
 #include <libavutil/csp.h>
@@ -19,6 +24,35 @@
 #include <libavutil/imgutils.h>
 #include <libavutil/mastering_display_metadata.h>
 #include <libavutil/pixdesc.h>
+
+static _Atomic uint64_t ffplaykmp_codec_opens;
+static _Atomic uint64_t ffplaykmp_codec_closes;
+static _Atomic uint64_t ffplaykmp_video_packets;
+static _Atomic uint64_t ffplaykmp_downloads;
+static _Atomic uint64_t ffplaykmp_input_opens;
+static _Atomic uint64_t ffplaykmp_input_probes;
+
+void ffplaykmp_statistics_init(ffplaykmp_statistics *statistics) {
+    if (!statistics)
+        return;
+    memset(statistics, 0, sizeof(*statistics));
+    statistics->size = sizeof(*statistics);
+}
+
+void ffplaykmp_get_statistics(ffplaykmp_statistics *statistics) {
+    if (!statistics || statistics->size < sizeof(*statistics))
+        return;
+    statistics->codec_opens = atomic_load(&ffplaykmp_codec_opens);
+    statistics->codec_closes = atomic_load(&ffplaykmp_codec_closes);
+    statistics->video_packets = atomic_load(&ffplaykmp_video_packets);
+    statistics->downloads = atomic_load(&ffplaykmp_downloads);
+    statistics->input_opens = atomic_load(&ffplaykmp_input_opens);
+    statistics->input_probes = atomic_load(&ffplaykmp_input_probes);
+}
+
+void ffplaykmp_count_video_packet(void) {
+    atomic_fetch_add(&ffplaykmp_video_packets, 1);
+}
 
 static int ffplaykmp_pixel_bit_depth(int pixel_format) {
     const AVPixFmtDescriptor *descriptor = av_pix_fmt_desc_get(pixel_format);
@@ -330,11 +364,16 @@ void ffplaykmp_close_input(ffplaykmp_input *input) {
     av_freep(&input->io);
 }
 
-int ffplaykmp_open_input(const ffplaykmp_io_host *host, const char *url, ffplaykmp_input *input) {
+int ffplaykmp_open_input_unprobed(
+        const ffplaykmp_io_host *host,
+        const char *url,
+        const AVInputFormat *format,
+        ffplaykmp_input *input) {
     int mounted = ffplaykmp_parse_resource_id(url, &input->resource_id);
     int result;
     if (mounted < 0)
         return mounted;
+    atomic_fetch_add(&ffplaykmp_input_opens, 1);
     input->host = *host;
     input->format = avformat_alloc_context();
     if (!input->format)
@@ -366,11 +405,21 @@ int ffplaykmp_open_input(const ffplaykmp_io_host *host, const char *url, ffplayk
         }
         input->format->pb = input->avio;
         input->format->flags |= AVFMT_FLAG_CUSTOM_IO;
-        result = avformat_open_input(&input->format, NULL, NULL, NULL);
+        result = avformat_open_input(&input->format, NULL, format, NULL);
     } else {
-        result = avformat_open_input(&input->format, url, NULL, NULL);
+        result = avformat_open_input(&input->format, url, format, NULL);
     }
-    return result < 0 ? result : avformat_find_stream_info(input->format, NULL);
+    return result;
+}
+
+int ffplaykmp_probe_input(ffplaykmp_input *input) {
+    atomic_fetch_add(&ffplaykmp_input_probes, 1);
+    return avformat_find_stream_info(input->format, NULL);
+}
+
+int ffplaykmp_open_input(const ffplaykmp_io_host *host, const char *url, ffplaykmp_input *input) {
+    int result = ffplaykmp_open_input_unprobed(host, url, NULL, input);
+    return result < 0 ? result : ffplaykmp_probe_input(input);
 }
 
 int ffplaykmp_find_video_stream(AVFormatContext *format, const AVCodec **codec) {
@@ -453,7 +502,116 @@ int ffplaykmp_decoder_thread_count(int threads) {
     return automatic > FFPLAYKMP_DECODER_THREADS_AUTO_MAX ? FFPLAYKMP_DECODER_THREADS_AUTO_MAX : automatic;
 }
 
-int ffplaykmp_video_codec_open(
+/*
+ * The hardware decoder budget: how many hardware decoders may be open at
+ * once, 0 for any number, and how many are. Places are taken and given back
+ * under the mutex, without waiting.
+ */
+#if defined(__EMSCRIPTEN__)
+#define FFPLAYKMP_DEFAULT_HARDWARE_DECODERS 0
+#elif defined(__ANDROID__)
+#define FFPLAYKMP_DEFAULT_HARDWARE_DECODERS 4
+#elif defined(__APPLE__) && TARGET_OS_IPHONE
+#define FFPLAYKMP_DEFAULT_HARDWARE_DECODERS 4
+#else
+#define FFPLAYKMP_DEFAULT_HARDWARE_DECODERS 8
+#endif
+
+static pthread_mutex_t ffplaykmp_budget_mutex = PTHREAD_MUTEX_INITIALIZER;
+static int32_t ffplaykmp_budget_limit = FFPLAYKMP_DEFAULT_HARDWARE_DECODERS;
+static int32_t ffplaykmp_budget_in_use;
+
+int ffplaykmp_decoder_budget_set(int32_t hardware_decoders) {
+    if (hardware_decoders < 0)
+        return FFPLAYKMP_ERROR_INVALID_ARGUMENT;
+    pthread_mutex_lock(&ffplaykmp_budget_mutex);
+    ffplaykmp_budget_limit = hardware_decoders;
+    pthread_mutex_unlock(&ffplaykmp_budget_mutex);
+    return 0;
+}
+
+int32_t ffplaykmp_decoder_budget_get(void) {
+    int32_t limit;
+    pthread_mutex_lock(&ffplaykmp_budget_mutex);
+    limit = ffplaykmp_budget_limit;
+    pthread_mutex_unlock(&ffplaykmp_budget_mutex);
+    return limit;
+}
+
+int32_t ffplaykmp_decoder_budget_in_use(void) {
+    int32_t in_use;
+    pthread_mutex_lock(&ffplaykmp_budget_mutex);
+    in_use = ffplaykmp_budget_in_use;
+    pthread_mutex_unlock(&ffplaykmp_budget_mutex);
+    return in_use;
+}
+
+#if defined(__APPLE__)
+/* The CMVideoCodecType, a big-endian four-character code, VideoToolbox knows `id` by; 0 for none. */
+static uint32_t ffplaykmp_video_codec_type(enum AVCodecID id) {
+    switch (id) {
+    case AV_CODEC_ID_H264: return MKBETAG('a', 'v', 'c', '1');
+    case AV_CODEC_ID_HEVC: return MKBETAG('h', 'v', 'c', '1');
+    case AV_CODEC_ID_VP9: return MKBETAG('v', 'p', '0', '9');
+    case AV_CODEC_ID_AV1: return MKBETAG('a', 'v', '0', '1');
+    case AV_CODEC_ID_PRORES: return MKBETAG('a', 'p', 'c', 'n');
+    case AV_CODEC_ID_MPEG4: return MKBETAG('m', 'p', '4', 'v');
+    case AV_CODEC_ID_MPEG2VIDEO: return MKBETAG('m', 'p', '2', 'v');
+    case AV_CODEC_ID_MPEG1VIDEO: return MKBETAG('m', 'p', '1', 'v');
+    case AV_CODEC_ID_H263: return MKBETAG('h', '2', '6', '3');
+    default: return 0;
+    }
+}
+#endif
+
+int ffplaykmp_hardware_decoder_available(const char *codec_name) {
+    const AVCodecDescriptor *descriptor;
+    if (!codec_name)
+        return FFPLAYKMP_ERROR_INVALID_ARGUMENT;
+    descriptor = avcodec_descriptor_get_by_name(codec_name);
+    if (!descriptor || descriptor->type != AVMEDIA_TYPE_VIDEO)
+        return FFPLAYKMP_ERROR_UNSUPPORTED;
+#if defined(__APPLE__)
+    {
+        /*
+         * Looked up rather than linked: libavcodec has loaded VideoToolbox,
+         * and the JVM's bridge library links no Apple framework of its own.
+         */
+        typedef unsigned char (*supported_fn)(uint32_t);
+        supported_fn supported = (supported_fn)dlsym(RTLD_DEFAULT, "VTIsHardwareDecodeSupported");
+        uint32_t type = ffplaykmp_video_codec_type(descriptor->id);
+        if (!supported)
+            return FFPLAYKMP_ERROR_UNSUPPORTED;
+        return type && supported(type) ? 1 : 0;
+    }
+#else
+    return FFPLAYKMP_ERROR_UNSUPPORTED;
+#endif
+}
+
+/* Takes a place for `codec`, or returns FFPLAYKMP_ERROR_BUSY with every one taken. */
+static int ffplaykmp_budget_lease(ffplaykmp_video_codec *codec) {
+    int result = 0;
+    pthread_mutex_lock(&ffplaykmp_budget_mutex);
+    if (ffplaykmp_budget_limit > 0 && ffplaykmp_budget_in_use >= ffplaykmp_budget_limit)
+        result = FFPLAYKMP_ERROR_BUSY;
+    else
+        ffplaykmp_budget_in_use++;
+    pthread_mutex_unlock(&ffplaykmp_budget_mutex);
+    codec->leased = result == 0;
+    return result;
+}
+
+static void ffplaykmp_budget_return(ffplaykmp_video_codec *codec) {
+    if (!codec->leased)
+        return;
+    codec->leased = 0;
+    pthread_mutex_lock(&ffplaykmp_budget_mutex);
+    ffplaykmp_budget_in_use--;
+    pthread_mutex_unlock(&ffplaykmp_budget_mutex);
+}
+
+static int ffplaykmp_video_codec_open_leased(
         ffplaykmp_video_codec *codec,
         AVFormatContext *format,
         int stream_index,
@@ -471,6 +629,7 @@ int ffplaykmp_video_codec_open(
 #endif
     memset(codec, 0, sizeof(*codec));
     codec->stream_index = stream_index;
+    atomic_fetch_add(&ffplaykmp_codec_opens, 1);
 #if !defined(__ANDROID__)
     codec->hardware_format = AV_PIX_FMT_NONE;
     (void)android_surface;
@@ -494,6 +653,8 @@ int ffplaykmp_video_codec_open(
     }
     if (require_hardware && !hardware)
         return FFPLAYKMP_ERROR_UNSUPPORTED;
+    if (hardware && (result = ffplaykmp_budget_lease(codec)) < 0)
+        return result;
     codec->hardware = hardware;
 
     codec->decoder = avcodec_alloc_context3(decoder);
@@ -534,6 +695,24 @@ int ffplaykmp_video_codec_open(
     return avcodec_open2(codec->decoder, decoder, options);
 }
 
+int ffplaykmp_video_codec_open(
+        ffplaykmp_video_codec *codec,
+        AVFormatContext *format,
+        int stream_index,
+        int hardware,
+        int require_hardware,
+        int threads,
+        int thread_type,
+        void *android_surface,
+        AVDictionary **options) {
+    const int result = ffplaykmp_video_codec_open_leased(
+            codec, format, stream_index, hardware, require_hardware, threads, thread_type, android_surface, options);
+    /* A decoder that did not open holds no place, though the caller closes it later. */
+    if (result < 0)
+        ffplaykmp_budget_return(codec);
+    return result;
+}
+
 int ffplaykmp_video_codec_frame_is_hardware(const ffplaykmp_video_codec *codec, const AVFrame *frame) {
 #if defined(__ANDROID__)
     if (codec->hardware)
@@ -545,6 +724,9 @@ int ffplaykmp_video_codec_frame_is_hardware(const ffplaykmp_video_codec *codec, 
 }
 
 void ffplaykmp_video_codec_close(ffplaykmp_video_codec *codec) {
+    if (codec->decoder)
+        atomic_fetch_add(&ffplaykmp_codec_closes, 1);
+    ffplaykmp_budget_return(codec);
 #if defined(__ANDROID__)
     if (codec->decoder && codec->mediacodec_context)
         av_mediacodec_default_free(codec->decoder);
@@ -1725,14 +1907,24 @@ AVRational ffmpegkmp_scaled_aspect(AVRational aspect, int width, int height, int
     return scaled;
 }
 
-int ffplaykmp_rgb_output(AVFrame *output, const AVFrame *source, enum AVPixelFormat format, int tone_map_hdr) {
+int ffplaykmp_rgb_output(
+        AVFrame *output,
+        const AVFrame *source,
+        enum AVPixelFormat format,
+        int width,
+        int height,
+        int tone_map_hdr) {
     int result;
-    if (!output->buf[0] || output->format != format || output->width != source->width ||
-            output->height != source->height || !av_frame_is_writable(output)) {
+    if (width <= 0 || height <= 0) {
+        width = source->width;
+        height = source->height;
+    }
+    if (!output->buf[0] || output->format != format || output->width != width ||
+            output->height != height || !av_frame_is_writable(output)) {
         av_frame_unref(output);
         output->format = format;
-        output->width = source->width;
-        output->height = source->height;
+        output->width = width;
+        output->height = height;
         /* Packed rows: the outputs hand width * pixel size strides to Kotlin. */
         if ((result = av_frame_get_buffer(output, 1)) < 0)
             return result;
@@ -1755,6 +1947,7 @@ int ffplaykmp_rgb_output(AVFrame *output, const AVFrame *source, enum AVPixelFor
 
 int ffplaykmp_download_frame(AVFrame *software, const AVFrame *hardware) {
     int result = av_hwframe_transfer_data(software, hardware, 0);
+    atomic_fetch_add(&ffplaykmp_downloads, 1);
     return result < 0 ? result : av_frame_copy_props(software, hardware);
 }
 

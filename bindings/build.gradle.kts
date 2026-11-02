@@ -545,6 +545,8 @@ kotlin {
         }
         webTest {
             resources.srcDir(stageWasmRuntime)
+            // The decoder fixtures, whose frames carry their numbers, for the real player's browser tests.
+            resources.srcDir(rootProject.layout.projectDirectory.dir("library/codec/src/commonTest/resources"))
         }
     }
 

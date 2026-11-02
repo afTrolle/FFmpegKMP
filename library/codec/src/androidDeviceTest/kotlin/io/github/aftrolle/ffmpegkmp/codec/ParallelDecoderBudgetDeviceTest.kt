@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 package io.github.aftrolle.ffmpegkmp.codec
 
+import android.media.MediaCodecList
+import android.os.Build
 import android.os.PowerManager
 import android.util.Log
 import androidx.test.platform.app.InstrumentationRegistry
@@ -31,8 +33,87 @@ import org.junit.Assume.assumeTrue
  * ```
  *
  * `counts` (such as `4`) and `rounds` (2 by default) narrow or repeat it.
+ *
+ * [measureHardware] opens 1 to 16 AUTO decoders at once instead, rendering into GPU buffers through
+ * MediaCodec as a player's Surface does, with no [DecoderBudget] limit, and logs how many MediaCodec
+ * took, why the others fell back, and frames a second each: where the device's hardware decoders
+ * run out or slow down. It runs with `hardwareBudget=true` (and `counts` such as `1,4,8`):
+ *
+ * ```
+ * ./gradlew :library:codec:connectedAndroidDeviceTest \
+ *   -Pandroid.testInstrumentationRunnerArguments.class=io.github.aftrolle.ffmpegkmp.codec.ParallelDecoderBudgetDeviceTest#measureHardware \
+ *   -Pandroid.testInstrumentationRunnerArguments.hardwareBudget=true
+ * ```
  */
 class ParallelDecoderBudgetDeviceTest {
+    @Test
+    fun measureHardware() = runBlocking<Unit> {
+        val arguments = InstrumentationRegistry.getArguments()
+        assumeTrue("Runs only with the hardwareBudget=true instrumentation argument", arguments.getString("hardwareBudget") == "true")
+        assumeTrue("GPU buffer output needs Android 14", Build.VERSION.SDK_INT >= 34)
+        System.setProperty("org.bytedeco.javacpp.maxPhysicalBytes", "0")
+        System.setProperty("org.bytedeco.javacpp.maxBytes", "0")
+        val counts = (arguments.getString("counts") ?: "1,2,4,6,8,10,12,16").split(',').map { it.toInt() }
+        val limit = DecoderBudget.hardwareDecoders
+        DecoderBudget.hardwareDecoders = 0
+        try {
+            for (name in listOf("h264-2160p-4s.mp4", "hevc-2160p-pq-4s.mp4")) {
+                val resource = javaClass.getResourceAsStream("/budget/$name")
+                assumeTrue("Generate the clips first with scripts/generate-budget-clip.sh", resource != null)
+                val clip = File.createTempFile("budget", ".mp4")
+                checkNotNull(resource).use { input -> clip.outputStream().use { input.copyTo(it) } }
+                val mime = if (name.startsWith("hevc")) "video/hevc" else "video/avc"
+                MediaCodecList(MediaCodecList.REGULAR_CODECS).codecInfos
+                    .filter { !it.isEncoder && it.isHardwareAccelerated && mime in it.supportedTypes }
+                    .forEach { Log.i(TAG, "$name: ${it.name} getMaxSupportedInstances ${it.getCapabilitiesForType(mime).maxSupportedInstances}") }
+                for (count in counts) {
+                    coolDown()
+                    measureHardware(clip, name, count)
+                }
+                clip.delete()
+            }
+        } finally {
+            DecoderBudget.hardwareDecoders = limit
+        }
+    }
+
+    /** [count] AUTO decoders opened together and then decoding [FRAMES] frames each at once. */
+    private suspend fun measureHardware(clip: File, name: String, count: Int) {
+        val opened = coroutineScope {
+            (1..count).map {
+                async(Dispatchers.Default) {
+                    runCatching { VideoDecoder.open(MediaSource(clip.path), VideoOutput.GpuBuffers, CodecPreference.AUTO, 30.seconds) }
+                }
+            }.awaitAll()
+        }
+        val decoders = opened.mapNotNull { it.getOrNull() }
+        val failures = opened.mapNotNull { it.exceptionOrNull()?.message }
+        try {
+            val start = System.nanoTime()
+            val decoded = coroutineScope {
+                decoders.map { decoder ->
+                    async(Dispatchers.Default) {
+                        runCatching { for (index in 0 until FRAMES) decoder.frameAt(index.seconds / 24).use { } }.fold({ FRAMES }, { 0 })
+                    }
+                }.awaitAll()
+            }
+            val took = (System.nanoTime() - start) / 1e9
+            val hardware = decoders.indices.filter { decoders[it].decoderKind == DecoderKind.HARDWARE }
+            Log.i(
+                TAG,
+                "hardware $name decoders=$count | ${hardware.size} MediaCodec, fallbacks ${decoders.mapNotNull { it.decoderFallback }}, " +
+                    "${failures.size} failed to open ${failures.distinct()} | " +
+                    "MediaCodec %.1f frames/s each, software %.1f each, ${decoded.count { it == 0 }} stopped".format(
+                        hardware.sumOf { decoded[it] } / took / hardware.size.coerceAtLeast(1),
+                        decoders.indices.filter { it !in hardware }.sumOf { decoded[it] } / took /
+                            (decoders.size - hardware.size).coerceAtLeast(1),
+                    ),
+            )
+        } finally {
+            decoders.forEach { it.close() }
+        }
+    }
+
     @Test
     fun measure() = runBlocking<Unit> {
         val arguments = InstrumentationRegistry.getArguments()

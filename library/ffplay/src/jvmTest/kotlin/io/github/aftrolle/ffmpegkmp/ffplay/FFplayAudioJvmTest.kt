@@ -13,6 +13,7 @@ import io.github.aftrolle.ffmpegkmp.bindings.NativePlayerSource
 import io.github.aftrolle.ffmpegkmp.bindings.NativePlayerState
 import io.github.aftrolle.ffmpegkmp.bindings.NativeVideoFrame
 import io.github.aftrolle.ffmpegkmp.bindings.createPlatformPlayerBridge
+import io.github.aftrolle.ffmpegkmp.bindings.nativePlayerStatistics
 import io.github.aftrolle.ffmpegkmp.codec.CodecPreference
 import io.github.aftrolle.ffmpegkmp.codec.VideoFrame
 import io.github.aftrolle.ffmpegkmp.codec.VideoInfo
@@ -125,6 +126,30 @@ class FFplayAudioJvmTest {
     }
 
     @Test
+    fun aPrepareWithAudioProbesTheInputOnce() = runBlocking {
+        for ((container, audioCodec) in listOf("nut" to "pcm_s16le", "mp4" to "aac")) {
+            val media = encodeAudioVideoFixture(container = container, audioCodec = audioCodec)
+            val fileHandle = FileSystem.SYSTEM.openReadOnly(media)
+            val player = FFplayPlayer(FFplayConfiguration(decoderPreference = CodecPreference.SOFTWARE))
+            try {
+                val before = nativePlayerStatistics()
+                player.prepare(MediaSource(AV_FIXTURE, CommandIo { input(AV_FIXTURE, fileHandle) }))
+                val after = nativePlayerStatistics()
+
+                // The video's prepare opens and probes the input; the audio opens it again with what that
+                // probe found, and does not probe it. Without an audio device the audio still opens its
+                // input before it finds no output, so the counts are the same.
+                assertEquals(2, after.inputOpens - before.inputOpens, "$container: inputs opened by a prepare with audio")
+                assertEquals(1, after.inputProbes - before.inputProbes, "$container: inputs probed by a prepare with audio")
+                if (hasAudioDevice()) assertEquals(1, player.audio.value.tracks.size, "$container: the audio track")
+            } finally {
+                player.close()
+                fileHandle.close()
+            }
+        }
+    }
+
+    @Test
     fun videoTimestampsAreOnTheSameTimelineAsAudio() = runBlocking {
         // Video that starts 0.4 s after the audio must report its time on the shared (container)
         // timeline the audio master clock uses.
@@ -151,8 +176,12 @@ class FFplayAudioJvmTest {
         assertTrue(first in 380_000..420_000, "First video frame at ${first}us; expected ~400000")
     }
 
-    /** One second of 25 fps MPEG-4 video with a PCM audio track, encoded by FFmpeg itself. */
-    private suspend fun encodeAudioVideoFixture(videoOffsetSeconds: Double = 0.0): okio.Path {
+    /** One second of 25 fps MPEG-4 video with an audio track, PCM in NUT unless asked otherwise, encoded by FFmpeg itself. */
+    private suspend fun encodeAudioVideoFixture(
+        videoOffsetSeconds: Double = 0.0,
+        container: String = "nut",
+        audioCodec: String = "pcm_s16le",
+    ): okio.Path {
         val width = 64
         val height = 48
         val frames = Buffer().apply {
@@ -167,7 +196,7 @@ class FFplayAudioJvmTest {
                 repeat(2) { writeIntLe(value.toRawBits()) }
             }
         }
-        val path = directory / AV_FIXTURE
+        val path = directory / "$container-$AV_FIXTURE"
         val output = FileSystem.SYSTEM.openReadWrite(path)
         val result = FFmpegClient().use { client ->
             client.execute(
@@ -177,8 +206,8 @@ class FFplayAudioJvmTest {
                     "-f", "rawvideo", "-pixel_format", "rgb24", "-video_size", "${width}x$height",
                     "-framerate", "25", "-i", "frames.rgb",
                     "-f", "f32le", "-ar", "48000", "-ch_layout", "stereo", "-i", "audio.f32",
-                    "-c:v", "mpeg4", "-pix_fmt", "yuv420p", "-c:a", "pcm_s16le",
-                    "-f", "nut", AV_FIXTURE,
+                    "-c:v", "mpeg4", "-pix_fmt", "yuv420p", "-c:a", audioCodec,
+                    "-f", container, AV_FIXTURE,
                 ),
                 CommandIo {
                     input("frames.rgb", frames)

@@ -185,6 +185,13 @@ public class VideoDecoder private constructor(
      */
     public val decoderKind: DecoderKind = stream.activeDecoder.toPublic()
 
+    /**
+     * Why a decoder opened under [CodecPreference.AUTO] decodes in software, fixed when it opened:
+     * no hardware decoder takes the source, the hardware one failed, or [DecoderBudget] was full.
+     * Null when it decodes in hardware, under another preference, and in the browser.
+     */
+    public val decoderFallback: DecoderFallbackReason? = stream.decoderFallback.toPublic()
+
     private val closed = AtomicBoolean(false)
 
     /** Held for each call until its native work has returned, or until it failed or timed out. */
@@ -311,6 +318,11 @@ public class VideoDecoder private constructor(
          * and every [seekTo] and [frameAt] of the decoder; [Duration.INFINITE] waits indefinitely.
          * When [decoder] is AUTO and the hardware decoder stalls, the software fallback gets a
          * timeout of its own, so opening takes at most twice [timeout].
+         *
+         * A hardware decoder takes a place in [DecoderBudget] until [close]. With every place
+         * taken, AUTO opens the software decoder at once ([decoderFallback] is
+         * [DecoderFallbackReason.BUDGET]) and REQUIRE_HARDWARE fails with a
+         * [VideoDecodingException]; neither waits for a place.
          */
         public suspend fun open(
             source: MediaSource,

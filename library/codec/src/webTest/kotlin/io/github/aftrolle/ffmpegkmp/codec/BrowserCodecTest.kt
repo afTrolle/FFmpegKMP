@@ -150,6 +150,39 @@ class BrowserCodecTest {
         }
     }
 
+    /**
+     * The decoder's worker opens its input once, for the inspection and the packets alike, holds it in its heap once,
+     * and gives WebCodecs each packet straight from the heap: the one copy out of the heap is the decoder's
+     * description. The large input is the clip with 80 MB of zeros after it, which the demuxer never reads: more than
+     * the 64 MB heap a worker starts with, so two copies would grow it by more than one input and its first 64 MB.
+     */
+    @Test
+    fun theInputIsOpenedOnceAndLiesInTheHeapOnce() = browserTest {
+        if (!webCodecs()) return@browserTest
+        recordWorkers()
+        val small = workersStarted()
+        open("cfr-30-h264.mp4").use { decoder ->
+            for (index in listOf(0, 30, 90, 149)) {
+                decoder.frameAt(FrameRate(30).timeOf(index.toLong())).use { assertEquals(index, it.number()) }
+            }
+            val opened = workerStatistics(small)
+            println("BrowserCodecTest: $opened")
+            assertEquals(1, opened.inputOpens, "inputs opened: $opened")
+            // Each target decoded from its keyframe.
+            assertTrue(opened.packets >= 4, "packets decoded: $opened")
+            assertTrue(opened.chunksFromHeap, "Chrome takes chunk data from the shared heap: $opened")
+            assertEquals(1, opened.heapSlices, "copies out of the heap: $opened")
+            val large = workersStarted()
+            open("cfr-30-h264.mp4", padding = PADDING).use { padded ->
+                padded.frameAt(FrameRate(30).timeOf(60)).use { assertEquals(60, it.number()) }
+                val grown = workerStatistics(large).heapBytes - opened.heapBytes
+                println("BrowserCodecTest: the heap grew by $grown bytes for a $PADDING-byte input")
+                assertTrue(grown < 1.1 * PADDING, "the heap grew by $grown bytes for a $PADDING-byte input")
+                assertEquals(1, workerStatistics(large).inputOpens)
+            }
+        }
+    }
+
     @Test
     fun formatsWebCodecsCannotCopyIntoAreRefused() = browserTest {
         if (!webCodecs()) return@browserTest
@@ -235,8 +268,9 @@ class BrowserCodecTest {
         name: String,
         output: VideoOutput = VideoOutput.Memory(FrameFormat.Rgba8),
         decoder: CodecPreference = CodecPreference.AUTO,
+        padding: Int = 0,
     ): VideoDecoder {
-        val bytes = fetchBytes("/base/kotlin/video-decoder/$name")
+        val bytes = fetchBytes("/base/kotlin/video-decoder/$name").let { if (padding > 0) it.copyOf(it.size + padding) else it }
         return VideoDecoder.open(MediaSource(name, CommandIo { input(name, Buffer().write(bytes)) }), output, decoder, timeout = 20.seconds)
     }
 }
@@ -331,3 +365,64 @@ private fun fetchUint8(url: String): Promise<JsAny?> = js(
 private fun byteCount(bytes: JsAny): Int = js("bytes.length")
 
 private fun byteAt(bytes: JsAny, index: Int): Int = js("bytes[index]")
+
+/** 80 MB, more than the heap a worker starts with. */
+private const val PADDING = 80 shl 20
+
+/** What a worker reports to a `statistics` message; see ffmpegkmp-worker.mjs. */
+private data class WorkerStatistics(
+    val heapBytes: Double,
+    val heapSlices: Int,
+    val packets: Int,
+    val chunksFromHeap: Boolean,
+    val inputOpens: Int,
+)
+
+/** Records each Worker the page starts from now on, so that a test can ask it for its statistics. */
+private fun recordWorkers(): Unit = js(
+    """{
+      if (!globalThis.__ffmpegkmpTestWorkers) {
+        const started = [];
+        const Native = globalThis.Worker;
+        function Recorded(url, options) {
+          const worker = new Native(url, options);
+          started.push(worker);
+          return worker;
+        }
+        Recorded.prototype = Native.prototype;
+        globalThis.Worker = Recorded;
+        globalThis.__ffmpegkmpTestWorkers = started;
+      }
+    }""",
+)
+
+private fun workersStarted(): Int = js("globalThis.__ffmpegkmpTestWorkers.length")
+
+private suspend fun workerStatistics(index: Int): WorkerStatistics {
+    val reply = checkNotNull(requestStatistics(index).await())
+    return WorkerStatistics(
+        heapBytes = statistic(reply, "heapBytes"),
+        heapSlices = statistic(reply, "heapSlices").toInt(),
+        packets = statistic(reply, "packets").toInt(),
+        chunksFromHeap = statistic(reply, "chunksFromHeap") != 0.0,
+        inputOpens = statistic(reply, "inputOpens").toInt(),
+    )
+}
+
+// The id is no request the decoder's controller made, so it leaves the reply alone.
+private fun requestStatistics(index: Int): Promise<JsAny?> = js(
+    """new Promise((resolve, reject) => {
+      const worker = globalThis.__ffmpegkmpTestWorkers[index];
+      const timer = setTimeout(() => reject(new Error('Worker ' + index + ' sent no statistics')), 10000);
+      const listener = event => {
+        if (!event.data || event.data.type !== 'statistics') return;
+        clearTimeout(timer);
+        worker.removeEventListener('message', listener);
+        resolve(event.data);
+      };
+      worker.addEventListener('message', listener);
+      worker.postMessage({ type: 'statistics', id: 'statistics' });
+    })""",
+)
+
+private fun statistic(reply: JsAny, name: String): Double = js("Number(reply[name])")

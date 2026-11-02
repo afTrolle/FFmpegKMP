@@ -33,11 +33,13 @@ import io.github.aftrolle.ffmpegkmp.codec.FrameFormat
 import io.github.aftrolle.ffmpegkmp.codec.VideoFrame
 import io.github.aftrolle.ffmpegkmp.codec.hardwareBuffer
 
-public actual fun VideoFrame.toImageBitmap(): ImageBitmap = toFrameBitmap(bitmapFormat()).image
+public actual fun VideoFrame.toImageBitmap(): ImageBitmap = toFrameBitmap(bitmapFormat(), IntSize(width, height)).image
 
 internal actual fun VideoFrame.bitmapFormat(): FrameFormat = imageFormat { it == FrameFormat.Rgba8 || it == FrameFormat.RgbaF16 }
 
-internal actual fun VideoFrame.toFrameBitmap(format: FrameFormat): FrameBitmap = AndroidFrameBitmap(this, format)
+internal actual fun VideoFrame.toFrameBitmap(format: FrameFormat, size: IntSize): FrameBitmap = AndroidFrameBitmap(this, format, size)
+
+internal actual val bitmapsScale: Boolean = true
 
 internal actual fun gpuFrameWraps(): GpuFrameWraps = HardwareFrameBitmaps()
 
@@ -152,13 +154,14 @@ half4 main(float2 coord) {
 """
 
 /**
- * An Android bitmap holding [frame], converted straight into its pixels, locked with
- * `AndroidBitmap_lockPixels`. Unlocking them gives the bitmap a new generation, which is what
- * tells the renderer to upload it again after a [write].
+ * An Android bitmap of [size] holding [frame], converted straight into its pixels, locked with
+ * `AndroidBitmap_lockPixels`, and scaled to the bitmap's size in the same pass. Unlocking them
+ * gives the bitmap a new generation, which is what tells the renderer to upload it again after a
+ * [write].
  */
-private class AndroidFrameBitmap(frame: VideoFrame, override val format: FrameFormat) : FrameBitmap {
-    override val width = frame.width
-    override val height = frame.height
+private class AndroidFrameBitmap(frame: VideoFrame, override val format: FrameFormat, size: IntSize) : FrameBitmap {
+    override val width = size.width
+    override val height = size.height
     private val bitmap = if (format == FrameFormat.RgbaF16) {
         check(Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) { "RGBA_F16 bitmaps need Android 8.0 (API 26)" }
         Bitmap.createBitmap(

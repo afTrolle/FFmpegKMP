@@ -7,9 +7,11 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.RememberObserver
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.unit.IntSize
 import io.github.aftrolle.ffmpegkmp.codec.ColorPrimaries
 import io.github.aftrolle.ffmpegkmp.codec.VideoFrame
 import io.github.aftrolle.ffmpegkmp.codec.VideoInfo
@@ -47,14 +49,30 @@ internal class RememberedFFplayPlayer(val player: FFplayPlayer) : RememberObserv
     }
 }
 
+/**
+ * Shows [player]'s video, placed by [contentScale] on [backgroundColor].
+ *
+ * Frames the surface converts itself, on a Compose canvas or where hardware decoding fell back to
+ * software, are converted at the size the picture is drawn at, which is all a tile of a 4K source
+ * needs. A surface cannot see a transform drawn around it, such as `Modifier.graphicsLayer` or
+ * `Modifier.scale`, so a zoomed surface would show that small picture stretched: pass the size, in
+ * pixels, the picture is rendered at as [resolution], upright as `FrameImage.targetSize` takes it,
+ * such as its drawn size times the zoom, or the video's own size for every pixel. Frames are never
+ * converted larger than the video. Null, the default, is the drawn size. Frames shown by a
+ * platform's own video view, from a hardware decoder, are full size whatever this says.
+ */
 @Composable
 public fun FFplaySurface(
     player: FFplayPlayer,
     modifier: Modifier = Modifier,
     contentScale: ContentScale = ContentScale.Fit,
     backgroundColor: Color = Color.Black,
+    resolution: IntSize? = null,
 ) {
-    PlatformFFplaySurface(player, modifier, contentScale, backgroundColor)
+    require(resolution == null || (resolution.width >= 0 && resolution.height >= 0)) {
+        "A resolution is not negative: $resolution"
+    }
+    PlatformFFplaySurface(player, modifier, contentScale, backgroundColor, resolution)
 }
 
 @Composable
@@ -63,6 +81,7 @@ internal expect fun PlatformFFplaySurface(
     modifier: Modifier,
     contentScale: ContentScale,
     backgroundColor: Color,
+    resolution: IntSize?,
 )
 
 @Composable
@@ -71,8 +90,10 @@ internal fun ComposeCanvasFFplaySurface(
     modifier: Modifier,
     contentScale: ContentScale,
     backgroundColor: Color,
+    resolution: IntSize?,
 ) {
     val output = remember(player) { ComposeCanvasOutput() }
+    output.resolution = resolution
     DisposableEffect(player, output) {
         player.attachOutput(output)
         onDispose {
@@ -83,6 +104,7 @@ internal fun ComposeCanvasFFplaySurface(
     Canvas(modifier) {
         drawRect(backgroundColor)
         drawFrameImage(output.image, contentScale)
+        output.drawnIn(size, contentScale)
     }
 }
 
@@ -99,7 +121,30 @@ private class ComposeCanvasOutput : FFplayVideoOutput, AutoCloseable {
         toneMapHdrToSdr = true,
     )
 
-    override fun submitNative(frame: VideoFrame, video: VideoInfo?): Boolean = frame.use { image.updateIfOpen(it) }
+    /** Where bitmaps cannot scale frames, in the browser, the bridge converts them to the size they are drawn at. */
+    private val frameSize = BridgeFrameSize()
+
+    override fun submitNative(frame: VideoFrame, video: VideoInfo?): Boolean = frame.use {
+        // The browser's frames come at the drawn size: layout follows the video they show.
+        image.updateIfOpen(it, video?.takeUnless { bitmapsScale }?.let { info -> IntSize(info.width, info.height) })
+    }
+
+    override fun bindFrameSize(sink: ((width: Int, height: Int) -> Unit)?) {
+        if (!bitmapsScale) frameSize.bind(sink)
+    }
+
+    /** The size the picture is rendered at, for frames converted at that size; null for the drawn size. */
+    var resolution: IntSize?
+        get() = image.targetSize
+        set(value) {
+            image.targetSize = value
+        }
+
+    /** Tells the bridge, where it converts frames, the size the picture is drawn at in [area]. */
+    fun drawnIn(area: Size, contentScale: ContentScale) {
+        val shown = image.shown ?: return
+        frameSize.drawnIn(shown.frameSize, shown.rotationDegrees, shown.displaySize, area, contentScale, resolution)
+    }
 
     override fun discard() = image.clear()
 
@@ -113,8 +158,12 @@ private class ComposeCanvasOutput : FFplayVideoOutput, AutoCloseable {
  */
 internal fun playerFrameImage(): FrameImage = FrameImage(bitmaps = 3)
 
-/** Draws [image] placed by [contentScale] in the whole canvas; nothing before its first frame. */
+/**
+ * Draws [image] placed by [contentScale] in the whole canvas; nothing before its first frame. Tells
+ * the image where it is drawn, so that the next frames are converted at the size they are drawn at.
+ */
 internal fun DrawScope.drawFrameImage(image: FrameImage, contentScale: ContentScale) {
+    image.drawnIn(size, contentScale)
     val destination = contentScale.place(image.displaySize, size)
     drawFrameImage(image, destination.topLeft, destination.size)
 }

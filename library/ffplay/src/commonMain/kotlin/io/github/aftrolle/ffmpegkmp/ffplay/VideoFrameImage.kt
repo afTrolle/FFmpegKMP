@@ -33,8 +33,8 @@ import io.github.aftrolle.ffmpegkmp.codec.VideoFrame
 public expect fun VideoFrame.toImageBitmap(): ImageBitmap
 
 /**
- * A bitmap Compose draws, which frames of its size and format are converted into in place: what
- * [toImageBitmap] returns and what a [FrameImage] reuses.
+ * A bitmap Compose draws, which frames of its format are converted into in place, scaled to its
+ * size: what [toImageBitmap] returns and what a [FrameImage] reuses.
  */
 internal interface FrameBitmap : AutoCloseable {
     val width: Int
@@ -45,7 +45,7 @@ internal interface FrameBitmap : AutoCloseable {
     /** The part of [image] that holds the picture. */
     val source: IntRect get() = IntRect(0, 0, width, height)
 
-    /** Converts [frame], of this size, into the pixels, and tells the platform they changed. */
+    /** Converts [frame] into the pixels, scaled to this size, and tells the platform they changed. */
     fun write(frame: VideoFrame)
 }
 
@@ -91,8 +91,14 @@ internal expect fun DrawScope.drawCodedImage(
     transfer: ColorTransfer,
 )
 
-/** A new bitmap of [format] holding this frame, converted into it. */
-internal expect fun VideoFrame.toFrameBitmap(format: FrameFormat): FrameBitmap
+/**
+ * A new bitmap of [format] and [size] holding this frame, converted into it. A [size] other than
+ * the frame's needs [scalesIntoBitmaps].
+ */
+internal expect fun VideoFrame.toFrameBitmap(format: FrameFormat, size: IntSize): FrameBitmap
+
+/** Whether this platform's bitmaps take frames of another size, scaling them: not in the browser. */
+internal expect val bitmapsScale: Boolean
 
 /** The format [toImageBitmap] and [FrameImage] draw this frame in. */
 internal expect fun VideoFrame.bitmapFormat(): FrameFormat

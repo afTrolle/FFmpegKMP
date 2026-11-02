@@ -5,12 +5,14 @@ package io.github.aftrolle.ffmpegkmp.bindings
 
 import io.github.aftrolle.ffmpegkmp.bindings.generated.bridge.ffmpegkmp_frame
 import io.github.aftrolle.ffmpegkmp.bindings.generated.bridge.ffplaykmp_configuration
+import io.github.aftrolle.ffmpegkmp.bindings.generated.bridge.ffplaykmp_input_hint
 import io.github.aftrolle.ffmpegkmp.bindings.generated.bridge.ffplaykmp_io_callback
 import io.github.aftrolle.ffmpegkmp.bindings.generated.bridge.ffplaykmp_output_capabilities
 import io.github.aftrolle.ffmpegkmp.bindings.generated.bridge.ffplaykmp_platform_video_frame
 import io.github.aftrolle.ffmpegkmp.bindings.generated.bridge.ffplaykmp_platform_video_frame_callback
 import io.github.aftrolle.ffmpegkmp.bindings.generated.bridge.ffplaykmp_player
 import io.github.aftrolle.ffmpegkmp.bindings.generated.bridge.ffplaykmp_snapshot
+import io.github.aftrolle.ffmpegkmp.bindings.generated.bridge.ffplaykmp_statistics
 import io.github.aftrolle.ffmpegkmp.bindings.generated.bridge.ffplaykmp_state_callback
 import io.github.aftrolle.ffmpegkmp.bindings.generated.bridge.ffplaykmp_video_frame
 import io.github.aftrolle.ffmpegkmp.bindings.generated.bridge.ffplaykmp_video_frame_callback
@@ -103,6 +105,7 @@ private class JavaCppPlayerEngine(
         bridge.ffplaykmp_configuration_default(nativeConfiguration)
         nativeConfiguration.decoder_preference(configuration.decoderPreference.ordinal)
         nativeConfiguration.decoder_threads(configuration.decoderThreads)
+        nativeConfiguration.codec_release_delay_us(configuration.codecReleaseDelayUs)
         player = bridge.ffplaykmp_player_create(nativeConfiguration, stateCallback, null)
             ?: run {
                 nativeConfiguration.close()
@@ -168,6 +171,25 @@ private class JavaCppPlayerEngine(
         }
     }
 
+    override fun inputHint(): NativeInputHint? {
+        val hint = ffplaykmp_input_hint()
+        bridge.ffplaykmp_input_hint_init(hint)
+        return try {
+            if (bridge.ffplaykmp_player_get_input_hint(player, hint) != 0) {
+                null
+            } else {
+                NativeInputHint(
+                    formatName = hint.format_name().string,
+                    startUs = hint.start_us(),
+                    durationUs = hint.duration_us(),
+                    audioStreams = hint.audio_streams(),
+                )
+            }
+        } finally {
+            hint.close()
+        }
+    }
+
     override fun release() {
         bridge.ffplaykmp_player_destroy(player)
         ioCallback.close()
@@ -212,4 +234,51 @@ internal fun ffplaykmp_snapshot.toNativeSnapshot(): NativePlayerSnapshot = nativ
     contentLightPresent = content_light_present() != 0,
     maxContentLightLevel = max_content_light_level(),
     maxFrameAverageLightLevel = max_frame_average_light_level(),
+    decoderFallback = decoder_fallback(),
 )
+
+@InternalFFmpegKmpApi
+public actual fun nativePlayerStatistics(): NativePlayerStatistics {
+    JavaCppBridgeLoader.load()
+    val statistics = ffplaykmp_statistics()
+    return try {
+        bridge.ffplaykmp_statistics_init(statistics)
+        bridge.ffplaykmp_get_statistics(statistics)
+        NativePlayerStatistics(
+            codecOpens = statistics.codec_opens(),
+            videoPackets = statistics.video_packets(),
+            downloads = statistics.downloads(),
+            codecCloses = statistics.codec_closes(),
+            inputOpens = statistics.input_opens(),
+            inputProbes = statistics.input_probes(),
+        )
+    } finally {
+        statistics.close()
+    }
+}
+
+@InternalFFmpegKmpApi
+public actual fun nativeDecoderBudget(): NativeDecoderBudget {
+    JavaCppBridgeLoader.load()
+    return NativeDecoderBudget(
+        hardwareDecoders = bridge.ffplaykmp_decoder_budget_get(),
+        inUse = bridge.ffplaykmp_decoder_budget_in_use(),
+    )
+}
+
+@InternalFFmpegKmpApi
+public actual fun setNativeDecoderBudget(hardwareDecoders: Int) {
+    require(hardwareDecoders >= 0) { "The hardware decoder budget must not be negative: $hardwareDecoders" }
+    JavaCppBridgeLoader.load()
+    bridge.ffplaykmp_decoder_budget_set(hardwareDecoders)
+}
+
+/** `ffplaykmp_hardware_decoder_available` for [codec]; null where the platform does not say. */
+internal fun javaCppHardwareDecoderAvailable(codec: String): Boolean? {
+    JavaCppBridgeLoader.load()
+    return when (bridge.ffplaykmp_hardware_decoder_available(codec)) {
+        1 -> true
+        0 -> false
+        else -> null
+    }
+}

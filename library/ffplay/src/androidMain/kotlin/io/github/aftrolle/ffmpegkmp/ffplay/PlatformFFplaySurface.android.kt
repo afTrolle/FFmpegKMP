@@ -21,12 +21,14 @@ import androidx.compose.ui.graphics.toAndroidRectF
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.unit.IntSize
 import io.github.aftrolle.ffmpegkmp.codec.ColorPrimaries
 import io.github.aftrolle.ffmpegkmp.codec.ColorTransfer
 import io.github.aftrolle.ffmpegkmp.codec.VideoFrame
 import io.github.aftrolle.ffmpegkmp.codec.VideoInfo
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
+import kotlin.math.roundToInt
 
 @Composable
 internal actual fun PlatformFFplaySurface(
@@ -34,9 +36,10 @@ internal actual fun PlatformFFplaySurface(
     modifier: Modifier,
     contentScale: ContentScale,
     backgroundColor: Color,
+    resolution: IntSize?,
 ) {
     if (player.configuration.outputPreference == FFplayOutputPreference.COMPOSE_CANVAS) {
-        ComposeCanvasFFplaySurface(player, modifier, contentScale, backgroundColor)
+        ComposeCanvasFFplaySurface(player, modifier, contentScale, backgroundColor, resolution)
         return
     }
 
@@ -48,14 +51,15 @@ internal actual fun PlatformFFplaySurface(
     // One output per player: presentation changes are applied to it, not by replacing it, since
     // the external surface below is bound to the output it was created with.
     val output = remember(player) { AndroidSurfaceOutput(contentScale, backgroundColor.toArgb()) }
-    output.updatePresentation(contentScale, backgroundColor.toArgb())
+    output.updatePresentation(contentScale, backgroundColor.toArgb(), resolution)
     output.updateVideoInfo(video)
     remember(output, hostView.display) { output.updateDisplayCapabilities(hostView.display) }
 
     LaunchedEffect(output, video, contentScale) {
         // Re-negotiate once stream display metadata is known, and when the scale decides whether
         // direct presentation is possible. Transformed streams deliberately use the software path
-        // because a raw MediaCodec Surface cannot apply FFmpeg's matrix.
+        // because a raw MediaCodec Surface cannot apply FFmpeg's matrix; until the stream is known
+        // the output offers MediaCodec the Surface (see AndroidSurfaceOutput.capabilities).
         player.attachOutput(output)
     }
 
@@ -91,7 +95,7 @@ internal actual fun PlatformFFplaySurface(
  * Android's native-surface tier. MediaCodec frames are presented directly by the native player;
  * CPU-readable frames arrive here only when automatic negotiation selected the software fallback.
  */
-private class AndroidSurfaceOutput(
+internal class AndroidSurfaceOutput(
     contentScale: ContentScale,
     backgroundArgb: Int,
 ) : FFplayVideoOutput {
@@ -101,19 +105,38 @@ private class AndroidSurfaceOutput(
     private var height = 0
     private var contentScale = contentScale
     private var backgroundArgb = backgroundArgb
+
+    /** The size the picture is rendered at, for software frames converted at that size; null for the drawn size. */
+    private var resolution: IntSize? = null
     private var videoInfo: VideoInfo? = null
     private var displayHdrTransfers: Set<ColorTransfer> = emptySet()
     private var displayColorSpaces: Set<ColorPrimaries> = setOf(ColorPrimaries.BT709)
     private val paint = Paint(Paint.FILTER_BITMAP_FLAG)
 
-    /** The bitmap each software frame is converted into before it is drawn onto [surface]. */
+    /** The bitmap each software frame is converted into before it is drawn onto [surface], at the size it is drawn at. */
     private var bitmap: FrameBitmap? = null
+    private val sizing = BitmapSizing()
+
+    /** The size of [bitmap], for tests; null before the first software frame. */
+    internal val bitmapSize: IntSize?
+        get() = synchronized(lock) { bitmap?.let { IntSize(it.width, it.height) } }
 
     override val kind: FFplayRendererKind = FFplayRendererKind.NATIVE_SURFACE
+
+    /**
+     * Before the stream is known, its frames are offered to MediaCodec as if they needed no transform. The
+     * order matters because of how the Surface is connected: `lockCanvas` connects it as a CPU producer that
+     * stays connected for the Surface's life, so MediaCodec can no longer configure on it, while a codec's
+     * connection ends when the codec closes. A transformed stream therefore still falls back to the canvas
+     * once it is known (its first preview may reach the Surface untransformed until then), but a canvas
+     * preview drawn first would keep every later stream from MediaCodec. Once the canvas has drawn, for a
+     * transformed stream, a scale other than Fit or a failed hardware open, the Surface stays the canvas's,
+     * and AUTO decodes in software on it from then on.
+     */
     override val capabilities: FFplayOutputCapabilities
         get() = synchronized(lock) {
             val directSurfacePresentation = contentScale == ContentScale.Fit &&
-                videoInfo.hasIdentityDisplayTransform()
+                videoInfo.mayHaveIdentityDisplayTransform()
             FFplayOutputCapabilities(
                 hardwareFrameImport = directSurfacePresentation,
                 softwareFrameUpload = true,
@@ -127,10 +150,12 @@ private class AndroidSurfaceOutput(
     override val platformTarget: Any?
         get() = synchronized(lock) { surface }
 
-    fun updatePresentation(contentScale: ContentScale, backgroundArgb: Int) = synchronized(lock) {
-        this.contentScale = contentScale
-        this.backgroundArgb = backgroundArgb
-    }
+    fun updatePresentation(contentScale: ContentScale, backgroundArgb: Int, resolution: IntSize? = null) =
+        synchronized(lock) {
+            this.contentScale = contentScale
+            this.backgroundArgb = backgroundArgb
+            this.resolution = resolution
+        }
 
     fun updateVideoInfo(videoInfo: VideoInfo?) = synchronized(lock) {
         this.videoInfo = videoInfo
@@ -182,17 +207,21 @@ private class AndroidSurfaceOutput(
     private fun draw(frame: VideoFrame): Boolean {
         val target = surface?.takeIf(Surface::isValid) ?: return false
         if (width <= 0 || height <= 0) return false
+        val display = displaySize(frame.width, frame.height, frame.sampleAspectRatio, frame.rotationDegrees)
+        val destination = contentScale.place(display, Size(width.toFloat(), height.toFloat()))
+        val size = sizing.sizeFor(
+            frame,
+            resolution ?: IntSize(destination.width.roundToInt(), destination.height.roundToInt()),
+        )
         // The frame is drawn before this returns, so one bitmap serves every frame of its size and format.
         val format = frame.bitmapFormat()
-        val converted = bitmap?.takeIf { it.width == frame.width && it.height == frame.height && it.format == format }
+        val converted = bitmap?.takeIf { it.width == size.width && it.height == size.height && it.format == format }
             ?.apply { write(frame) }
-            ?: frame.toFrameBitmap(format).also {
+            ?: frame.toFrameBitmap(format, size).also {
                 bitmap?.close()
                 bitmap = it
             }
         val pixels = converted.image.asAndroidBitmap()
-        val display = displaySize(pixels.width, pixels.height, frame.sampleAspectRatio, frame.rotationDegrees)
-        val destination = contentScale.place(display, Size(width.toFloat(), height.toFloat()))
         val turn = uprightTurn(frame.rotationDegrees)
         val canvas = try {
             target.lockCanvas(null)
@@ -214,6 +243,7 @@ private class AndroidSurfaceOutput(
     override fun discard() = Unit
 }
 
-private fun VideoInfo?.hasIdentityDisplayTransform(): Boolean =
-    this != null && rotationDegrees.normalizedRotation() == 0f &&
+/** False only for a known stream that is rotated or has non-square pixels. */
+private fun VideoInfo?.mayHaveIdentityDisplayTransform(): Boolean =
+    this == null || rotationDegrees.normalizedRotation() == 0f &&
         kotlin.math.abs(sampleAspectRatioValue() - 1.0) < 0.000_001

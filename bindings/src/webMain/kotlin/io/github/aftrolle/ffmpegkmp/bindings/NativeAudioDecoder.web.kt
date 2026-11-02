@@ -2,7 +2,12 @@
 package io.github.aftrolle.ffmpegkmp.bindings
 
 @InternalFFmpegKmpApi
-public actual fun openPlatformAudioDecoder(source: NativePlayerSource, sampleRate: Int, channels: Int): NativeAudioDecoder =
+public actual fun openPlatformAudioDecoder(
+    source: NativePlayerSource,
+    sampleRate: Int,
+    channels: Int,
+    hint: NativeInputHint?,
+): NativeAudioDecoder =
     throw NativeBridgeUnavailableException(
         "Audio decoding and playback are not available in the browser yet: the audio engine runs " +
             "only inside FFplayPlayer's worker.",

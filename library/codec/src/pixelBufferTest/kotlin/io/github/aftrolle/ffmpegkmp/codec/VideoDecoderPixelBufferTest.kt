@@ -89,7 +89,8 @@ class VideoDecoderPixelBufferTest {
                 assertEquals(3, seen.size, "$name: 3 frames held open")
                 // Software frames are copies into the decoder's ring of three pooled buffers, so a
                 // fourth fails until one closes. VideoToolbox's are its own.
-                if (decoder.decoderKind == DecoderKind.SOFTWARE) {
+                val ring = decoder.decoderKind == DecoderKind.SOFTWARE
+                if (ring) {
                     assertFailsWith<IllegalStateException>("$name: a fourth frame while three are held") {
                         decoder.frameAt(clip.frame * 3)
                     }

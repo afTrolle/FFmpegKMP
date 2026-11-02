@@ -1,8 +1,13 @@
 // SPDX-License-Identifier: Apache-2.0
-@file:OptIn(kotlin.concurrent.atomics.ExperimentalAtomicApi::class)
+@file:OptIn(
+    io.github.aftrolle.ffmpegkmp.bindings.InternalFFmpegKmpApi::class,
+    kotlin.concurrent.atomics.ExperimentalAtomicApi::class,
+)
 
 package io.github.aftrolle.ffmpegkmp.player
 
+import io.github.aftrolle.ffmpegkmp.bindings.NativeInputHint
+import io.github.aftrolle.ffmpegkmp.core.InternalFFmpegKmpApi
 import io.github.aftrolle.ffmpegkmp.core.MediaSource
 import kotlin.concurrent.atomics.AtomicBoolean
 import kotlin.time.Duration
@@ -193,6 +198,18 @@ public class AudioPlayer internal constructor(
          */
         public suspend fun open(source: MediaSource, format: PcmFormat = PcmFormat.Default): AudioPlayer =
             openWith({ AudioDecoder.open(source, format) }, { createPlatformAudioOutput(format) })
+
+        /**
+         * Opens [source] as [open] does, for a player that has just prepared the same input:
+         * [hint] is what its probe found, so the input is not probed again when its header
+         * declares its audio, and media time starts where the player's does.
+         */
+        @InternalFFmpegKmpApi
+        public suspend fun open(
+            source: MediaSource,
+            hint: NativeInputHint?,
+            format: PcmFormat = PcmFormat.Default,
+        ): AudioPlayer = openWith({ AudioDecoder.open(source, format, hint) }, { createPlatformAudioOutput(format) })
 
         /**
          * Opening blocks in native code and cannot be interrupted, so it runs to completion; if the

@@ -6,12 +6,54 @@ package io.github.aftrolle.ffmpegkmp.bindings
 import android.graphics.ImageFormat
 import android.hardware.HardwareBuffer
 import android.media.ImageReader
+import android.media.MediaCodecInfo
+import android.media.MediaCodecList
 import android.os.Build
 import android.view.Surface
 import io.github.aftrolle.ffmpegkmp.bindings.javacpp.AndroidBitmapFrames
 import io.github.aftrolle.ffmpegkmp.bindings.generated.bridge.ffmpegkmp_video_decoder
 import io.github.aftrolle.ffmpegkmp.bindings.javacpp.AndroidPlayerSurface
 import org.bytedeco.javacpp.Loader
+
+/**
+ * MediaCodecList's answer for the decoder FFmpeg's MediaCodec wrapper would take: the first hardware
+ * decoder for the codec's type, not a secure one, that takes [width] × [height]. Its
+ * `maxSupportedInstances` is the platform's hint, which devices do not all keep to.
+ */
+@InternalFFmpegKmpApi
+public actual fun nativeHardwareDecoderSupport(codec: String, width: Int, height: Int): NativeHardwareDecoderSupport {
+    val mime = MEDIA_CODEC_TYPES[codec] ?: return NativeHardwareDecoderSupport(available = false, maxInstances = null)
+    val capabilities = MediaCodecList(MediaCodecList.REGULAR_CODECS).codecInfos.asSequence()
+        .filter { !it.isEncoder && it.isHardwareDecoder() && !it.name.endsWith(".secure") }
+        .mapNotNull { info ->
+            val type = info.supportedTypes.firstOrNull { it.equals(mime, ignoreCase = true) } ?: return@mapNotNull null
+            runCatching { info.getCapabilitiesForType(type) }.getOrNull()
+        }
+        .firstOrNull { it.videoCapabilities?.isSizeSupported(width, height) == true }
+    return NativeHardwareDecoderSupport(available = capabilities != null, maxInstances = capabilities?.maxSupportedInstances)
+}
+
+/** The MediaCodec type of each video codec FFmpeg decodes through MediaCodec, by FFmpeg's name. */
+private val MEDIA_CODEC_TYPES = mapOf(
+    "h264" to "video/avc",
+    "hevc" to "video/hevc",
+    "vp8" to "video/x-vnd.on2.vp8",
+    "vp9" to "video/x-vnd.on2.vp9",
+    "av1" to "video/av01",
+    "mpeg4" to "video/mp4v-es",
+    "h263" to "video/3gpp",
+    "mpeg2video" to "video/mpeg2",
+)
+
+/** Before API 29 says, by the names of the platform's software codecs, which FFmpeg's wrapper skips too. */
+private fun MediaCodecInfo.isHardwareDecoder(): Boolean =
+    if (Build.VERSION.SDK_INT >= 29) {
+        isHardwareAccelerated && !isSoftwareOnly
+    } else {
+        SOFTWARE_CODEC_PREFIXES.none { name.startsWith(it, ignoreCase = true) }
+    }
+
+private val SOFTWARE_CODEC_PREFIXES = listOf("OMX.google.", "OMX.ffmpeg.", "c2.android.", "c2.google.")
 
 @InternalFFmpegKmpApi
 public actual fun createPlatformPlayerBridge(

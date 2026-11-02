@@ -100,7 +100,14 @@ setup and frame conversion with the player through `ffplaykmp_core.c`, whose
 `ffplaykmp_video_codec_open` gives software decoders `DecoderThreads` threads
 (FFmpeg's automatic count capped at 8 by default) and leaves hardware decoders
 at one: slice threads for the decoder, so each video has one frame in progress,
-and frame and slice threads for the player, as `ffplay` does.
+and frame and slice threads for the player, as `ffplay` does. A hardware
+decoder also takes a place there in the process's hardware decoder budget
+(`ffplaykmp_decoder_budget_set`, codec's `DecoderBudget`), which
+`ffplaykmp_video_codec_close` gives back, so players and `VideoDecoder`s share
+one count. With every place taken the open returns `FFPLAYKMP_ERROR_BUSY` at
+once, which AUTO turns into a software decoder reporting
+`FFPLAYKMP_DECODER_FALLBACK_BUDGET` and REQUIRE_HARDWARE into a failure; nothing
+waits for a place.
 
 Decoded frames reach Kotlin as frame handles (`ffmpegkmp_frame.c`): each
 `VideoFrame` holds one reference to an FFmpeg `AVFrame`, so a frame is never

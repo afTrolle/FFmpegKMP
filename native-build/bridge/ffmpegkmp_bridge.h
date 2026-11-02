@@ -96,6 +96,37 @@ FFMPEGKMP_EXPORT ffmpegkmp_player *ffmpegkmp_player_open(
         int output_sample_rate,
         int output_channels,
         int *error);
+/*
+ * Opens `input` as ffmpegkmp_player_open does, for an input an FFplay player
+ * has just prepared, with what its probe found (ffplaykmp_player_get_input_hint):
+ * the hint's demuxer reads the header, and when it declares every audio stream
+ * with its codec, sample rate and channels, the input is not probed again and
+ * media time starts where the player's does. Otherwise, as for a headerless
+ * container such as MPEG-TS, the input is probed, and when the hint's demuxer
+ * cannot open it, it is opened as without a hint. NULL is no hint.
+ */
+FFMPEGKMP_EXPORT ffmpegkmp_player *ffmpegkmp_player_open_hinted(
+        const char *input,
+        ffplaykmp_io_callback io_callback,
+        void *io_opaque,
+        int output_sample_rate,
+        int output_channels,
+        const ffplaykmp_input_hint *hint,
+        int *error);
+/*
+ * ffmpegkmp_player_open_hinted with the hint of `prepared`, the FFplay player
+ * that prepared the same input as `input` serves; without a hint (nothing
+ * prepared, or NULL) it opens as ffmpegkmp_player_open does. For the browser
+ * worker, which holds both; `prepared` must stay alive through the call.
+ */
+FFMPEGKMP_EXPORT ffmpegkmp_player *ffmpegkmp_player_open_prepared(
+        const ffplaykmp_player *prepared,
+        const char *input,
+        ffplaykmp_io_callback io_callback,
+        void *io_opaque,
+        int output_sample_rate,
+        int output_channels,
+        int *error);
 /* Makes a blocked open/read return promptly; the player must still be closed. */
 FFMPEGKMP_EXPORT void ffmpegkmp_player_abort(ffmpegkmp_player *player);
 FFMPEGKMP_EXPORT void ffmpegkmp_player_close(ffmpegkmp_player *player);

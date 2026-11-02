@@ -21,7 +21,7 @@ class DecoderThreadsTest {
     }
 }
 
-private suspend fun nativeConfiguration(configuration: FFplayConfiguration): NativePlayerConfiguration {
+internal suspend fun nativeConfiguration(configuration: FFplayConfiguration): NativePlayerConfiguration {
     val created = mutableListOf<NativePlayerConfiguration>()
     val player = FFplayPlayer(
         configuration = configuration,

@@ -1010,8 +1010,13 @@ static int ffmpegkmp_takes_as_is(const ffmpegkmp_writer_track *track, const ffmp
             info.format.matrix != track->input_format.matrix ||
             info.format.range != track->input_format.range)
         return 0;
+    /*
+     * VideoToolbox keeps a pixel buffer until it gives that frame's packet, which
+     * can be more frames than a decoder's ring holds: the decoder would wait for
+     * its ring and the encoder for the next frame. A ring's frame is copied.
+     */
     if (track->pixel_format == AV_PIX_FMT_VIDEOTOOLBOX)
-        return ffmpegkmp_frame_is_pixel_buffer(source);
+        return ffmpegkmp_frame_is_pixel_buffer(source) && !ffmpegkmp_frame_is_ringed(source);
     return source->format == track->pixel_format && !source->hw_frames_ctx;
 }
 
@@ -1037,7 +1042,7 @@ static int ffmpegkmp_write_video(
         result = ffmpegkmp_frame_pool_get(track->pool, &track->input_format, track->config.width,
                 track->config.height, &converted);
         if (result >= 0)
-            result = ffmpegkmp_frame_convert_with(track->converter, converted, frame->frame, 0);
+            result = ffmpegkmp_frame_convert_with(track->converter, converted, frame->frame, track->pool, 0);
         if (result >= 0)
             result = av_frame_ref(track->input, converted->frame);
         ffmpegkmp_frame_unref(converted);

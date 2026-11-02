@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Benchmarks the pull VideoDecoder's native path (native-build/bridge/ffmpegkmp_decoder.c,
 # ffmpegkmp_frame.c and ffplaykmp_core.c, compiled unchanged) on macOS arm64, against the FFmpeg build the macosArm64
-# native build leaves in native-build/apple/out/standard/macosArm64.
+# native build leaves in native-build/apple/out/standard/macosArm64, or else the JVM host build's dylibs
+# (scripts/bench-ffmpeg.sh; FFMPEGKMP_BENCH_FFMPEG overrides both).
 #
 # Needs an ffmpeg with libx264 and libx265 on PATH to generate the clips (Homebrew's has both).
 # Each step benchmark runs with one decoder thread (FFMPEGKMP_BENCH_THREADS=1, DecoderThreads.Fixed(1)),
@@ -10,20 +11,19 @@
 # each decoding forward into RGBA8 at full size and at 960x540, with Auto and with 1, 2 and 4 threads each. It
 # reports the frames a second, the process's peak threads (and their peak once every decoder runs) and its peak
 # physical footprint (phys_footprint, what Activity Monitor shows).
+# The reopen mode, which all leaves out, reaches ten seek targets through a new decoder each (open, probe, codec
+# open and seek, as the player does on every seek and play) and then through one decoder kept open, through a
+# counting I/O callback: time, input opens, reads and bytes per target. FFMPEGKMP_BENCH_IO_LATENCY_US adds that
+# many microseconds to every read.
 #
-#   scripts/bench-video-decoder.sh [steps|hardware|convert|parallel|all]
+#   scripts/bench-video-decoder.sh [steps|hardware|convert|parallel|reopen|all]
 set -euo pipefail
 
 root="$(cd "$(dirname "$0")/.." && pwd)"
 mode="${1:-all}"
-ffmpeg_out="${FFMPEGKMP_BENCH_FFMPEG:-$root/native-build/apple/out/standard/macosArm64}"
 work="$root/build/bench/video-decoder"
 bridge="$root/native-build/bridge"
-
-if [[ ! -f "$ffmpeg_out/lib/libavcodec.a" ]]; then
-  echo "No FFmpeg build at $ffmpeg_out; build the macosArm64 native runtime first" >&2
-  exit 1
-fi
+source "$root/scripts/bench-ffmpeg.sh"
 mkdir -p "$work"
 
 clip() {
@@ -55,11 +55,7 @@ fi
 clang -O2 -std=c11 -w -DFFMPEGKMP_PIXEL_BUFFER=1 \
   -I"$bridge" -I"$ffmpeg_out/include" \
   "$root/native-build/bench/video_decoder_bench.c" "$bridge/ffmpegkmp_decoder.c" "$bridge/ffmpegkmp_frame.c" "$bridge/ffplaykmp_core.c" \
-  "$ffmpeg_out/lib/libavformat.a" "$ffmpeg_out/lib/libavcodec.a" "$ffmpeg_out/lib/libswscale.a" \
-  "$ffmpeg_out/lib/libswresample.a" "$ffmpeg_out/lib/libavutil.a" \
-  -framework VideoToolbox -framework CoreFoundation -framework CoreMedia -framework CoreVideo \
-  -framework CoreServices -framework AudioToolbox -framework Security -lz -lbz2 -liconv -lm \
-  -o "$work/video_decoder_bench"
+  "${ffmpeg_link[@]}" -o "$work/video_decoder_bench"
 
 echo "$(sysctl -n machdep.cpu.brand_string), $(sysctl -n hw.ncpu) cores"
 run() { "$work/video_decoder_bench" "$work" "$@"; }
@@ -75,6 +71,9 @@ if [[ "$mode" == hardware || "$mode" == all ]]; then
 fi
 if [[ "$mode" == convert || "$mode" == all ]]; then
   run convert
+fi
+if [[ "$mode" == reopen ]]; then
+  run reopen
 fi
 if [[ "$mode" == parallel ]]; then
   # Each case in a process of its own, so its footprint is its own; 0 threads is DecoderThreads.Auto.

@@ -23,6 +23,14 @@ public enum class NativePlayerDecoderPreference { AUTO, REQUIRE_HARDWARE, SOFTWA
 @InternalFFmpegKmpApi
 public enum class NativePlayerDecoderKind { UNKNOWN, HARDWARE, SOFTWARE }
 
+/**
+ * Why a player whose output wanted a hardware decoder decodes in software, mirroring
+ * `ffplaykmp_decoder_fallback`: none for the stream on this host, it failed to open or decode, or
+ * the process's hardware decoder budget ([nativeDecoderBudget]) was full.
+ */
+@InternalFFmpegKmpApi
+public enum class NativePlayerDecoderFallback { NONE, UNSUPPORTED, FAILED, BUDGET }
+
 @InternalFFmpegKmpApi
 public data class NativePlayerMasteringDisplayMetadata(
     val hasPrimaries: Boolean = false,
@@ -67,6 +75,11 @@ public data class NativePlayerConfiguration(
     val decoderPreference: NativePlayerDecoderPreference = NativePlayerDecoderPreference.AUTO,
     /** The software decoder's threads, 0 for FFmpeg's automatic count capped at 8. */
     val decoderThreads: Int = 0,
+    /**
+     * How long an idle player keeps its video decoder, in microseconds: 0 releases it as soon as
+     * nothing is decoding, a negative value keeps it. `ffplaykmp_configuration.codec_release_delay_us`.
+     */
+    val codecReleaseDelayUs: Long = 2_000_000,
 )
 
 @InternalFFmpegKmpApi
@@ -98,6 +111,7 @@ public data class NativePlayerSnapshot(
     val activeDecoder: NativePlayerDecoderKind = NativePlayerDecoderKind.UNKNOWN,
     val videoInfo: NativePlayerVideoInfo? = null,
     val droppedFrames: Long = 0,
+    val decoderFallback: NativePlayerDecoderFallback = NativePlayerDecoderFallback.NONE,
 )
 
 /**
@@ -145,7 +159,83 @@ public object NativePlayerError {
 
     /** The caller holds every frame of the decoder's ring; the call fails and the decoder stays usable. */
     public const val RING_FULL: Int = -1008
+
+    /** Every hardware decoder the process's budget allows is open, and the call required hardware. */
+    public const val BUSY: Int = -1009
 }
+
+/** A player call that failed with [errorCode], a [NativePlayerError] code or an FFmpeg `AVERROR`. */
+@InternalFFmpegKmpApi
+public class NativePlayerException(message: String, errorCode: Int) : NativeCallException(message, errorCode)
+
+/**
+ * What the native players and decoders of the process have done since it started, mirroring
+ * `ffplaykmp_statistics`, for tests and benchmarks: the video decoders opened and closed, the video
+ * packets the players read, the hardware frames downloaded into memory, and the inputs the players,
+ * decoders and audio engines opened and, of those, probed. Always zero in the browser, whose worker
+ * reports its own.
+ */
+@InternalFFmpegKmpApi
+public data class NativePlayerStatistics(
+    val codecOpens: Long,
+    val videoPackets: Long,
+    val downloads: Long,
+    val codecCloses: Long,
+    val inputOpens: Long = 0,
+    val inputProbes: Long = 0,
+)
+
+/**
+ * What a player's prepare found when it probed its input, mirroring `ffplaykmp_input_hint`, for the
+ * audio engine to open the same input without probing it again ([openPlatformAudioDecoder]): its
+ * demuxer ([formatName], FFmpeg's), where its media time starts, its duration (negative when the
+ * container does not say), and how many audio streams it has.
+ */
+@InternalFFmpegKmpApi
+public data class NativeInputHint(
+    val formatName: String,
+    val startUs: Long,
+    val durationUs: Long,
+    val audioStreams: Int,
+)
+
+@InternalFFmpegKmpApi
+public expect fun nativePlayerStatistics(): NativePlayerStatistics
+
+/**
+ * The process's hardware video decoder budget, mirroring `ffplaykmp_decoder_budget_get` and
+ * `ffplaykmp_decoder_budget_in_use`: at most [hardwareDecoders] hardware decoders open at once, 0 for
+ * no limit, shared by every player and video decoder, of which [inUse] are open now. The browser
+ * has none: its player decodes in software, and WebCodecs keeps its own.
+ */
+@InternalFFmpegKmpApi
+public data class NativeDecoderBudget(val hardwareDecoders: Int, val inUse: Int)
+
+@InternalFFmpegKmpApi
+public expect fun nativeDecoderBudget(): NativeDecoderBudget
+
+/**
+ * Sets the budget's limit (`ffplaykmp_decoder_budget_set`), 0 for none. Decoders already open stay
+ * open; the next ones see the new limit. The browser keeps the value and applies it to nothing.
+ */
+@InternalFFmpegKmpApi
+public expect fun setNativeDecoderBudget(hardwareDecoders: Int)
+
+/**
+ * What the platform says about decoding a video codec in hardware: whether it [available] has a
+ * decoder for it at a size, and the most of them it says may be open at once, [maxInstances]; each
+ * null where the platform does not say.
+ */
+@InternalFFmpegKmpApi
+public data class NativeHardwareDecoderSupport(val available: Boolean?, val maxInstances: Int?)
+
+/**
+ * Asks the platform about decoding the codec FFmpeg names [codec] in hardware at [width] × [height]:
+ * Android's MediaCodecList says both, VideoToolbox (`ffplaykmp_hardware_decoder_available`) only
+ * whether, per codec, and other desktops and the browser neither.
+ */
+@InternalFFmpegKmpApi
+public expect fun nativeHardwareDecoderSupport(codec: String, width: Int, height: Int): NativeHardwareDecoderSupport
 
 @InternalFFmpegKmpApi
 public interface NativePlayerBridge : AutoCloseable {
@@ -170,10 +260,26 @@ public interface NativePlayerBridge : AutoCloseable {
     public fun setMasterClock(mediaTimeUs: Long): Unit = Unit
 
     /**
+     * Asks for software frames of [width] × [height], the size the output draws them at, in the
+     * frame's own orientation; 0 × 0 for each frame's own size. A bridge whose frames the page
+     * cannot scale converts them to it (the browser's worker), from the next frame on, keeping the
+     * display aspect; one larger than the frame, or not at its aspect, gives the frame's own. The
+     * other bridges ignore it: their frames are converted where they are drawn.
+     */
+    public fun setFrameSize(width: Int, height: Int): Unit = Unit
+
+    /**
      * Opens the prepared source's audio in the bridge itself, or returns null where the platform
      * audio engine plays it instead. Close it before the next [prepare] or [stop].
      */
     public suspend fun openAudio(): NativePlayerAudio? = null
+
+    /**
+     * What the last prepare found when it probed the source, for the platform audio engine to open
+     * it without a probe of its own; null while nothing is prepared, after [close], and for bridges
+     * whose audio, if any, opens itself.
+     */
+    public fun inputHint(): NativeInputHint? = null
     public fun stop(): Int
     public fun cancel()
     public fun snapshot(): NativePlayerSnapshot
@@ -412,6 +518,9 @@ internal interface PlayerEngineCalls {
     fun setMasterClock(mediaTimeUs: Long)
     fun snapshot(): NativePlayerSnapshot
 
+    /** `ffplaykmp_player_get_input_hint`: null while nothing is prepared. */
+    fun inputHint(): NativeInputHint?
+
     /** Frees the player and anything the binding keeps alive for it. */
     fun release()
 }
@@ -449,10 +558,12 @@ internal class GuardedPlayerBridge(
     /** Cross-thread calls: after [close] they do nothing. */
     override fun setMasterClock(mediaTimeUs: Long) = guard.use({}) { engine.setMasterClock(mediaTimeUs) }
     override fun cancel() = guard.use({}) { engine.cancel() }
+    override fun inputHint(): NativeInputHint? = guard.use({ null }) { engine.inputHint() }
 
+    // The player keeps its input open until it is released, so its IO_CLOSE must still find the mounts.
     override fun close() = guard.close {
-        engine.mount(emptyList())
         engine.release()
+        engine.mount(emptyList())
     }
 
     private inline fun <T> call(block: () -> T): T = guard.use(::closedError, block)
@@ -512,6 +623,7 @@ internal fun nativePlayerSnapshot(
     contentLightPresent: Boolean,
     maxContentLightLevel: Int,
     maxFrameAverageLightLevel: Int,
+    decoderFallback: Int = 0,
 ): NativePlayerSnapshot = NativePlayerSnapshot(
     state = NativePlayerState.entries.getOrElse(state) { NativePlayerState.FAILED },
     positionUs = positionUs,
@@ -523,6 +635,7 @@ internal fun nativePlayerSnapshot(
     videoHeight = videoHeight,
     activeDecoder = NativePlayerDecoderKind.entries.getOrElse(activeDecoder) { NativePlayerDecoderKind.UNKNOWN },
     droppedFrames = droppedFrames,
+    decoderFallback = NativePlayerDecoderFallback.entries.getOrElse(decoderFallback) { NativePlayerDecoderFallback.FAILED },
     videoInfo = if (videoWidth > 0 && videoHeight > 0) {
         NativePlayerVideoInfo(
             width = videoWidth,

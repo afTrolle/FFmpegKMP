@@ -18,6 +18,9 @@ internal interface BrowserPlayerWorker {
     fun prepare(source: NativePlayerSource, mountBytes: Array<ByteArray>)
     fun setOutput(flags: Int)
     fun clearOutput()
+
+    /** Converts software frames to [width] × [height] from the next one on; 0 × 0 for their own size. */
+    fun setFrameSize(width: Int, height: Int)
     fun play()
     fun pause()
     fun seek(positionUs: Long)
@@ -29,7 +32,8 @@ internal interface BrowserPlayerWorker {
 }
 
 internal interface BrowserPlayerWorkerListener {
-    fun onSnapshot(snapshotJson: String)
+    /** A snapshot, and why WebCodecs did not decode an output that asked for it, as `ffplaykmp_decoder_fallback`. */
+    fun onSnapshot(snapshotJson: String, decoderFallback: Int)
     fun onFrame(
         bytes: ByteArray,
         width: Int,
@@ -78,6 +82,10 @@ private class BrowserNativePlayerBridge(
     private var output: NativePlayerOutputCapabilities? = null
     private var closed = false
     private var workerGeneration = 0
+
+    /** What [setFrameSize] asked for, which each new worker is told too. */
+    private var frameWidth = 0
+    private var frameHeight = 0
     private var worker: BrowserPlayerWorker? = startWorker()
     private var pendingPreparation: PendingBrowserPreparation? = null
     private var audio: BrowserPlayerAudio? = null
@@ -145,6 +153,16 @@ private class BrowserNativePlayerBridge(
     override fun seek(positionUs: Long): Int {
         if (positionUs < 0) return NativePlayerError.INVALID_ARGUMENT
         return preparedCall { it.seek(positionUs) }
+    }
+
+    override fun setFrameSize(width: Int, height: Int) {
+        // A drawing may still ask as the player closes.
+        if (closed) return
+        val (sizeWidth, sizeHeight) = if (width > 0 && height > 0) width to height else 0 to 0
+        if (sizeWidth == frameWidth && sizeHeight == frameHeight) return
+        frameWidth = sizeWidth
+        frameHeight = sizeHeight
+        worker?.setFrameSize(sizeWidth, sizeHeight)
     }
 
     override fun setMasterClock(mediaTimeUs: Long) {
@@ -217,15 +235,17 @@ private class BrowserNativePlayerBridge(
 
     private fun startWorker(): BrowserPlayerWorker {
         val generation = ++workerGeneration
-        return workerFactory(configuration, BrowserPlayerListener(generation))
+        return workerFactory(configuration, BrowserPlayerListener(generation)).also { started ->
+            if (frameWidth > 0) started.setFrameSize(frameWidth, frameHeight)
+        }
     }
 
     private inner class BrowserPlayerListener(
         private val generation: Int,
     ) : BrowserPlayerWorkerListener {
-        override fun onSnapshot(snapshotJson: String) {
+        override fun onSnapshot(snapshotJson: String, decoderFallback: Int) {
             if (closed || generation != workerGeneration) return
-            current = snapshotJson.toBrowserNativePlayerSnapshot()
+            current = snapshotJson.toBrowserNativePlayerSnapshot(decoderFallback)
             if (current.state == NativePlayerState.FAILED) source = null
             update(current)
             when (current.state) {
@@ -314,9 +334,10 @@ private class PendingBrowserPreparation(
     val completion: CompletableDeferred<Int>,
 )
 
-internal fun String.toBrowserNativePlayerSnapshot(): NativePlayerSnapshot {
+internal fun String.toBrowserNativePlayerSnapshot(decoderFallback: Int = 0): NativePlayerSnapshot {
     val value = Json.parseToJsonElement(this) as JsonObject
     return nativePlayerSnapshot(
+        decoderFallback = decoderFallback,
         state = value.int("state"),
         positionUs = value.long("positionUs"),
         durationUs = value.long("durationUs"),
