@@ -36,9 +36,10 @@ internal actual fun PlatformFFplaySurface(
     modifier: Modifier,
     contentScale: ContentScale,
     backgroundColor: Color,
+    resolution: IntSize?,
 ) {
     if (player.configuration.outputPreference == FFplayOutputPreference.COMPOSE_CANVAS) {
-        ComposeCanvasFFplaySurface(player, modifier, contentScale, backgroundColor)
+        ComposeCanvasFFplaySurface(player, modifier, contentScale, backgroundColor, resolution)
         return
     }
 
@@ -50,7 +51,7 @@ internal actual fun PlatformFFplaySurface(
     // One output per player: presentation changes are applied to it, not by replacing it, since
     // the external surface below is bound to the output it was created with.
     val output = remember(player) { AndroidSurfaceOutput(contentScale, backgroundColor.toArgb()) }
-    output.updatePresentation(contentScale, backgroundColor.toArgb())
+    output.updatePresentation(contentScale, backgroundColor.toArgb(), resolution)
     output.updateVideoInfo(video)
     remember(output, hostView.display) { output.updateDisplayCapabilities(hostView.display) }
 
@@ -104,6 +105,9 @@ internal class AndroidSurfaceOutput(
     private var height = 0
     private var contentScale = contentScale
     private var backgroundArgb = backgroundArgb
+
+    /** The size the picture is rendered at, for software frames converted at that size; null for the drawn size. */
+    private var resolution: IntSize? = null
     private var videoInfo: VideoInfo? = null
     private var displayHdrTransfers: Set<ColorTransfer> = emptySet()
     private var displayColorSpaces: Set<ColorPrimaries> = setOf(ColorPrimaries.BT709)
@@ -146,10 +150,12 @@ internal class AndroidSurfaceOutput(
     override val platformTarget: Any?
         get() = synchronized(lock) { surface }
 
-    fun updatePresentation(contentScale: ContentScale, backgroundArgb: Int) = synchronized(lock) {
-        this.contentScale = contentScale
-        this.backgroundArgb = backgroundArgb
-    }
+    fun updatePresentation(contentScale: ContentScale, backgroundArgb: Int, resolution: IntSize? = null) =
+        synchronized(lock) {
+            this.contentScale = contentScale
+            this.backgroundArgb = backgroundArgb
+            this.resolution = resolution
+        }
 
     fun updateVideoInfo(videoInfo: VideoInfo?) = synchronized(lock) {
         this.videoInfo = videoInfo
@@ -203,7 +209,10 @@ internal class AndroidSurfaceOutput(
         if (width <= 0 || height <= 0) return false
         val display = displaySize(frame.width, frame.height, frame.sampleAspectRatio, frame.rotationDegrees)
         val destination = contentScale.place(display, Size(width.toFloat(), height.toFloat()))
-        val size = sizing.sizeFor(frame, IntSize(destination.width.roundToInt(), destination.height.roundToInt()))
+        val size = sizing.sizeFor(
+            frame,
+            resolution ?: IntSize(destination.width.roundToInt(), destination.height.roundToInt()),
+        )
         // The frame is drawn before this returns, so one bitmap serves every frame of its size and format.
         val format = frame.bitmapFormat()
         val converted = bitmap?.takeIf { it.width == size.width && it.height == size.height && it.format == format }

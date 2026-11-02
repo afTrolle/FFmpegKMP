@@ -49,14 +49,30 @@ internal class RememberedFFplayPlayer(val player: FFplayPlayer) : RememberObserv
     }
 }
 
+/**
+ * Shows [player]'s video, placed by [contentScale] on [backgroundColor].
+ *
+ * Frames the surface converts itself, on a Compose canvas or where hardware decoding fell back to
+ * software, are converted at the size the picture is drawn at, which is all a tile of a 4K source
+ * needs. A surface cannot see a transform drawn around it, such as `Modifier.graphicsLayer` or
+ * `Modifier.scale`, so a zoomed surface would show that small picture stretched: pass the size, in
+ * pixels, the picture is rendered at as [resolution], upright as `FrameImage.targetSize` takes it,
+ * such as its drawn size times the zoom, or the video's own size for every pixel. Frames are never
+ * converted larger than the video. Null, the default, is the drawn size. Frames shown by a
+ * platform's own video view, from a hardware decoder, are full size whatever this says.
+ */
 @Composable
 public fun FFplaySurface(
     player: FFplayPlayer,
     modifier: Modifier = Modifier,
     contentScale: ContentScale = ContentScale.Fit,
     backgroundColor: Color = Color.Black,
+    resolution: IntSize? = null,
 ) {
-    PlatformFFplaySurface(player, modifier, contentScale, backgroundColor)
+    require(resolution == null || (resolution.width >= 0 && resolution.height >= 0)) {
+        "A resolution is not negative: $resolution"
+    }
+    PlatformFFplaySurface(player, modifier, contentScale, backgroundColor, resolution)
 }
 
 @Composable
@@ -65,6 +81,7 @@ internal expect fun PlatformFFplaySurface(
     modifier: Modifier,
     contentScale: ContentScale,
     backgroundColor: Color,
+    resolution: IntSize?,
 )
 
 @Composable
@@ -73,8 +90,10 @@ internal fun ComposeCanvasFFplaySurface(
     modifier: Modifier,
     contentScale: ContentScale,
     backgroundColor: Color,
+    resolution: IntSize?,
 ) {
     val output = remember(player) { ComposeCanvasOutput() }
+    output.resolution = resolution
     DisposableEffect(player, output) {
         player.attachOutput(output)
         onDispose {
@@ -114,10 +133,17 @@ private class ComposeCanvasOutput : FFplayVideoOutput, AutoCloseable {
         if (!bitmapsScale) frameSize.bind(sink)
     }
 
+    /** The size the picture is rendered at, for frames converted at that size; null for the drawn size. */
+    var resolution: IntSize?
+        get() = image.targetSize
+        set(value) {
+            image.targetSize = value
+        }
+
     /** Tells the bridge, where it converts frames, the size the picture is drawn at in [area]. */
     fun drawnIn(area: Size, contentScale: ContentScale) {
         val shown = image.shown ?: return
-        frameSize.drawnIn(shown.frameSize, shown.rotationDegrees, shown.displaySize, area, contentScale)
+        frameSize.drawnIn(shown.frameSize, shown.rotationDegrees, shown.displaySize, area, contentScale, resolution)
     }
 
     override fun discard() = image.clear()

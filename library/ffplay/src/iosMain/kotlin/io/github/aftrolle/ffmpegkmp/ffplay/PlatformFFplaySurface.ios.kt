@@ -25,6 +25,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.viewinterop.UIKitView
 import io.github.aftrolle.ffmpegkmp.bindings.NativePlatformVideoFrame
 import io.github.aftrolle.ffmpegkmp.bindings.NativePlatformVideoFrameKind
@@ -72,13 +73,15 @@ internal actual fun PlatformFFplaySurface(
     modifier: Modifier,
     contentScale: ContentScale,
     backgroundColor: Color,
+    resolution: IntSize?,
 ) {
     if (player.configuration.outputPreference == FFplayOutputPreference.COMPOSE_CANVAS) {
-        ComposeCanvasFFplaySurface(player, modifier, contentScale, backgroundColor)
+        ComposeCanvasFFplaySurface(player, modifier, contentScale, backgroundColor, resolution)
         return
     }
 
     val output = remember(player) { IOSSampleBufferOutput() }
+    output.image.targetSize = resolution
     // Only the stream's display metadata matters here; the full snapshot changes every frame.
     val video by remember(player) { player.snapshot.map { it.video }.distinctUntilChanged() }
         .collectAsState(player.snapshot.value.video)

@@ -295,6 +295,24 @@ class FrameImageTest {
     }
 
     @Test
+    fun aSurfacesResolutionOverridesTheSizeItDrawsAt() = runBlocking<Unit> {
+        fourK().use { decoder ->
+            playerFrameImage().use { image ->
+                // A player's surface draws the picture at 960 × 540, then is zoomed four times.
+                image.drawnIn(Size(960f, 540f), ContentScale.Fit)
+                decoder.frameAt(0.seconds).use { assertTrue(image.updateIfOpen(it)) }
+                assertEquals(IntSize(960, 540), shownSize(image))
+                image.targetSize = IntSize(3840, 2160)
+                decoder.frameAt(1.seconds / 30).use { assertTrue(image.updateIfOpen(it)) }
+                assertEquals(IntSize(3840, 2160), shownSize(image))
+                image.targetSize = null
+                decoder.frameAt(2.seconds / 30).use { assertTrue(image.updateIfOpen(it)) }
+                assertEquals(IntSize(960, 540), shownSize(image))
+            }
+        }
+    }
+
+    @Test
     fun aStepChangeAllocatesThreeBitmapsAndUpdatesWithinAStepNone() = runBlocking<Unit> {
         fourK().use { decoder ->
             playerFrameImage().use { image ->

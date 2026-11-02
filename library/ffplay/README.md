@@ -155,7 +155,7 @@ than two. Android's Surface fallback draws each frame onto the surface before it
 so it converts every frame into one reused bitmap. A desktop hardware frame is downloaded as it is
 converted, once, into one of two buffers the player reuses. Both convert straight to the size the frame is
 drawn at, not the source's (see [Bitmaps at the drawn size](#bitmaps-at-the-drawn-size)). The
-browser's worker converts its frames into RGBA8 bytes, at the source's size, before they cross to
+browser's worker converts its frames into RGBA8 bytes, at the drawn size too, before they cross to
 the page.
 
 `FFplayConfiguration(threads = …)` sets the software decoder's threads, as `VideoDecoder.open`
@@ -229,11 +229,19 @@ of their area. Frames are therefore converted straight to the size they are draw
 pass as the conversion to RGB, on whichever thread converts:
 
 - `FrameImage.targetSize` is the size, in pixels, the image is drawn at, upright as `displaySize`
-  is; null, the default, keeps the frame's own size. A player's Canvas surface sets nothing there:
-  as it draws, it records the canvas size and its `ContentScale` in two atomic fields (no snapshot
-  state, so drawing neither invalidates nor loops), and the next update places the frame there
-  itself. The first frame after a surface has drawn once is converted at its drawn size, even
-  before anything was shown. `targetSize`, when set, wins.
+  is; null, the default, keeps the frame's own size. A player's Canvas surface sets it to
+  `FFplaySurface`'s `resolution`, null by default. While that is null, as it draws, it records the
+  canvas size and its `ContentScale` in two atomic fields (no snapshot state, so drawing neither
+  invalidates nor loops), and the next update places the frame there itself. The first frame after
+  a surface has drawn once is converted at its drawn size, even before anything was shown.
+  `targetSize`, when set, wins.
+- A surface cannot see a transform drawn around it: `Modifier.graphicsLayer` and `Modifier.scale`
+  leave the canvas its unscaled size, so a zoomed surface would show its drawn-size bitmap
+  stretched. An editor that zooms passes the size the picture is rendered at, such as the drawn
+  size times the zoom, or the video's own size for every pixel:
+  `FFplaySurface(player, Modifier.graphicsLayer(scaleX = zoom, scaleY = zoom), resolution = …)`.
+  The browser's worker and Android's Surface fallback take it too; frames a platform's own video
+  view shows from a hardware decoder are full size whatever it says.
 - The size is not used raw: the bitmap is one of 16 steps of the frame's own size,
   `size × step / 16`, the smallest that covers the drawn size on both axes after turning a quarter
   turn back to the frame's orientation. So the aspect is the frame's, and the bitmap is never larger
@@ -249,9 +257,9 @@ pass as the conversion to RGB, on whichever thread converts:
   frame: a play, a seek or a scrub converts at the new size. Re-converting the shown frame would
   mean keeping a decoded frame per paused player, which is the memory this saves.
 - An `RgbaF16` frame is converted at its own size whatever the target: the converter takes a
-  half-float frame into a bitmap pixel for pixel, and refuses another size. On the web the worker
-  converts at the source's size and the page copies those bytes as they are, so there too frames
-  keep their size, for now.
+  half-float frame into a bitmap pixel for pixel, and refuses another size. On the web the page
+  tells the worker the step the canvas draws at, and the worker converts to it; the page copies
+  those bytes as they are.
 - Android's Surface fallback sizes its one bitmap the same way, from where it places the frame on
   the surface.
 

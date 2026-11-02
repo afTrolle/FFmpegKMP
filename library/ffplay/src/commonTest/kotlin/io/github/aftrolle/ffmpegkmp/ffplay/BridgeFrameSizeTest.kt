@@ -12,9 +12,15 @@ class BridgeFrameSizeTest {
     private val told = mutableListOf<IntSize>()
     private val frameSize = BridgeFrameSize().apply { bind { width, height -> told += IntSize(width, height) } }
 
-    private fun draw(area: Size, video: IntSize = FOUR_K, rotationDegrees: Double = 0.0, scale: ContentScale = ContentScale.Fit) {
+    private fun draw(
+        area: Size,
+        video: IntSize = FOUR_K,
+        rotationDegrees: Double = 0.0,
+        scale: ContentScale = ContentScale.Fit,
+        resolution: IntSize? = null,
+    ) {
         val display = displaySize(video.width, video.height, 1.0, rotationDegrees)
-        frameSize.drawnIn(video, rotationDegrees, display, area, scale)
+        frameSize.drawnIn(video, rotationDegrees, display, area, scale, resolution)
     }
 
     @Test
@@ -41,6 +47,18 @@ class BridgeFrameSizeTest {
         // Not scaled at all, in any area: the video's own size.
         draw(Size(960f, 2000f), scale = ContentScale.None)
         assertEquals(listOf(IntSize(960, 540), IntSize(3600, 2025), FOUR_K), told)
+    }
+
+    @Test
+    fun aResolutionOverridesTheDrawnSizeUpToTheVideos() {
+        draw(Size(960f, 540f))
+        // Zoomed three times: a surface cannot see the transform, so it is told the resolution.
+        draw(Size(960f, 540f), resolution = IntSize(2880, 1620))
+        // Larger than the video: the video's own size.
+        draw(Size(960f, 540f), resolution = IntSize(7680, 4320))
+        // Told before a layout too.
+        draw(Size.Zero, resolution = IntSize(960, 540))
+        assertEquals(listOf(IntSize(960, 540), IntSize(2880, 1620), FOUR_K, IntSize(960, 540)), told)
     }
 
     @Test

@@ -132,7 +132,8 @@ public class FrameImage internal constructor(private val bitmaps: Int) : AutoClo
      *
      * Setting it costs nothing and may happen on any thread, as often as a drawing does: the next
      * [update] reads it. Until then the frame on screen is drawn scaled from the size it has. A
-     * player's Canvas surface needs none: it tells its image where it draws it, which this overrides.
+     * player's Canvas surface sets it to `FFplaySurface`'s `resolution`; while that is null it tells
+     * its image where it draws it, which this overrides.
      */
     public var targetSize: IntSize?
         get() = target.load().unpack()
@@ -409,13 +410,23 @@ internal class BridgeFrameSize {
 
     /**
      * Says that a picture of a [video]-sized frame turned by [rotationDegrees], [display] upright, is
-     * placed by [contentScale] in [area], all in pixels.
+     * placed by [contentScale] in [area], all in pixels, and rendered at [resolution] when it is set.
      */
-    fun drawnIn(video: IntSize, rotationDegrees: Double, display: Size, area: Size, contentScale: ContentScale) {
+    fun drawnIn(
+        video: IntSize,
+        rotationDegrees: Double,
+        display: Size,
+        area: Size,
+        contentScale: ContentScale,
+        resolution: IntSize? = null,
+    ) {
         val sink = sink ?: return
-        if (video.width <= 0 || video.height <= 0 || area.width <= 0f || area.height <= 0f) return
-        val placed = contentScale.place(display, area).size
-        val drawn = IntSize(placed.width.roundToInt(), placed.height.roundToInt())
+        if (video.width <= 0 || video.height <= 0) return
+        val drawn = resolution ?: run {
+            if (area.width <= 0f || area.height <= 0f) return
+            val placed = contentScale.place(display, area).size
+            IntSize(placed.width.roundToInt(), placed.height.roundToInt())
+        }
         val size = sizing.sizeFor(video, rotationDegrees, drawn)
         if (size == told) return
         told = size
