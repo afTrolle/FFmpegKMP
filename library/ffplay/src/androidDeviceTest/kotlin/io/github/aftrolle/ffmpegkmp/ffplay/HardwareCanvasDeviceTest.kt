@@ -7,6 +7,7 @@
 package io.github.aftrolle.ffmpegkmp.ffplay
 
 import android.os.Build
+import android.util.Half
 import android.util.Log
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.layout.fillMaxSize
@@ -16,8 +17,12 @@ import androidx.compose.ui.unit.Density
 import androidx.test.platform.app.InstrumentationRegistry
 import io.github.aftrolle.ffmpegkmp.codec.CodecPreference
 import io.github.aftrolle.ffmpegkmp.codec.DecoderKind
+import io.github.aftrolle.ffmpegkmp.codec.FrameColor
 import io.github.aftrolle.ffmpegkmp.codec.FrameFormat
+import io.github.aftrolle.ffmpegkmp.codec.PixelLayout
+import io.github.aftrolle.ffmpegkmp.codec.VideoDecoder
 import io.github.aftrolle.ffmpegkmp.codec.VideoFrame
+import io.github.aftrolle.ffmpegkmp.codec.VideoOutput
 import io.github.aftrolle.ffmpegkmp.core.CommandIo
 import io.github.aftrolle.ffmpegkmp.core.MediaSource
 import java.util.concurrent.ExecutionException
@@ -26,6 +31,8 @@ import java.util.concurrent.TimeUnit
 import java.util.concurrent.TimeoutException
 import kotlin.math.abs
 import kotlin.math.floor
+import kotlin.math.pow
+import kotlin.math.roundToInt
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
@@ -124,6 +131,45 @@ class HardwareCanvasDeviceTest {
             within("seek") { session.player.seekTo(fixture.at) }
             session.drawn()
         }
+        assertClose("${fixture.name} from GPU memory against software", gpu, software)
+    }
+
+    /**
+     * On a canvas wider than sRGB, here linear extended sRGB as an HDR window draws on, PQ and HLG frames from GPU
+     * memory are tone mapped into Display P3, as the conversion maps the same frame into Display P3 codes, rather
+     * than into BT.709 as for an sRGB canvas. Each fixture is checked, and the failures reported together.
+     */
+    @Test
+    fun hdrFramesFromGpuMemoryAreToneMappedIntoDisplayP3OnAWideCanvas() = runBlocking {
+        assumeHardwareCanvas()
+        val failures = FIXTURES.filter { it.fromGpu }.mapNotNull { fixture ->
+            runCatching { assertWideAsConverted(fixture) }.exceptionOrNull()?.message
+        }
+        assertTrue(failures.isEmpty(), failures.joinToString("\n"))
+    }
+
+    private suspend fun assertWideAsConverted(fixture: Fixture) {
+        val gpu = canvasPlayer(fixture.name, hardware = true).use { session ->
+            val snapshot = session.player.snapshot.value
+            if (snapshot.video?.color?.isHdr != true) return
+            if (snapshot.output?.decoder != DecoderKind.HARDWARE) {
+                println("HardwareCanvasDeviceTest: ${fixture.name} plays on a ${snapshot.output?.decoder} decoder, skipping")
+                return
+            }
+            within("seek") { session.player.seekTo(fixture.at) }
+            session.drawn(FrameFormat.RgbaF16)
+        }
+        val converted = VideoDecoder.open(source(fixture.name), VideoOutput.Memory(DISPLAY_P3)).use { decoder ->
+            decoder.frameAt(fixture.at).use { frame -> Picture(frame.width, frame.height, rgba(frame)) }
+        }
+        assertClose("${fixture.name} from GPU memory on a wide canvas against the Display P3 conversion", gpu, converted)
+    }
+
+    /**
+     * [gpu] against [reference]: only pixels where the reference is flat are held to the tolerance, since the GPU and
+     * swscale site chroma differently at edges; the worst of all pixels is printed beside it.
+     */
+    private fun assertClose(what: String, gpu: Picture, software: Picture) {
         var worst = 0
         var worstFlat = 0
         var flat = 0
@@ -145,8 +191,7 @@ class HardwareCanvasDeviceTest {
             }
         }
         val mean = sum.toDouble() / ((width - 2) * (height - 2) * 3)
-        val summary = "${fixture.name} from GPU memory against software: worst $worstFlat codes over $flat flat " +
-            "pixels, worst $worst over all, mean %.2f".format(mean)
+        val summary = "$what: worst $worstFlat codes over $flat flat pixels, worst $worst over all, mean %.2f".format(mean)
         Log.i(TAG, summary)
         assertTrue(flat > width * height / 50, "$summary: too few flat pixels")
         assertTrue(worstFlat <= FLAT_TOLERANCE && mean <= MEAN_TOLERANCE, summary)
@@ -181,15 +226,18 @@ class HardwareCanvasDeviceTest {
     }
 
     private inner class Session(val player: FFplayPlayer, val output: ComposeCanvasOutput) : AutoCloseable {
-        /** The output's image drawn at the video's size on the GPU, as rows of RGBA8. */
-        suspend fun drawn(): Picture {
+        /**
+         * The output's image drawn at the video's size on the GPU onto a canvas of [format], as rows of 8-bit codes:
+         * sRGB for [FrameFormat.Rgba8], and Display P3 for [FrameFormat.RgbaF16]'s linear extended sRGB.
+         */
+        suspend fun drawn(format: FrameFormat = FrameFormat.Rgba8): Picture {
             val info = assertNotNull(player.snapshot.value.video)
-            return ComposeFrameRenderer<FrameImage>(context, info.width, info.height, FrameFormat.Rgba8, Density(1f), true) {
+            return ComposeFrameRenderer<FrameImage>(context, info.width, info.height, format, Density(1f), true) {
                 Canvas(Modifier.fillMaxSize()) { drawFrameImage(it) }
             }.use { renderer ->
                 renderer.render(Duration.ZERO, output.image).use { frame ->
                     assertTrue(renderer.drewOnGpu)
-                    Picture(frame.width, frame.height, rgba(frame))
+                    Picture(frame.width, frame.height, if (format == FrameFormat.RgbaF16) displayP3(frame) else rgba(frame))
                 }
             }
         }
@@ -271,6 +319,18 @@ class HardwareCanvasDeviceTest {
             Fixture("sdr-display-p3.mp4", 0.5.seconds, fromGpu = false),
             Fixture("hdr-hlg.mp4", 0.5.seconds),
             Fixture("hdr10-pq.mp4", 0.5.seconds),
+            // Main 10 HEVC, which hardware decoders hand out in P010 buffers that carry their own data space.
+            Fixture("video-decoder/hlg-large.mp4", 0.5.seconds),
+            Fixture("video-decoder/hdr10-pq-patches.mp4", 0.5.seconds),
+        )
+
+        val DISPLAY_P3 = FrameFormat(PixelLayout.RGBA8, FrameColor.DisplayP3)
+
+        /** Linear sRGB to linear Display P3, both D65. */
+        val SRGB_TO_DISPLAY_P3 = doubleArrayOf(
+            0.8224621, 0.1775380, 0.0,
+            0.0331941, 0.9668058, 0.0,
+            0.0170827, 0.0723974, 0.9105199,
         )
 
         /** Of an 8-bit code, where the picture is flat: the GPU's YUV conversion against swscale's, both rounding. */
@@ -312,6 +372,29 @@ class HardwareCanvasDeviceTest {
                 val pixel = index / 4
                 plane.bytes[pixel / frame.width * plane.rowBytes + pixel % frame.width * 4 + index % 4].toInt() and 0xff
             }
+        },
+    )
+
+    /** An RGBA_F16 frame of linear extended sRGB as 8-bit Display P3 codes, rows packed. */
+    private fun displayP3(frame: VideoFrame): IntArray = assertNotNull(
+        frame.usePlanes { planes ->
+            val plane = planes.single()
+            val codes = IntArray(frame.width * frame.height * 4)
+            for (pixel in 0 until frame.width * frame.height) {
+                val at = pixel / frame.width * plane.rowBytes + pixel % frame.width * 8
+                val light = FloatArray(3) { channel ->
+                    val low = plane.bytes[at + channel * 2].toInt() and 0xff
+                    val high = plane.bytes[at + channel * 2 + 1].toInt() and 0xff
+                    Half.toFloat((low or (high shl 8)).toShort())
+                }
+                for (row in 0 until 3) {
+                    val p3 = (0 until 3).sumOf { column -> SRGB_TO_DISPLAY_P3[row * 3 + column] * light[column] }.coerceIn(0.0, 1.0)
+                    val encoded = if (p3 <= 0.0031308) p3 * 12.92 else 1.055 * p3.pow(1 / 2.4) - 0.055
+                    codes[pixel * 4 + row] = (encoded * 255).roundToInt()
+                }
+                codes[pixel * 4 + 3] = 255
+            }
+            codes
         },
     )
 

@@ -8,6 +8,18 @@ may break the public API; every break is listed here with a migration note.
 
 ## [Unreleased]
 
+### Fixed
+
+- The hardware Canvas's PQ and HLG frames no longer draw dark and dull in a wide-gamut or HDR window
+  (`Window.colorMode` `COLOR_MODE_WIDE_COLOR_GAMUT` or `COLOR_MODE_HDR`). HWUI draws such a window in
+  Display P3 or extended linear sRGB, and the GPU shaders took their samples and output as sRGB codes.
+  They now read the frame's codes back with `toLinearSrgb` and hand their light to whatever canvas
+  draws with `fromLinearSrgb`. On a canvas wider than sRGB, tone-mapped frames go through the
+  converter's gamut map into Display P3 instead of BT.709, matching `VideoOutput.Memory` frames in
+  Display P3 within 3 8-bit codes on an S25, as they match sRGB frames on an sRGB canvas.
+
+## [0.6.0]
+
 ### Added
 
 - The hardware Canvas also takes PQ and HLG streams and tone-maps them on the GPU the way the CPU
@@ -223,5 +235,6 @@ may break the public API; every break is listed here with a migration note.
 
 See the [GitHub release](https://github.com/afTrolle/FFmpegKMP/releases/tag/v0.5.0).
 
-[Unreleased]: https://github.com/afTrolle/FFmpegKMP/compare/v0.5.0...HEAD
+[Unreleased]: https://github.com/afTrolle/FFmpegKMP/compare/v0.6.0...HEAD
+[0.6.0]: https://github.com/afTrolle/FFmpegKMP/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/afTrolle/FFmpegKMP/releases/tag/v0.5.0
