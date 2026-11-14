@@ -3,6 +3,7 @@
 
 #include <math.h>
 #include <pthread.h>
+#include <stdarg.h>
 #include <stdatomic.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -12,9 +13,11 @@
 #include <libavcodec/bsf.h>
 #include <libavformat/avformat.h>
 #include <libavutil/audio_fifo.h>
+#include <libavutil/avstring.h>
 #include <libavutil/channel_layout.h>
 #include <libavutil/mastering_display_metadata.h>
 #include <libavutil/mem.h>
+#include <libavutil/opt.h>
 #include <libavutil/pixdesc.h>
 #include <libavutil/time.h>
 
@@ -44,6 +47,10 @@ typedef struct ffmpegkmp_writer_track {
     int64_t first_pts;
     int64_t end_pts;
     int64_t last_packet_pts;
+    /* Packets the track handed the muxer: what finish checks a track that took frames against. */
+    int64_t muxed_packets;
+    /* For tests: the track drops its packets, as an encoder that gives none. */
+    int discard_packets;
     /* Video. */
     ffmpegkmp_video_encoder_config config;
     const AVCodec *codec;
@@ -57,6 +64,19 @@ typedef struct ffmpegkmp_writer_track {
     int64_t last_pts;
     /* HDR10 without metadata: opened at the first frame, with that frame's. */
     int open_at_first_frame;
+    /*
+     * The container wants a global header the encoder was not asked for (FFmpeg's MediaCodec
+     * wrappers): the track starts at its first packet, which carries the parameter sets in band.
+     */
+    int extradata_from_packet;
+    /*
+     * A named encoder's AVOptions as the config packs them, a copy kept for an open at the first
+     * frame: `config` keeps no pointer of the caller's.
+     */
+    char *options;
+    int options_size;
+    /* What the encoder opened with: the config's, an option's that overrides it, or 0 for none (CRF, CQ). */
+    int64_t bit_rate;
     /* Audio. */
     AVAudioFifo *fifo;
     float *planar;
@@ -165,7 +185,10 @@ static int ffmpegkmp_validate_video_config(const ffmpegkmp_video_encoder_config 
             (config->frame_rate_num > 0) != (config->frame_rate_den > 0) ||
             config->frame_rate_num < 0 || config->bit_rate < 0 || config->keyframe_interval_us < 0 ||
             (config->bit_depth != 0 && config->bit_depth != 8 && config->bit_depth != 10) ||
-            (config->bit_depth == 8 && config->dynamic_range != FFMPEGKMP_DYNAMIC_RANGE_SDR))
+            (config->bit_depth == 8 && config->dynamic_range != FFMPEGKMP_DYNAMIC_RANGE_SDR) ||
+            (config->encoder_name && !*config->encoder_name) || config->options_size < 0 ||
+            (config->options_size > 0 && (!config->options || !config->encoder_name ||
+                config->options[config->options_size - 1] != '\0')))
         return FFPLAYKMP_ERROR_INVALID_ARGUMENT;
     /* H.264 has no 10-bit profile hardware encoders take. */
     if (ffmpegkmp_is_ten_bit(config) && config->codec == FFMPEGKMP_VIDEO_CODEC_H264)
@@ -359,13 +382,57 @@ static void ffmpegkmp_video_colour(
     ffmpegkmp_format_colour(&format, primaries, transfer, matrix);
 }
 
-/* Opens `codec` for `config`; the context is freed on failure. */
+/* Says in `info` why no encoder opened. */
+static void ffmpegkmp_report(ffmpegkmp_video_track_info *info, const char *format, ...) {
+    va_list arguments;
+    if (!info || info->size < sizeof(*info))
+        return;
+    va_start(arguments, format);
+    vsnprintf(info->error, sizeof(info->error), format, arguments);
+    va_end(arguments);
+}
+
+/* The `error` of `info`, NULL when the caller passed none or an older struct. */
+static char *ffmpegkmp_info_error(ffmpegkmp_video_track_info *info) {
+    return info && info->size >= sizeof(*info) ? info->error : NULL;
+}
+
+/*
+ * Sets the track's AVOptions on `encoder` as the decoders' named open does
+ * (ffmpegkmp_codec_options_set), naming in `info` the options the encoder does not recognise, or
+ * else the first it does not take.
+ */
+static int ffmpegkmp_set_options(
+        const ffmpegkmp_writer_track *track,
+        AVCodecContext *encoder,
+        const AVCodec *codec,
+        ffmpegkmp_video_track_info *info) {
+    char *error = ffmpegkmp_info_error(info);
+    return ffmpegkmp_codec_options_set(encoder, codec, track->options, track->options_size,
+            error, error ? sizeof(info->error) : 0);
+}
+
+/*
+ * Whether `codec` is one of FFmpeg's MediaCodec wrappers. Asked for a global header, they make one
+ * at open by encoding a dummy frame to the end of stream and flushing the codec; Google's Codec2
+ * software encoders (c2.android.avc.encoder) take frames after that flush but never give another
+ * packet. Without the flag they give the parameter sets in band, with the first packet.
+ */
+static int ffmpegkmp_is_mediacodec(const AVCodec *codec) {
+    return codec->wrapper_name && strcmp(codec->wrapper_name, "mediacodec") == 0;
+}
+
+/*
+ * Opens `codec` for `config`, then the track's options over what the config sets; the context is
+ * freed on failure. `info`, which may be NULL, names an option that failed.
+ */
 static int ffmpegkmp_open_video_encoder(
         ffmpegkmp_writer_track *track,
         const AVCodec *codec,
         const ffmpegkmp_video_encoder_config *config,
         int global_header,
-        const AVFrame *first_frame) {
+        const AVFrame *first_frame,
+        ffmpegkmp_video_track_info *info) {
     AVCodecContext *encoder;
     const double fps = config->frame_rate_num > 0 ? (double)config->frame_rate_num / config->frame_rate_den : 30.0;
     int64_t gop;
@@ -395,12 +462,15 @@ static int ffmpegkmp_open_video_encoder(
     if (ffmpegkmp_is_ten_bit(config) && codec->id == AV_CODEC_ID_HEVC)
         encoder->profile = AV_PROFILE_HEVC_MAIN_10;
     encoder->chroma_sample_location = AVCHROMA_LOC_LEFT;
-    if (global_header)
+    track->extradata_from_packet = global_header && ffmpegkmp_is_mediacodec(codec);
+    if (global_header && !track->extradata_from_packet)
         encoder->flags |= AV_CODEC_FLAG_GLOBAL_HEADER;
     if (!(codec->capabilities & AV_CODEC_CAP_HARDWARE))
         encoder->thread_count = 0;
+    /* The options are set as avcodec_open2 sets a dictionary's, once, by name, so a failure names them. */
     if ((result = ffmpegkmp_attach_hdr_metadata(
-            &encoder->decoded_side_data, &encoder->nb_decoded_side_data, config, first_frame)) >= 0)
+            &encoder->decoded_side_data, &encoder->nb_decoded_side_data, config, first_frame)) >= 0 &&
+            (result = ffmpegkmp_set_options(track, encoder, codec, info)) >= 0)
         result = avcodec_open2(encoder, codec, NULL);
     if (result < 0) {
         avcodec_free_context(&encoder);
@@ -408,16 +478,112 @@ static int ffmpegkmp_open_video_encoder(
     }
     track->encoder = encoder;
     track->time_base = encoder->time_base;
+    track->bit_rate = encoder->bit_rate;
     return 0;
 }
 
-/* Tries the encoders `config->preference` allows, hardware first; the first that opens wins. */
+static enum AVCodecID ffmpegkmp_codec_id(int codec) {
+    if (codec == FFMPEGKMP_VIDEO_CODEC_H264)
+        return AV_CODEC_ID_H264;
+    return codec == FFMPEGKMP_VIDEO_CODEC_HEVC ? AV_CODEC_ID_HEVC : AV_CODEC_ID_AV1;
+}
+
+/* Whether `codec` is one of the platform codec wrappers the ranking tries as hardware, for any codec. */
+static int ffmpegkmp_is_platform_encoder(const AVCodec *codec) {
+    int index;
+    for (index = FFMPEGKMP_VIDEO_CODEC_H264; index <= FFMPEGKMP_VIDEO_CODEC_AV1; index++) {
+        const char *const *name;
+        for (name = ffmpegkmp_encoder_names(index, 1); *name; name++) {
+            if (strcmp(*name, codec->name) == 0)
+                return 1;
+        }
+    }
+    return 0;
+}
+
+/* Keeps a copy of the config's options, pairs of NUL-terminated key and value strings, once they prove to be pairs. */
+static int ffmpegkmp_keep_options(
+        ffmpegkmp_writer_track *track,
+        const ffmpegkmp_video_encoder_config *config,
+        ffmpegkmp_video_track_info *info) {
+    char *error = ffmpegkmp_info_error(info);
+    int result = ffmpegkmp_codec_options_check(config->options, config->options_size, error, error ? sizeof(info->error) : 0);
+    if (result < 0)
+        return result;
+    if (config->options_size > 0 && !(track->options = av_memdup(config->options, config->options_size)))
+        return AVERROR(ENOMEM);
+    track->options_size = config->options_size;
+    return 0;
+}
+
+/*
+ * Opens the encoder the config names, alone, with its options: no ranking and no fallback. The
+ * options override the fields the writer sets, except those the frames and the muxer rely on.
+ */
+static int ffmpegkmp_open_named_encoder(
+        ffmpegkmp_writer_track *track,
+        const ffmpegkmp_video_encoder_config *config,
+        int global_header,
+        ffmpegkmp_video_track_info *info) {
+    const AVCodec *codec = avcodec_find_encoder_by_name(config->encoder_name);
+    const enum AVCodecID wanted = ffmpegkmp_codec_id(config->codec);
+    const AVCodecContext *encoder;
+    enum AVColorPrimaries primaries;
+    enum AVColorTransferCharacteristic transfer;
+    enum AVColorSpace matrix;
+    const char *changed = NULL;
+    int result;
+    if (!codec) {
+        ffmpegkmp_report(info, "this build has no encoder named '%s'", config->encoder_name);
+        return FFPLAYKMP_ERROR_UNSUPPORTED;
+    }
+    if (codec->id != wanted) {
+        ffmpegkmp_report(info, "%s encodes %s, not %s", codec->name, avcodec_get_name(codec->id), avcodec_get_name(wanted));
+        return FFPLAYKMP_ERROR_INVALID_ARGUMENT;
+    }
+    if ((result = ffmpegkmp_keep_options(track, config, info)) < 0)
+        return result;
+    if ((result = ffmpegkmp_open_video_encoder(track, codec, config, global_header, NULL, info)) < 0) {
+        if (result == FFPLAYKMP_ERROR_UNSUPPORTED)
+            ffmpegkmp_report(info, "%s takes no %d-bit 4:2:0 frames", codec->name, ffmpegkmp_is_ten_bit(config) ? 10 : 8);
+        else if (!info || info->size < sizeof(*info) || !info->error[0])
+            ffmpegkmp_report(info, "%s did not open: %s", codec->name, av_err2str(result));
+        return result;
+    }
+    encoder = track->encoder;
+    ffmpegkmp_video_colour(config, &primaries, &transfer, &matrix);
+    if (encoder->width != config->width || encoder->height != config->height)
+        changed = "the size";
+    else if (encoder->pix_fmt != track->pixel_format)
+        changed = "the pixel format";
+    else if (encoder->color_range != AVCOL_RANGE_MPEG || encoder->color_primaries != primaries ||
+            encoder->color_trc != transfer || encoder->colorspace != matrix)
+        changed = "the colour";
+    else if (global_header && !track->extradata_from_packet && !(encoder->flags & AV_CODEC_FLAG_GLOBAL_HEADER))
+        changed = "the global header the container needs";
+    if (changed) {
+        avcodec_free_context(&track->encoder);
+        ffmpegkmp_report(info, "an option of %s changes %s, which the writer sets from the config", codec->name, changed);
+        return FFPLAYKMP_ERROR_INVALID_ARGUMENT;
+    }
+    track->codec = codec;
+    track->hardware = ffmpegkmp_is_platform_encoder(codec);
+    return 0;
+}
+
+/*
+ * Opens the encoder the config names, or else tries the encoders `config->preference` allows,
+ * hardware first, the first that opens winning.
+ */
 static int ffmpegkmp_choose_video_encoder(
         ffmpegkmp_writer_track *track,
         const ffmpegkmp_video_encoder_config *config,
-        int global_header) {
+        int global_header,
+        ffmpegkmp_video_track_info *info) {
     int result = FFPLAYKMP_ERROR_UNSUPPORTED;
     int hardware;
+    if (config->encoder_name)
+        return ffmpegkmp_open_named_encoder(track, config, global_header, info);
     for (hardware = 1; hardware >= 0; hardware--) {
         const char *const *name;
         if ((hardware && config->preference == FFMPEGKMP_ENCODER_SOFTWARE) ||
@@ -427,7 +593,7 @@ static int ffmpegkmp_choose_video_encoder(
             const AVCodec *codec = avcodec_find_encoder_by_name(*name);
             if (!codec)
                 continue;
-            if (ffmpegkmp_open_video_encoder(track, codec, config, global_header, NULL) >= 0) {
+            if (ffmpegkmp_open_video_encoder(track, codec, config, global_header, NULL, NULL) >= 0) {
                 track->codec = codec;
                 track->hardware = hardware;
                 return 0;
@@ -435,7 +601,16 @@ static int ffmpegkmp_choose_video_encoder(
         }
     }
     /* No encoder opened, or none is built: the default LGPL builds have no software H.264 or HEVC. */
+    ffmpegkmp_report(info, "no encoder in this build and on this device takes it");
     return result;
+}
+
+/* Keeps `config` for the track, without the caller's strings, which live for the call only: a named encoder's options are copied. */
+static void ffmpegkmp_keep_config(ffmpegkmp_writer_track *track, const ffmpegkmp_video_encoder_config *config) {
+    track->config = *config;
+    track->config.encoder_name = NULL;
+    track->config.options = NULL;
+    track->config.options_size = 0;
 }
 
 static void ffmpegkmp_describe_track(const ffmpegkmp_writer_track *track, ffmpegkmp_video_track_info *info) {
@@ -443,8 +618,9 @@ static void ffmpegkmp_describe_track(const ffmpegkmp_writer_track *track, ffmpeg
         return;
     info->input_format = track->input_format;
     info->hardware = track->hardware;
-    info->bit_rate = track->config.bit_rate > 0 ? track->config.bit_rate : ffmpegkmp_default_bit_rate(&track->config);
+    info->bit_rate = track->bit_rate;
     snprintf(info->encoder, sizeof(info->encoder), "%s", track->codec->name);
+    info->error[0] = '\0';
 }
 
 int ffmpegkmp_writer_can_encode(
@@ -457,12 +633,15 @@ int ffmpegkmp_writer_can_encode(
     if (result < 0)
         return result;
     memset(&track, 0, sizeof(track));
-    track.config = *config;
-    if (ffmpegkmp_choose_video_encoder(&track, config, 1) < 0)
+    ffmpegkmp_keep_config(&track, config);
+    if (ffmpegkmp_choose_video_encoder(&track, config, 1, info) < 0) {
+        av_freep(&track.options);
         return 0;
+    }
     ffmpegkmp_describe_input(config, track.layout, &track.input_format);
     ffmpegkmp_describe_track(&track, info);
     avcodec_free_context(&track.encoder);
+    av_freep(&track.options);
     return 1;
 }
 
@@ -721,9 +900,21 @@ static int ffmpegkmp_write_header_locked(ffmpegkmp_writer *writer, int force) {
     return result;
 }
 
+static int ffmpegkmp_start_video_track(ffmpegkmp_writer *writer, ffmpegkmp_writer_track *track, const AVPacket *first);
+
 /* Hands an encoded packet, in the encoder's time base, to the muxer; before the header it waits. */
 static int ffmpegkmp_mux(ffmpegkmp_writer *writer, ffmpegkmp_writer_track *track, AVPacket *packet) {
     int result = 0;
+    if (track->discard_packets) {
+        av_packet_unref(packet);
+        return 0;
+    }
+    /* A track whose encoder gives its parameter sets in band starts at its first packet. */
+    if (!track->started && (result = ffmpegkmp_start_video_track(writer, track, packet)) < 0) {
+        av_packet_unref(packet);
+        return result;
+    }
+    track->muxed_packets++;
     packet->stream_index = track->stream->index;
     if (packet->pts != AV_NOPTS_VALUE) {
         /* MediaCodec's encoders give packets no duration, and the container takes the last sample's from it:
@@ -859,6 +1050,7 @@ static void ffmpegkmp_free_track(ffmpegkmp_writer_track *track) {
     ffmpegkmp_frame_pool_free(track->pool);
     track->pool = NULL;
     ffmpegkmp_converter_free(&track->converter);
+    av_freep(&track->options);
     if (track->fifo)
         av_audio_fifo_free(track->fifo);
     track->fifo = NULL;
@@ -906,10 +1098,12 @@ int ffmpegkmp_writer_add_video_track(
     if ((result = ffmpegkmp_validate_video_config(config)) < 0)
         return result;
     ffmpegkmp_init_track(&track, AVMEDIA_TYPE_VIDEO);
-    track.config = *config;
+    ffmpegkmp_keep_config(&track, config);
     /* Opened outside the lock: a hardware encoder takes a while. */
-    if ((result = ffmpegkmp_choose_video_encoder(&track, config, ffmpegkmp_global_header(writer))) < 0)
+    if ((result = ffmpegkmp_choose_video_encoder(&track, config, ffmpegkmp_global_header(writer), info)) < 0) {
+        av_freep(&track.options);
         return result;
+    }
     ffmpegkmp_describe_input(config, track.layout, &track.input_format);
     track.packet = av_packet_alloc();
     track.input = av_frame_alloc();
@@ -979,17 +1173,32 @@ static int ffmpegkmp_writer_can_write(ffmpegkmp_writer *writer, const ffmpegkmp_
     return 0;
 }
 
-/* Opens a track that waited for its first frame (or, with none, at its end) and starts it. */
-static int ffmpegkmp_start_video_track(ffmpegkmp_writer *writer, ffmpegkmp_writer_track *track, const AVFrame *first) {
+/* Opens a track that waited for its first frame (or, with none, at its end). */
+static int ffmpegkmp_open_waiting_track(ffmpegkmp_writer *writer, ffmpegkmp_writer_track *track, const AVFrame *first) {
+    if (!track->open_at_first_frame)
+        return 0;
+    track->open_at_first_frame = 0;
+    /*
+     * The same encoder, config and options opened when the track was added, which checked that
+     * no option changes the fields the writer relies on: only the HDR10 metadata differs.
+     */
+    return ffmpegkmp_open_video_encoder(
+            track, track->codec, &track->config, ffmpegkmp_global_header(writer), first, NULL);
+}
+
+static int ffmpegkmp_extract_extradata(AVCodecParameters *parameters, const AVPacket *packet);
+
+/*
+ * Starts a track with its encoder's parameters, and the parameter sets `first`, its first packet,
+ * carries in band when the encoder gave no global header; then the header once every track has
+ * started.
+ */
+static int ffmpegkmp_start_video_track(ffmpegkmp_writer *writer, ffmpegkmp_writer_track *track, const AVPacket *first) {
     int result;
-    if (track->open_at_first_frame) {
-        track->open_at_first_frame = 0;
-        if ((result = ffmpegkmp_open_video_encoder(
-                track, track->codec, &track->config, ffmpegkmp_global_header(writer), first)) < 0)
-            return result;
-    }
     ffmpegkmp_lock_mux(writer, track);
-    if ((result = ffmpegkmp_start_track(writer, track)) >= 0) {
+    if ((result = ffmpegkmp_start_track(writer, track)) >= 0 && first && track->stream->codecpar->extradata_size == 0)
+        result = ffmpegkmp_extract_extradata(track->stream->codecpar, first);
+    if (result >= 0) {
         track->started = 1;
         result = ffmpegkmp_write_header_locked(writer, 0);
     }
@@ -1030,8 +1239,13 @@ static int ffmpegkmp_write_video(
     int result;
     if (frame->frame->width != track->config.width || frame->frame->height != track->config.height)
         return FFPLAYKMP_ERROR_INVALID_ARGUMENT;
-    if (!track->started && (result = ffmpegkmp_start_video_track(writer, track, frame->frame)) < 0)
-        return result;
+    if (!track->started) {
+        if ((result = ffmpegkmp_open_waiting_track(writer, track, frame->frame)) < 0)
+            return result;
+        /* Otherwise its first packet starts it, in ffmpegkmp_mux. */
+        if (!track->extradata_from_packet && (result = ffmpegkmp_start_video_track(writer, track, NULL)) < 0)
+            return result;
+    }
     pts = av_rescale_q_rnd(pts_ns, FFMPEGKMP_NANOSECONDS, track->time_base, AV_ROUND_NEAR_INF | AV_ROUND_PASS_MINMAX);
     if (track->last_pts != AV_NOPTS_VALUE && pts <= track->last_pts)
         return FFPLAYKMP_ERROR_INVALID_ARGUMENT;
@@ -1135,12 +1349,6 @@ int ffmpegkmp_writer_write_audio(
     return ffmpegkmp_end_track_call(track, ffmpegkmp_encode_audio(writer, track, 0));
 }
 
-static enum AVCodecID ffmpegkmp_codec_id(int codec) {
-    if (codec == FFMPEGKMP_VIDEO_CODEC_H264)
-        return AV_CODEC_ID_H264;
-    return codec == FFMPEGKMP_VIDEO_CODEC_HEVC ? AV_CODEC_ID_HEVC : AV_CODEC_ID_AV1;
-}
-
 /* The time base an encoder of the config would have. */
 static AVRational ffmpegkmp_packet_time_base(const ffmpegkmp_video_encoder_config *config) {
     return config->frame_rate_num > 0
@@ -1156,7 +1364,7 @@ int ffmpegkmp_writer_add_packet_track(ffmpegkmp_writer *writer, const ffmpegkmp_
     if ((result = ffmpegkmp_validate_video_config(config)) < 0)
         return result;
     ffmpegkmp_init_track(&track, AVMEDIA_TYPE_VIDEO);
-    track.config = *config;
+    ffmpegkmp_keep_config(&track, config);
     track.packets = 1;
     track.time_base = ffmpegkmp_packet_time_base(config);
     if (!(track.packet = av_packet_alloc()))
@@ -1308,19 +1516,36 @@ int ffmpegkmp_writer_end_track(ffmpegkmp_writer *writer, int32_t index) {
             (result = ffmpegkmp_begin_track_call(writer, track)) < 0)
         return result;
     /* A video track that never had a frame still needs its encoder's parameters for the header. */
-    if (!track->started) {
-        result = track->packets
-                ? ffmpegkmp_start_packet_track(writer, track, NULL, NULL, 0)
-                : ffmpegkmp_start_video_track(writer, track, NULL);
-    }
+    if (!track->started && track->packets)
+        result = ffmpegkmp_start_packet_track(writer, track, NULL, NULL, 0);
+    else if (!track->started && (result = ffmpegkmp_open_waiting_track(writer, track, NULL)) >= 0 && !track->extradata_from_packet)
+        result = ffmpegkmp_start_video_track(writer, track, NULL);
     if (result >= 0 && track->type == AVMEDIA_TYPE_AUDIO)
         result = ffmpegkmp_encode_audio(writer, track, 1);
     if (result >= 0 && !track->packets)
         result = ffmpegkmp_encode(writer, track, NULL);
+    /* One that waited for a packet and got none starts without parameter sets. */
+    if (result >= 0 && !track->started)
+        result = ffmpegkmp_start_video_track(writer, track, NULL);
     track->ended = 1;
     /* Freed on the thread that opened it, as MediaCodec needs. */
     avcodec_free_context(&track->encoder);
     return ffmpegkmp_end_track_call(track, result);
+}
+
+int64_t ffmpegkmp_writer_track_packets(const ffmpegkmp_writer *writer, int32_t index) {
+    if (!writer || index < 0 || index >= writer->track_count)
+        return FFPLAYKMP_ERROR_INVALID_ARGUMENT;
+    return writer->tracks[index].muxed_packets;
+}
+
+int ffmpegkmp_writer_discard_packets(ffmpegkmp_writer *writer, int32_t index) {
+    if (!writer || index < 0 || index >= writer->track_count)
+        return FFPLAYKMP_ERROR_INVALID_ARGUMENT;
+    if (atomic_load(&writer->writing))
+        return FFPLAYKMP_ERROR_INVALID_STATE;
+    writer->tracks[index].discard_packets = 1;
+    return 0;
 }
 
 void ffmpegkmp_writer_release_track(ffmpegkmp_writer *writer, int32_t index) {

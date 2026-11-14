@@ -106,11 +106,19 @@ typedef struct ffmpegkmp_frame_planes {
     int32_t rows[FFMPEGKMP_FRAME_MAX_PLANES];
 } ffmpegkmp_frame_planes;
 
-/* Pixel memory the bridge allocated for frames, pooled or not, over the process's life. */
+/*
+ * Pixel memory the bridge allocated for frames, pooled or not, over the
+ * process's life, and the decoders' rings' buffers allocated now (memory
+ * buffers; a CVPixelBufferPool's are CoreVideo's and not counted).
+ */
 typedef struct ffmpegkmp_frame_statistics {
     uint32_t size;
     uint64_t buffers;
     uint64_t bytes;
+    uint64_t ring_buffers;
+    uint64_t ring_bytes;
+    /* Gamut maps the converter has sampled from swscale for its tone map: one per pair of primaries and SDR curve. */
+    uint64_t gamut_maps;
 } ffmpegkmp_frame_statistics;
 
 FFPLAYKMP_EXPORT void ffmpegkmp_frame_format_init(ffmpegkmp_frame_format *format);
@@ -167,6 +175,28 @@ FFPLAYKMP_EXPORT int ffmpegkmp_frame_convert_to(
         ffmpegkmp_frame **destination);
 
 /*
+ * A new frame of `source` shown upright, then cut to the rectangle at
+ * (`crop_x`, `crop_y`), `crop_width` x `crop_height` of the upright picture
+ * (0 x 0 for all of it), in one single-threaded libavfilter graph. The turn
+ * comes from the frame's own display matrix, chosen as FFmpeg's autorotate
+ * chooses it (transpose with or without its flip, hflip, vflip), mirrors
+ * included; a frame without one, or with an angle between quarter turns, is
+ * turned clockwise by `fallback_clockwise_quarter_turns` (0 to 3) instead. The
+ * cut is the crop filter's. The new frame is libavfilter's memory, in the
+ * source's layout and colour, without a display matrix, and shares nothing
+ * with `source`. Packed RGBA8 and BGRA8 only: FFPLAYKMP_ERROR_UNSUPPORTED for
+ * other layouts and for hardware frames, which a conversion reads first.
+ */
+FFPLAYKMP_EXPORT int ffmpegkmp_frame_upright(
+        const ffmpegkmp_frame *source,
+        int32_t fallback_clockwise_quarter_turns,
+        int32_t crop_x,
+        int32_t crop_y,
+        int32_t crop_width,
+        int32_t crop_height,
+        ffmpegkmp_frame **destination);
+
+/*
  * A frame over memory the caller owns, such as a bitmap's, for use as a
  * conversion's destination: one packed plane of `row_bytes` per row, in an
  * RGB layout. The memory must outlive the frame, and ffmpegkmp_frame_ref of
@@ -180,6 +210,28 @@ FFPLAYKMP_EXPORT ffmpegkmp_frame *ffmpegkmp_frame_wrap(
         int32_t row_bytes);
 
 FFPLAYKMP_EXPORT void ffmpegkmp_frame_get_statistics(ffmpegkmp_frame_statistics *statistics);
+
+/* The lattice points per side of a tone map's gamut map (ffmpegkmp_frame_gamut_map). */
+#define FFMPEGKMP_GAMUT_MAP_POINTS 65
+
+/*
+ * Copies the gamut map the converter's tone map to SDR takes from `from`
+ * primaries into `to`'s (AVColorPrimaries), for SDR codes in `transfer`
+ * (AVColorTransferCharacteristic), into `points`: for a shader that tone maps
+ * as the converter does. It holds FFMPEGKMP_GAMUT_MAP_POINTS cubed points of
+ * red, green and blue floats, the codes in `to`'s primaries of the colour
+ * whose codes in `from`'s are (red, green, blue) / (points - 1), red varying
+ * fastest, then green, then blue; look it up tetrahedrally. `count` is the
+ * floats `points` holds, at least FFMPEGKMP_GAMUT_MAP_POINTS cubed times
+ * three. Returns 0, FFPLAYKMP_ERROR_INVALID_ARGUMENT for too few, or the
+ * error that kept the map from being made.
+ */
+FFPLAYKMP_EXPORT int32_t ffmpegkmp_frame_gamut_map(
+        int32_t from,
+        int32_t to,
+        int32_t transfer,
+        float *points,
+        int32_t count);
 
 #if defined(__ANDROID__)
 /*

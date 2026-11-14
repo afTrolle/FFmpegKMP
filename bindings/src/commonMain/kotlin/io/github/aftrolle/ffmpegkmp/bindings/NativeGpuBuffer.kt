@@ -26,6 +26,11 @@ public class NativeGpuBuffer(
     public val cropBottom: Int,
     /** The source's `AVColorTransferCharacteristic`, which says how to read the pixels: PQ, HLG, or sRGB for the rest. */
     public val colorTransfer: Int,
+    /**
+     * The source's `AVColorPrimaries`, which say what colours the pixels hold: [AVCOL_PRI_BT2020],
+     * [AVCOL_PRI_SMPTE432] (Display P3), or BT.709's for the rest, as the converter reads them.
+     */
+    public val colorPrimaries: Int = AVCOL_PRI_BT709,
     private val onRelease: () -> Unit,
 ) {
     private val references = AtomicInt(1)
@@ -45,3 +50,13 @@ public class NativeGpuBuffer(
         if (count == 0) onRelease()
     }
 }
+
+/** FFmpeg's `AVCOL_PRI_BT709`, `AVCOL_PRI_BT2020` and `AVCOL_PRI_SMPTE432` (Display P3). */
+@InternalFFmpegKmpApi
+public const val AVCOL_PRI_BT709: Int = 1
+
+@InternalFFmpegKmpApi
+public const val AVCOL_PRI_BT2020: Int = 9
+
+@InternalFFmpegKmpApi
+public const val AVCOL_PRI_SMPTE432: Int = 12

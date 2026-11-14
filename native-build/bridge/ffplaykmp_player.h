@@ -98,16 +98,49 @@ typedef enum ffplaykmp_output_flags {
     FFPLAYKMP_OUTPUT_PROTECTED_CONTENT = 1u << 3,
     /** The browser worker's RGBA frames of HDR sources are tone mapped to BT.709/sRGB. */
     FFPLAYKMP_OUTPUT_TONE_MAP_HDR_TO_SDR = 1u << 4,
+    /*
+     * Android: the output's Surface is its own (an ImageReader's), and it takes
+     * MediaCodec frames at PREPARE like software ones. Each is rendered into the
+     * Surface as it is queued, stamped with its presentation time in
+     * nanoseconds, before the video frame callback's PREPARE, which waits for it
+     * there; PRESENT and RELEASE follow as for a software frame. Without it a
+     * MediaCodec frame is rendered at PRESENT, at the time it shows.
+     */
+    FFPLAYKMP_OUTPUT_PREPARE_HARDWARE_FRAMES = 1u << 5,
 } ffplaykmp_output_flags;
 
 typedef struct ffplaykmp_configuration {
     uint32_t size;
     ffplaykmp_decoder_preference decoder_preference;
     /*
-     * The software video decoder's frame and slice threads, 0 (the default)
-     * for FFmpeg's automatic count capped at 8. Hardware decoders ignore it.
+     * The software video decoder's threads, 0 (the default) for FFmpeg's
+     * automatic count, as `-threads 0`. Hardware decoders ignore it.
      */
     int32_t decoder_threads;
+    /*
+     * FFmpeg's thread_type for those threads (FF_THREAD_FRAME 1,
+     * FF_THREAD_SLICE 2, or both), 0 (the default) for FFmpeg's default, both.
+     */
+    int32_t decoder_thread_type;
+    /*
+     * Catch-up: a frame decoded more than this far behind the master clock, in
+     * microseconds, is not shown, and the session skips forward to the first
+     * keyframe at or after the clock, counting the skip in
+     * ffplaykmp_snapshot.catch_ups. 500000 by default; negative never skips.
+     */
+    int64_t catch_up_lag_us;
+    /*
+     * An FFmpeg decoder to open by name instead of choosing one by
+     * decoder_preference, or NULL (the default). The player opens exactly this
+     * one, with decoder_options, and falls back to nothing: when it cannot be
+     * opened, or fails to decode, the player fails with the reason in the
+     * snapshot's error_message. The player copies the name and the options at
+     * create.
+     */
+    const char *decoder_name;
+    /* The named decoder's options, key\0value\0 pairs, decoder_options_size bytes in all. */
+    const char *decoder_options;
+    int32_t decoder_options_size;
     /*
      * How long the player keeps its video decoder once it has nothing to
      * decode (paused, ended, waiting for an output, or after a preview), so
@@ -118,7 +151,26 @@ typedef struct ffplaykmp_configuration {
      * next play or seek opens one and decodes from the keyframe.
      */
     int64_t codec_release_delay_us;
+    /*
+     * How many decoded frames the player keeps ready ahead of the one on
+     * screen, ffplay's picture queue: at least 1, and
+     * ffplaykmp_configuration_default sets 3, ffplay's own. Each one holds a
+     * decoded frame and what the output prepared from it (for a bitmap output,
+     * its pixels at the size they are drawn at); a MediaCodec frame holds one
+     * of the codec's output buffers, and a codec that lets its client hold
+     * fewer than this many queues as many as it gives. The
+     * browser's player ignores it and keeps ffplay's 3.
+     */
+    int32_t frame_queue_size;
 } ffplaykmp_configuration;
+
+/*
+ * Bits 24 to 30 of an output's flags: the most hardware frames an output that
+ * prepares them (FFPLAYKMP_OUTPUT_PREPARE_HARDWARE_FRAMES) has queued at once,
+ * each holding one of the output's own buffers; 0 for the frame queue's size.
+ */
+#define FFPLAYKMP_OUTPUT_HARDWARE_FRAMES_SHIFT 24
+#define FFPLAYKMP_OUTPUT_HARDWARE_FRAMES_MASK 0x7fu
 
 typedef struct ffplaykmp_output_capabilities {
     uint32_t size;
@@ -163,25 +215,64 @@ typedef struct ffplaykmp_snapshot {
     uint32_t max_content_light_level;
     uint32_t max_frame_average_light_level;
     uint64_t dropped_frames;
+    /* Catch-up skips forward to a keyframe since the source was prepared (ffplaykmp_configuration.catch_up_lag_us). */
+    uint64_t catch_ups;
     /* Why the open decoder is not the hardware one the output wanted; NONE while it is, or none was wanted. */
     ffplaykmp_decoder_fallback decoder_fallback;
+    /* Why the last operation failed, in words, when there is more to say than last_error: empty otherwise. */
+    char error_message[256];
 } ffplaykmp_snapshot;
 
 /* One reference to a decoded frame (ffmpegkmp_frame.h). */
 struct ffmpegkmp_frame;
 
+/*
+ * What a video frame callback is told, in the order a frame meets them. A
+ * software output sees PREPARE once per decoded frame, on the player's session
+ * thread, as the frame enters the queue ahead of its time: it keeps the frame,
+ * or what it makes of it, under the frame's token (the library's Canvas output
+ * converts it then, so that PRESENT is a flip). If it
+ * took the frame (the callback returned non-zero), exactly
+ * one PRESENT or RELEASE follows for that token: PRESENT when ffplaykmp_player_refresh
+ * (or a preview, on the session thread) shows it, on that caller's thread;
+ * RELEASE when it is dropped as late, flushed by a seek, stop, output change or
+ * a codec release, or the player is destroyed, on whichever thread does that.
+ * A frame the callback did not take sees neither. Previews prepare and present
+ * at once, on the session thread.
+ */
+typedef enum ffplaykmp_video_frame_event {
+    FFPLAYKMP_VIDEO_FRAME_PREPARE = 0,
+    FFPLAYKMP_VIDEO_FRAME_PRESENT = 1,
+    FFPLAYKMP_VIDEO_FRAME_RELEASE = 2,
+} ffplaykmp_video_frame_event;
+
 typedef struct ffplaykmp_video_frame {
     uint32_t size;
     /*
-     * The frame as decoded. A desktop hardware frame is downloaded on its
-     * first map or conversion, once, into memory the player reuses. Borrowed
-     * for the duration of the callback: ffmpegkmp_frame_ref it to keep it.
+     * The frame as decoded, for PREPARE; NULL for PRESENT and RELEASE, which
+     * name it by `token`, as do their width and height (0). A
+     * desktop hardware frame is downloaded on its first map or conversion,
+     * once, into memory the player reuses. Borrowed for the duration of the
+     * callback: ffmpegkmp_frame_ref it to keep it.
      */
     const struct ffmpegkmp_frame *frame;
     int32_t width;
     int32_t height;
     int64_t presentation_time_us;
+    /* The serial the frame was decoded under; the player presents a frame only under the serial it was decoded for. */
     uint32_t queue_serial;
+    /* An ffplaykmp_video_frame_event. */
+    uint32_t event;
+    /* Names the frame from its PREPARE to its PRESENT or RELEASE; never 0, never reused by the player. */
+    uint64_t token;
+    /*
+     * For a PRESENT from ffplaykmp_player_refresh, when the frame is due on
+     * screen, on the clock of that call's `now_us`: when the master clock
+     * reaches the frame, no earlier than `now_us` and no later than the time
+     * the frame was chosen for. -1 for a preview's PRESENT, shown at once, and
+     * for PREPARE and RELEASE.
+     */
+    int64_t display_time_us;
 } ffplaykmp_video_frame;
 
 typedef enum ffplaykmp_platform_frame_kind {
@@ -233,12 +324,21 @@ typedef void (*ffplaykmp_state_callback)(
         void *opaque,
         const ffplaykmp_snapshot *snapshot);
 
-/** The frame is borrowed only for the duration of this callback. */
-typedef void (*ffplaykmp_video_frame_callback)(
+/*
+ * The frame is borrowed only for the duration of this callback. For PREPARE it
+ * returns non-zero when the output took the frame, and then expects its
+ * PRESENT or RELEASE; for the others its result is ignored. It must not call
+ * the player's control functions (play, pause, seek, stop, outputs, destroy):
+ * those wait for a frame being presented or released.
+ */
+typedef int (*ffplaykmp_video_frame_callback)(
         void *opaque,
         const ffplaykmp_video_frame *frame);
 
-/** Returns non-zero when the borrowed platform frame was accepted synchronously. */
+/**
+ * Returns non-zero when the borrowed platform frame was accepted synchronously. Called when the
+ * frame is presented, on the thread of ffplaykmp_player_refresh or, for a preview, the session thread.
+ */
 typedef int (*ffplaykmp_platform_video_frame_callback)(
         void *opaque,
         const ffplaykmp_platform_video_frame *frame);
@@ -308,6 +408,91 @@ FFPLAYKMP_EXPORT void ffplaykmp_player_set_master_clock(
 FFPLAYKMP_EXPORT int ffplaykmp_player_get_snapshot(
         const ffplaykmp_player *player,
         ffplaykmp_snapshot *snapshot);
+
+/* ffplaykmp_player_refresh's answer while the player is not playing. */
+#define FFPLAYKMP_REFRESH_IDLE (-1)
+
+/*
+ * Shows the frame due now, ffplay's video_refresh: the session thread decodes
+ * ahead into the frame queue, and whoever drives the display calls this, once
+ * a display frame (a vsync-driven caller) or again after the time it returns
+ * (a timer). Of the queued frames that are due it presents the newest, and
+ * drops the older ones, counting them in ffplaykmp_snapshot.dropped_frames, so a
+ * decoder that falls behind still shows what it decodes. A frame is due by
+ * ffplay's rules: one frame duration after the one before it, corrected
+ * towards the master clock (the audio position ffplaykmp_player_set_master_clock
+ * reports, else a clock that runs on from the first frame shown) only once
+ * they are further apart than ffplay's sync threshold.
+ *
+ * A decoder that falls further behind catches up: a frame decoded more than
+ * 500 ms behind the master clock is dropped, with the frames queued before it,
+ * and the session thread skips forward to the first keyframe at or after the
+ * clock's position, counting the frames it passes over as dropped; the frame
+ * it lands on is shown when the clock reaches it. It is not a seek: the queue serial stays and no SEEKING is published. With no such
+ * keyframe in the index, later than the one the last skip went to, it decodes
+ * on. It reads the clock it runs on from the last refresh's `now_us`.
+ *
+ * `now_us` is the time on the player's monotonic clock, av_gettime_relative's
+ * (CLOCK_MONOTONIC on Linux and Android: System.nanoTime() / 1000 there, and
+ * Choreographer's frame time / 1000); a negative value reads that clock here.
+ * Tests may pass any increasing times instead, as long as they also do not
+ * report a master clock. `lead_us` is how long after `now_us` the frame this
+ * call presents becomes visible: a caller that draws for the next vsync passes
+ * the time until then, a timer that presents at once passes 0. Frames are
+ * chosen, and clocks read, at `now_us + lead_us`. A MediaCodec decoder that
+ * renders to a Surface takes its buffers ahead of their time instead, at least
+ * FFPLAYKMP_MEDIACODEC_RENDER_AHEAD_US (about two 60 Hz display frames)
+ * ahead, each rendered with av_mediacodec_render_buffer_at_time at its due
+ * time (see ffplaykmp_video_frame.display_time_us) on av_gettime_relative's
+ * clock, so the Surface shows it at that vsync; a buffer dropped as late or
+ * flushed goes back to the codec unrendered.
+ *
+ * Returns how many microseconds after `now_us` to call again, as ffplay's
+ * remaining_time: when nothing was due, until the next queued frame is, at most
+ * ffplay's 10 ms refresh rate; after it presented or dropped a frame, or with
+ * nothing queued, that 10 ms; or
+ * FFPLAYKMP_REFRESH_IDLE while the player is not playing, when nothing becomes
+ * due until it plays. Calls are serialized; a call never waits for decoding or
+ * I/O, only for a frame that a seek or stop is releasing. It must not overlap
+ * ffplaykmp_player_destroy.
+ */
+FFPLAYKMP_EXPORT int64_t ffplaykmp_player_refresh(
+        ffplaykmp_player *player,
+        int64_t now_us,
+        int64_t lead_us);
+
+/*
+ * ffplaykmp_player_refresh for a player that follows an external clock, which
+ * says that the display frame at `now_us` shows `position_ns`, in nanoseconds
+ * from the start: of the queued frames it presents the newest at or before
+ * that position, the frame whose span contains it, drops the older ones, and
+ * holds the frame on screen while no queued frame has been reached. The
+ * position is taken into the stream's time base as VideoDecoder.frameAt
+ * takes it (from the same origin, rounded to the nearest tick) and compared
+ * with each frame's own timestamp there, so the frame presented is the one
+ * frameAt returns. The frames' own timing and the reported audio clock play no
+ * part; the position becomes the master clock that catching up compares
+ * decoded frames with, so a decoder behind an advancing position skips forward
+ * to a keyframe as playback does.
+ *
+ * Following needs a play run, which keeps the queue filled from the frame on
+ * screen and waits while it is full: a position that stands still holds its
+ * frame, and one that advances takes the queued frames. Starting that run, and
+ * seeking when the position jumps, is the caller's. A run that is not on
+ * (FFPLAYKMP_REFRESH_IDLE) cannot reach a position past the frame on screen;
+ * nothing else stops one but the end of the input, after the last frame was
+ * presented. A MediaCodec buffer is rendered at `now_us + lead_us`. A negative
+ * `position_ns` is a plain ffplaykmp_player_refresh. Returns as
+ * ffplaykmp_player_refresh does.
+ */
+FFPLAYKMP_EXPORT int64_t ffplaykmp_player_refresh_at(
+        ffplaykmp_player *player,
+        int64_t now_us,
+        int64_t lead_us,
+        int64_t position_ns);
+
+/* av_gettime_relative: the monotonic clock the player's refresh runs on, in microseconds. */
+FFPLAYKMP_EXPORT int64_t ffplaykmp_clock_now_us(void);
 
 /*
  * What prepare's probe of the player's input found, for the audio engine to
@@ -427,7 +612,10 @@ typedef void (*ffplaykmp_web_encoded_packet_callback)(
         int64_t pts,
         int64_t duration);
 
-/* `decoder_threads` and `codec_release_delay_us` are ffplaykmp_configuration's. */
+/*
+ * `decoder_threads` and `codec_release_delay_us` are ffplaykmp_configuration's,
+ * with 0 threads FFmpeg's automatic count of frame and slice threads.
+ */
 FFPLAYKMP_EXPORT ffplaykmp_player *ffplaykmp_web_player_create(
         int32_t decoder_preference,
         int32_t decoder_threads,

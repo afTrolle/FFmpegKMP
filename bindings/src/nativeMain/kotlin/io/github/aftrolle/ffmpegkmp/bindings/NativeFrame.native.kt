@@ -26,6 +26,7 @@ import io.github.aftrolle.ffmpegkmp.bindings.cinterop.ffmpegkmp_frame_statistics
 import io.github.aftrolle.ffmpegkmp.bindings.cinterop.ffmpegkmp_frame_unmap
 import io.github.aftrolle.ffmpegkmp.bindings.cinterop.ffmpegkmp_frame_unmap_writable
 import io.github.aftrolle.ffmpegkmp.bindings.cinterop.ffmpegkmp_frame_unref
+import io.github.aftrolle.ffmpegkmp.bindings.cinterop.ffmpegkmp_frame_upright
 import io.github.aftrolle.ffmpegkmp.bindings.cinterop.ffmpegkmp_frame_wrap
 import kotlinx.cinterop.ByteVar
 import kotlinx.cinterop.CPointer
@@ -99,6 +100,16 @@ internal class CInteropFrame(internal val handle: CPointer<ffmpegkmp_frame>) : N
         CInteropFrame(checkNotNull(destination.value))
     }
 
+    override fun upright(fallbackClockwiseQuarterTurns: Int, cropX: Int, cropY: Int, cropWidth: Int, cropHeight: Int): NativeFrame = memScoped {
+        val destination = alloc<CPointerVar<ffmpegkmp_frame>>()
+        requireNative(
+            ffmpegkmp_frame_upright(handle, fallbackClockwiseQuarterTurns, cropX, cropY, cropWidth, cropHeight, destination.ptr),
+            "turn a frame upright",
+            ::NativeFrameException,
+        )
+        CInteropFrame(checkNotNull(destination.value))
+    }
+
     override fun convertInto(target: NativeFrame) {
         val destination = requireNotNull(target as? CInteropFrame) { "Frames of another binding cannot be converted into" }
         requireNative(ffmpegkmp_frame_convert_into(destination.handle, handle), "convert a frame", ::NativeFrameException)
@@ -116,7 +127,14 @@ internal class CInteropFrame(internal val handle: CPointer<ffmpegkmp_frame>) : N
         }
     }
 
-    override fun close() = ffmpegkmp_frame_unref(handle)
+    private var closed = false
+
+    /** Releases the reference once; again is a no-op, as on the JVM. */
+    override fun close() {
+        if (closed) return
+        closed = true
+        ffmpegkmp_frame_unref(handle)
+    }
 }
 
 /** A frame over [rowBytes] × [height] bytes at [pixels], such as a bitmap's; the memory must outlive it. */
@@ -150,7 +168,13 @@ public actual fun nativeFrameStatistics(): NativeFrameStatistics = memScoped {
     val statistics = alloc<ffmpegkmp_frame_statistics>()
     ffmpegkmp_frame_statistics_init(statistics.ptr)
     ffmpegkmp_frame_get_statistics(statistics.ptr)
-    NativeFrameStatistics(buffers = statistics.buffers.toLong(), bytes = statistics.bytes.toLong())
+    NativeFrameStatistics(
+        buffers = statistics.buffers.toLong(),
+        bytes = statistics.bytes.toLong(),
+        ringBuffers = statistics.ring_buffers.toLong(),
+        ringBytes = statistics.ring_bytes.toLong(),
+        gamutMaps = statistics.gamut_maps.toLong(),
+    )
 }
 
 /** Takes ownership of a reference the bridge handed out, or returns null for none. */

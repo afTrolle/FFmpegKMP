@@ -20,6 +20,7 @@ import io.github.aftrolle.ffmpegkmp.bindings.NativeVideoDecoderOutput
 import io.github.aftrolle.ffmpegkmp.bindings.NativeVideoStream
 import io.github.aftrolle.ffmpegkmp.bindings.createPlatformVideoDecoder
 import io.github.aftrolle.ffmpegkmp.bindings.openOnDecoderThread
+import io.github.aftrolle.ffmpegkmp.core.ExperimentalFFmpegKmpApi
 import io.github.aftrolle.ffmpegkmp.core.FFmpegKmpException
 import io.github.aftrolle.ffmpegkmp.core.MediaSource
 import io.github.aftrolle.ffmpegkmp.core.toNativeMounts
@@ -66,8 +67,8 @@ public sealed interface VideoOutput {
      * included, are read into memory before they are scaled. Frames keep their rotation, and report
      * the sample aspect ratio that keeps the source's display aspect: an anamorphic source scaled
      * to its display aspect comes out with square pixels. A size needs a format, and must be even
-     * for the 4:2:0 layouts. It is fixed for the decoder: for another size, open another decoder.
-     * The browser scales RGBA8 and BGRA8 by drawing each frame into a canvas of that size.
+     * for the 4:2:0 layouts. [VideoDecoder.resize] changes it on the open decoder, without decoding
+     * again. The browser scales RGBA8 and BGRA8 by drawing each frame into a canvas of that size.
      *
      * Frames with a [format] on every native platform, and frames as decoded in software on Apple,
      * come from a ring the decoder keeps of three frames per layout and size, made once and handed
@@ -165,13 +166,15 @@ public class VideoDecodingException(message: String, cause: Throwable? = null) :
  */
 public class VideoDecoder private constructor(
     private val native: NativeVideoDecoder,
+    private val output: VideoOutput,
     stream: NativeVideoStream,
     private val thread: DecoderThread,
     private val timeout: Duration,
 ) : AutoCloseable {
     /**
      * The source's coded size, rotation, sample aspect ratio, bit depth, colour and HDR metadata.
-     * Frames come at [VideoOutput.Memory.size] instead when the output has one.
+     * Frames come at [VideoOutput.Memory.size] instead when the output has one, or at the size
+     * last given to [resize].
      */
     public val info: VideoInfo = stream.info.toPublicVideoInfo()
 
@@ -204,6 +207,35 @@ public class VideoDecoder private constructor(
     public suspend fun seekTo(position: Duration) {
         val nanos = position.requireNonNegativeNanos()
         call("seek to $position") { native.seek(nanos) }
+    }
+
+    /**
+     * Changes the size of the frames the decoder hands out from now on, as if it had been opened
+     * with `VideoOutput.Memory(format, size)`: null is the source's own size. The frame [frameAt]
+     * returns next, the same position included, comes at the new size and is the same, byte for
+     * byte, as a decoder opened at that size returns. Frames are converted as they are handed out,
+     * so this decodes nothing and does not seek: the decoder's current frame is converted again.
+     * Frames handed out before keep their size and pixels until they close, and [frames] may still
+     * deliver the one frame it decoded ahead at the old size.
+     *
+     * The decoder frees its ring of three (see [VideoOutput.Memory]) of the old size, so a decoder
+     * resized again and again holds one size's ring and the frames its caller still has, which
+     * free as they close. A resize back allocates that size's frames again.
+     *
+     * It runs on the decoder's thread like [seekTo], queued in order with the other calls, and is
+     * safe between the emissions of a [frames] collection; one cancelled once the decoder's thread
+     * has taken it may still have changed the size. Throws [IllegalArgumentException] for a
+     * size [VideoOutput.Memory] rejects with the decoder's format: any size without a format, and
+     * an odd one for the 4:2:0 layouts. Throws [UnsupportedOperationException] for
+     * [VideoOutput.GpuBuffers], whose frames are MediaCodec's own buffers and are not scaled, and in
+     * the browser, which does not resize an open decoder yet.
+     */
+    public suspend fun resize(size: FrameSize?) {
+        val memory = output as? VideoOutput.Memory
+            ?: throw UnsupportedOperationException("GPU buffer frames are MediaCodec's own buffers and are not scaled")
+        // The same rules as opening at that size.
+        VideoOutput.Memory(memory.format, size)
+        call("resize frames to ${size ?: "the source's size"}") { native.setSize(size?.width ?: 0, size?.height ?: 0) }
     }
 
     /**
@@ -314,7 +346,13 @@ public class VideoDecoder private constructor(
          * input, as for FFplay) and decodes its first frame on the decoder's thread.
          *
          * [threads] sets how many threads a software decoder uses, including the software
-         * fallback; frames and positions are the same for every count. [timeout] bounds this call
+         * fallback, and of which [DecoderThreadType]: [DecoderThreads.Auto] is FFmpeg's own
+         * count and types, and [DecoderThreads.Fixed] the count given on the types it allows; each
+         * frame thread holds one decoded picture. Frames are converted with as many threads.
+         * Frames and positions are the same for every choice. [ringSize] is how many of the
+         * decoder's frames the caller may hold at once, at least 2 (the "ring of three" below is
+         * this many); each costs a frame's memory or, for [VideoOutput.GpuBuffers], a GPU buffer.
+         * The browser keeps 3. [timeout] bounds this call
          * and every [seekTo] and [frameAt] of the decoder; [Duration.INFINITE] waits indefinitely.
          * When [decoder] is AUTO and the hardware decoder stalls, the software fallback gets a
          * timeout of its own, so opening takes at most twice [timeout].
@@ -323,15 +361,29 @@ public class VideoDecoder private constructor(
          * taken, AUTO opens the software decoder at once ([decoderFallback] is
          * [DecoderFallbackReason.BUDGET]) and REQUIRE_HARDWARE fails with a
          * [VideoDecodingException]; neither waits for a place.
+         *
+         * A [NamedCodec] opens exactly the decoder FFmpeg knows by that name, as `ffmpeg -c:v
+         * name` before `-i` takes it ("h264", "libaom-av1", "av1_mediacodec"), with its options
+         * set as AVOptions: no other is tried in its place and nothing falls back, so
+         * [decoderFallback] is null. It must decode the source's codec. An unknown name, a decoder
+         * for another codec, an option it does not recognise (every such option is named) or that
+         * is no video decoding option, and a value it does not take fail with a
+         * [VideoDecodingException] that says so. A platform wrapper such as a MediaCodec decoder is
+         * a hardware decoder and takes a place in [DecoderBudget], failing when none is free;
+         * FFmpeg's own decoders decode in software with [threads], unless their options set
+         * threads themselves. The browser decodes with WebCodecs and fails a [NamedCodec] as
+         * unsupported.
          */
         public suspend fun open(
             source: MediaSource,
             output: VideoOutput = VideoOutput.Memory(),
-            decoder: CodecPreference = CodecPreference.AUTO,
+            decoder: CodecSelection = CodecPreference.AUTO,
             timeout: Duration = 10.seconds,
             threads: DecoderThreads = DecoderThreads.Auto,
+            ringSize: Int = 3,
         ): VideoDecoder {
             require(timeout.isPositive()) { "The timeout must be positive: $timeout" }
+            require(ringSize >= 2) { "The decoder's ring holds at least two frames: $ringSize" }
             val action = "open '${source.input}'"
             // Creating reads nothing; it runs to its end even when cancelled so the handle is released.
             val (thread, native) = openOnDecoderThread("FFmpegKMP VideoDecoder") {
@@ -345,20 +397,81 @@ public class VideoDecoder private constructor(
                         memoryFormat = (output as? VideoOutput.Memory)?.format?.toNative(),
                         memoryWidth = (output as? VideoOutput.Memory)?.size?.width ?: 0,
                         memoryHeight = (output as? VideoOutput.Memory)?.size?.height ?: 0,
-                        decoderPreference = decoder.toNative(),
+                        // A named decoder ignores the preference.
+                        decoderPreference = (decoder as? CodecPreference ?: CodecPreference.AUTO).toNative(),
                         decoderThreads = threads.toNative(),
                         timeoutMicros = if (timeout.isInfinite()) 0L else timeout.inWholeMicroseconds,
+                        decoderThreadType = threads.toNativeThreadType(),
+                        frameRing = ringSize,
+                        decoderName = (decoder as? NamedCodec)?.name,
+                        decoderOptions = (decoder as? NamedCodec)?.options.orEmpty(),
                     )
                 }
             }
             try {
                 val stream = thread.within(native, timeout, action) { native.start() }
-                return VideoDecoder(native, stream, thread, timeout)
+                return VideoDecoder(native, output, stream, thread, timeout)
             } catch (failure: Throwable) {
                 thread.release(native)
                 throw failure
             }
         }
+
+        /**
+         * The frame of [source] shown at [position], ready to show as a poster or thumbnail: RGBA8
+         * in sRGB ([FrameFormat.Rgba8]), upright, with square pixels, at [size] fitted by [scale].
+         * The caller owns and closes it, and it stays valid after this returns. Everything else
+         * this opened is closed or being closed by then, whether it returns, fails, times out or
+         * is cancelled: after a timeout or cancellation the interrupted native call may still be
+         * unwinding, and the decoder closes as soon as it has (it is not waited for longer than
+         * about a second), so a stalled input read may hold its decoder until the read returns.
+         *
+         * - **Position**: the frame [frameAt] returns there, exactly, not the nearest keyframe:
+         *   before the first frame the first, past the end the last.
+         * - **Colour**: PQ and HLG sources are tone mapped to SDR, the same pixels a decoder opened
+         *   with `VideoOutput.Memory(FrameFormat.Rgba8)` at that size gives.
+         * - **Upright**: the frame's display matrix is applied exactly as FFmpeg's own autorotate
+         *   applies it, with the same libavfilter filters (`transpose` and its flipped variants,
+         *   `hflip`, `vflip`), so a portrait phone video comes out portrait and a mirrored matrix
+         *   comes out mirrored as `ffmpeg` shows it. An angle between quarter turns goes to the
+         *   nearest quarter turn of [VideoInfo.rotationDegrees] (FFmpeg's tools would rotate by
+         *   the exact angle). The frame reports a rotation of 0 and carries no display matrix.
+         * - **Square pixels**: an anamorphic source comes out at its display aspect, its width
+         *   times its sample aspect ratio, rounded, by its height; the frame reports a sample
+         *   aspect ratio of 1. A sample aspect ratio outside 1/16 to 16 is taken as that bound.
+         * - **Size**: a box in upright pixels, never enlarged. Null is the upright source at its
+         *   display size. [FrameScale.FIT] gives the whole picture as large as fits in the box, its
+         *   aspect kept: the side the box limits is the box's, and the other one is rounded to the
+         *   nearest pixel, a half up. [FrameScale.CROP] gives exactly the box, the picture scaled
+         *   to cover it the same way and cut evenly on both sides of the other axis (an odd pixel
+         *   more from the right or the bottom). When the box is larger than the picture, FIT gives the
+         *   picture at its display size and CROP the largest centred part of it with the box's
+         *   aspect. No side is ever below one pixel, and any size is allowed, odd ones included.
+         * - **Cost**: the decoder is resized before it converts, so a 4K HDR source asked for a
+         *   256-pixel thumbnail is tone mapped and scaled in one pass straight to the small size,
+         *   and the turn and cut work on the small frame, off the caller's thread. What stays is
+         *   one frame of the result's size.
+         *
+         * [timeout] bounds the call, opening included: a stalled input or decoder ends it with a
+         * [VideoDecodingException], as [open]'s does. Under [CodecPreference.AUTO] an attempt that
+         * fails after opening a hardware decoder, or that times out before its decoder opened, is
+         * made once more with [CodecPreference.SOFTWARE]. The two attempts share [timeout], the
+         * first taking at most half of it, so the call takes no longer than [timeout] (plus the
+         * bounded close of a stalled decoder); the other preferences make one attempt, and so does a [NamedCodec], which opens as
+         * [open] opens it, with no software retry. A source that is missing or cannot be decoded
+         * fails with a [VideoDecodingException] too.
+         *
+         * The browser does not extract frames yet: there it throws [UnsupportedOperationException].
+         */
+        @ExperimentalFFmpegKmpApi
+        public suspend fun extractFrame(
+            source: MediaSource,
+            position: Duration = Duration.ZERO,
+            size: FrameSize? = null,
+            scale: FrameScale = FrameScale.FIT,
+            decoder: CodecSelection = CodecPreference.AUTO,
+            timeout: Duration = 10.seconds,
+        ): VideoFrame = extractUprightFrame(source, position, size, scale, decoder, timeout)
     }
 }
 
@@ -452,8 +565,6 @@ private fun Duration.requireNonNegativeNanos(): Long {
     return inWholeNanoseconds
 }
 
-/** The frames a decoder keeps per layout and size: [VideoOutput.Memory] and [VideoOutput.GpuBuffers]. */
-private const val RING = 3
 
 /**
  * [block] again each time the decoder's ring is full, after its grace: the frames the collector
@@ -476,7 +587,7 @@ private inline fun <T> decoding(action: String, block: () -> T): T = try {
 } catch (failure: NativeVideoDecoderException) {
     if (failure.errorCode == NativePlayerError.RING_FULL) {
         throw RingFullException(
-            "Could not $action: the caller holds all $RING frames of the decoder's ring; close one to take another",
+            "Could not $action: the caller holds every frame of the decoder's ring; close one to take another",
             failure,
         )
     }

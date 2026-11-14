@@ -10,6 +10,7 @@ import io.github.aftrolle.ffmpegkmp.bindings.generated.bridge.ffmpegkmp_frame_pl
 import io.github.aftrolle.ffmpegkmp.bindings.generated.bridge.ffmpegkmp_frame_statistics
 import io.github.aftrolle.ffmpegkmp.bindings.generated.bridge.global.bridge
 import org.bytedeco.javacpp.BytePointer
+import org.bytedeco.javacpp.FloatPointer
 
 /** Takes ownership of [handle], one `ffmpegkmp_frame` reference. */
 internal class JavaCppFrame(internal val handle: ffmpegkmp_frame) : NativeFrame {
@@ -73,6 +74,16 @@ internal class JavaCppFrame(internal val handle: ffmpegkmp_frame) : NativeFrame 
         return JavaCppFrame(destination)
     }
 
+    override fun upright(fallbackClockwiseQuarterTurns: Int, cropX: Int, cropY: Int, cropWidth: Int, cropHeight: Int): NativeFrame {
+        val destination = ffmpegkmp_frame()
+        requireNative(
+            bridge.ffmpegkmp_frame_upright(handle, fallbackClockwiseQuarterTurns, cropX, cropY, cropWidth, cropHeight, destination),
+            "turn a frame upright",
+            ::NativeFrameException,
+        )
+        return JavaCppFrame(destination)
+    }
+
     override fun convertInto(target: NativeFrame) {
         val destination = requireNotNull(target as? JavaCppFrame) { "Frames of another binding cannot be converted into" }
         requireNative(bridge.ffmpegkmp_frame_convert_into(destination.handle, handle), "convert a frame", ::NativeFrameException)
@@ -118,10 +129,43 @@ public actual fun nativeFrameStatistics(): NativeFrameStatistics {
     return try {
         bridge.ffmpegkmp_frame_statistics_init(statistics)
         bridge.ffmpegkmp_frame_get_statistics(statistics)
-        NativeFrameStatistics(buffers = statistics.buffers(), bytes = statistics.bytes())
+        NativeFrameStatistics(
+            buffers = statistics.buffers(),
+            bytes = statistics.bytes(),
+            ringBuffers = statistics.ring_buffers(),
+            ringBytes = statistics.ring_bytes(),
+            gamutMaps = statistics.gamut_maps(),
+        )
     } finally {
         statistics.close()
     }
+}
+
+/** The lattice points per side of [nativeGamutMap], `FFMPEGKMP_GAMUT_MAP_POINTS`. */
+@InternalFFmpegKmpApi
+public const val GAMUT_MAP_POINTS: Int = 65
+
+/**
+ * The gamut map the converter's tone map to SDR takes from [from] primaries into [to]'s
+ * (`AVColorPrimaries`), for SDR codes in [transfer] (`AVColorTransferCharacteristic`), for a shader
+ * that tone maps as the converter does: [GAMUT_MAP_POINTS] cubed points of red, green and blue, the
+ * codes in [to]'s primaries of the colour whose codes in [from]'s are (red, green, blue) /
+ * ([GAMUT_MAP_POINTS] - 1), red varying fastest, then green, then blue. Look it up tetrahedrally,
+ * as the converter does. The bridge makes it on first use and keeps it.
+ */
+@InternalFFmpegKmpApi
+public fun nativeGamutMap(from: Int, to: Int, transfer: Int): FloatArray {
+    JavaCppBridgeLoader.load()
+    val points = FloatArray(GAMUT_MAP_POINTS * GAMUT_MAP_POINTS * GAMUT_MAP_POINTS * 3)
+    FloatPointer(points.size.toLong()).use { memory ->
+        requireNative(
+            bridge.ffmpegkmp_frame_gamut_map(from, to, transfer, memory, points.size),
+            "make the gamut map from primaries $from into $to",
+            ::NativeFrameException,
+        )
+        memory.get(points)
+    }
+    return points
 }
 
 /** Takes ownership of a reference the bridge handed out, or returns null for none. */

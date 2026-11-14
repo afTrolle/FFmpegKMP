@@ -84,6 +84,29 @@ class FFplayNativePlayerDeviceTest {
         const val ROTATED_CLIP = "rotated-90.mp4"
     }
 
+    /**
+     * A queue larger than the output buffers MediaCodec gives its client fills as far as the codec lets it: playback
+     * goes on, and a pause longer than the decoder's stall limit, the codec waiting for a buffer back all the while,
+     * is no stall.
+     */
+    @Test
+    fun aQueueLargerThanMediaCodecsBuffersPlaysAndOutlastsAPause() = runBlocking {
+        org.junit.Assume.assumeTrue("needs a hardware AVC decoder", hardwareAvcDecoder())
+        Playing(CodecPreference.AUTO, releaseDecoder = Duration.INFINITE, frameQueueSize = 16).use { playing ->
+            val player = playing.player
+            playing.prepareAndShow()
+            within("play") { player.play() }
+            player.await("playback past 1 s") { it.position >= 1.seconds }
+            within("pause") { player.pause() }
+            delay(6500)
+            assertEquals(FFplayState.PAUSED, player.snapshot.value.state)
+            within("play") { player.play() }
+            player.await("playback past 2 s") { it.position >= 2.seconds }
+            playing.assertNoDecoderFallback()
+            log("queue of 16 on ${player.snapshot.value.output?.decoder}: ${player.snapshot.value.droppedFrames} dropped")
+        }
+    }
+
     @Test
     fun autoPlaysTheClipThroughMediaCodecOntoTheSurface() = runBlocking {
         playThroughTheLifecycle(CodecPreference.AUTO, attachFirst = false)
@@ -239,7 +262,7 @@ class FFplayNativePlayerDeviceTest {
         val limit = DecoderBudget.hardwareDecoders
         val held = DecoderBudget.hardwareDecodersInUse
         DecoderBudget.hardwareDecoders = held + 2
-        val players = (1..4).map { Playing(CodecPreference.AUTO, releaseDecoder = null) }
+        val players = (1..4).map { Playing(CodecPreference.AUTO, releaseDecoder = Duration.INFINITE) }
         val open = players.toMutableList()
         try {
             for (playing in players) {
@@ -321,7 +344,7 @@ class FFplayNativePlayerDeviceTest {
     @Test
     fun aCanvasOutputReceivesTheFrameOnScreenAtEachTarget() = runBlocking {
         val output = CountingOutput()
-        val player = FFplayPlayer(FFplayConfiguration(decoderPreference = CodecPreference.AUTO, audio = false))
+        val player = FFplayPlayer(FFplayConfiguration(decoder = CodecPreference.AUTO, audio = false))
         try {
             within("attach") { player.attachOutput(output) }
             withTimeout(15.seconds) { player.prepare(source()) }
@@ -362,7 +385,7 @@ class FFplayNativePlayerDeviceTest {
     private suspend fun playThroughTheLifecycle(preference: CodecPreference, attachFirst: Boolean) {
         val started = System.nanoTime()
         // The decoder is kept, so that the codecs counted are the ones the transitions open.
-        Playing(preference, releaseDecoder = null).use { playing ->
+        Playing(preference, releaseDecoder = Duration.INFINITE).use { playing ->
             val player = playing.player
             if (attachFirst) {
                 // Before prepare the stream is unknown; the output offers MediaCodec the Surface all the same.
@@ -450,7 +473,7 @@ class FFplayNativePlayerDeviceTest {
      * whichever Surface there is, and stays (the player keeps it here rather than release it while paused).
      */
     private suspend fun swapSurfaces(preference: CodecPreference) {
-        Playing(preference, releaseDecoder = null).use { playing ->
+        Playing(preference, releaseDecoder = Duration.INFINITE).use { playing ->
             val player = playing.player
             playing.prepareAndShow()
             val perSurface = if (player.snapshot.value.output?.decoder == DecoderKind.HARDWARE) 1L else 0L
@@ -638,10 +661,16 @@ class FFplayNativePlayerDeviceTest {
     private inner class Playing(
         val preference: CodecPreference,
         val clipName: String = CLIP,
-        releaseDecoder: Duration? = FFplayConfiguration().releaseDecoderWhenPaused,
+        releaseDecoder: Duration = FFplayConfiguration().decoderIdleRelease,
+        frameQueueSize: Int = FFplayConfiguration().frameQueueSize,
     ) : AutoCloseable {
         val player = FFplayPlayer(
-            FFplayConfiguration(decoderPreference = preference, audio = false, releaseDecoderWhenPaused = releaseDecoder),
+            FFplayConfiguration(
+                decoder = preference,
+                audio = false,
+                decoderIdleRelease = releaseDecoder,
+                frameQueueSize = frameQueueSize,
+            ),
         )
         val output = AndroidSurfaceOutput(ContentScale.Fit, 0)
         var surface = SurfaceReader()

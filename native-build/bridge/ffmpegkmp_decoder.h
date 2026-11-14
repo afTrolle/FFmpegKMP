@@ -86,9 +86,10 @@ FFPLAYKMP_EXPORT void ffmpegkmp_decoded_frame_init(ffmpegkmp_decoded_frame *fram
  * display aspect through their sample aspect ratio. A size needs a memory
  * format. `decoder_threads` is
  * the software decoder's thread count, 0 for FFmpeg's automatic count capped
- * at 8; it decodes with slice threads only, so one frame is in progress, and
- * hardware decoders ignore it. Conversions use at most as many threads. `timeout_us` bounds each blocking call, 0
- * for none. Returns NULL and stores the negative error in *error on failure.
+ * at 8; it decodes with slice threads only, so one frame is in progress,
+ * unless set_thread_type says otherwise, and hardware decoders ignore it.
+ * Conversions use at most as many threads. `timeout_us` bounds each blocking
+ * call, 0 for none. Returns NULL and stores the negative error in *error on failure.
  */
 FFPLAYKMP_EXPORT ffmpegkmp_video_decoder *ffmpegkmp_video_decoder_create(
         const char *input,
@@ -111,6 +112,47 @@ FFPLAYKMP_EXPORT int ffmpegkmp_video_decoder_set_android_surface(
         ffmpegkmp_video_decoder *decoder);
 #endif
 /*
+ * The software decoder's thread_type, before start: FF_THREAD_FRAME,
+ * FF_THREAD_SLICE or both, as FFmpeg's codec context takes them. Frame
+ * threading decodes several frames at once and holds about one decoded picture
+ * per thread; FFmpeg uses it wherever the codec has it, and slice threads
+ * elsewhere. FF_THREAD_SLICE alone keeps one frame in progress. Unset, the
+ * codec context keeps FFmpeg's default, both.
+ */
+FFPLAYKMP_EXPORT int ffmpegkmp_video_decoder_set_thread_type(ffmpegkmp_video_decoder *decoder, int32_t thread_type);
+/*
+ * How many MEMORY frames the caller may hold at once, before start: the pool
+ * hands out this many per layout and size, and the next waits for one to
+ * close. 3 unless set, at least 2: the caller's and the one decoded ahead.
+ */
+FFPLAYKMP_EXPORT int ffmpegkmp_video_decoder_set_frame_ring(ffmpegkmp_video_decoder *decoder, int32_t frames);
+/*
+ * Before start: open the decoder FFmpeg knows as `name` ("h264", "libaom-av1",
+ * "av1_mediacodec"), as `ffmpeg -c:v name` before `-i` takes it, alone,
+ * instead of choosing by `decoder_preference`, which no longer applies: no
+ * other decoder is tried and nothing falls back. It must decode the stream's
+ * codec. `options` are its AVOptions, `options_size` bytes holding, for each,
+ * its key and then its value, each a NUL-terminated string (NULL and 0 for
+ * none), set on the decoder as avcodec_open2 sets an options dictionary's. An
+ * unknown name, one for another codec, an option the decoder does not
+ * recognise or that is no video decoding option, and a value it does not take
+ * fail start, and ffmpegkmp_video_decoder_error says which. A platform wrapper
+ * such as MediaCodec's opens as the hardware decoder and takes a place in the
+ * budget (FFPLAYKMP_ERROR_BUSY with none free); others decode in software
+ * with the decoder's threads, unless their options set them. Both strings
+ * are copied.
+ */
+FFPLAYKMP_EXPORT int ffmpegkmp_video_decoder_set_named_decoder(
+        ffmpegkmp_video_decoder *decoder,
+        const char *name,
+        const char *options,
+        int32_t options_size);
+/*
+ * Why a named decoder did not open, or its options did not check, in words;
+ * empty otherwise. Valid until the next call on the decoder.
+ */
+FFPLAYKMP_EXPORT const char *ffmpegkmp_video_decoder_error(const ffmpegkmp_video_decoder *decoder);
+/*
  * Opens the input, selects its best video stream and decodes the first frame.
  * Under FFPLAYKMP_DECODER_AUTO a hardware decoder that fails or times out
  * before producing a frame is replaced once by the software one, which gets a
@@ -130,6 +172,20 @@ FFPLAYKMP_EXPORT int ffmpegkmp_video_decoder_get_info(
 FFPLAYKMP_EXPORT int ffmpegkmp_video_decoder_seek(
         ffmpegkmp_video_decoder *decoder,
         int64_t position_ns);
+/*
+ * Changes the memory format's frame size, as create's `width` and `height`
+ * take it: 0 and 0 for the source's, and a size only with a memory format.
+ * Frames are converted as they are handed out, so the next frame_at converts
+ * the current frame again at the new size, without decoding or seeking, into
+ * the frame a decoder created at that size returns. Frames handed out before
+ * keep their size and pixels. The decoder frees its pooled memory of the old
+ * size, apart from frames the caller still holds, which is freed as they are
+ * released; a resize back allocates again.
+ */
+FFPLAYKMP_EXPORT int ffmpegkmp_video_decoder_set_size(
+        ffmpegkmp_video_decoder *decoder,
+        int32_t width,
+        int32_t height);
 /*
  * Makes the frame at `position_ns` current and describes it, with a new
  * reference to its pixels. Returns without decoding or converting when the

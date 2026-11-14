@@ -186,6 +186,12 @@ header. A `ffmpegkmp_frame *` is one reference to an `AVFrame`:
   `ffmpegkmp_frame_convert_to` and `ffmpegkmp_frame_convert_into` convert
   through `ffmpegkmp_frame_convert`, and `ffmpegkmp_frame_wrap` makes a frame
   over memory the caller owns, such as a Skia bitmap's.
+- `ffmpegkmp_frame_upright` turns an RGBA8 or BGRA8 frame upright through a
+  one-frame, single-threaded libavfilter graph, choosing the filters from the
+  frame's display matrix as FFmpeg's autorotate does (`transpose`, its flipped
+  variants, `hflip`, `vflip`), then cuts an upright rectangle with `crop`, into
+  a new frame that shares nothing with the source; `VideoDecoder.extractFrame`
+  makes its frames with it.
 - `ffmpegkmp_frame_get_statistics` counts the pixel memory the bridge allocated
   (pool buffers, converter intermediates and hardware downloads), which the
   tests use to show where a frame's pixels are.

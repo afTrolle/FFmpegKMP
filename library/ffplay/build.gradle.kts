@@ -58,12 +58,17 @@ kotlin {
         nativeTest {
             kotlin.srcDir("src/systemTest/kotlin")
         }
-        // The composite export measurement decodes codec's budget clip (scripts/generate-budget-clip.sh).
+        // The composite export measurement decodes codec's budget clip (scripts/generate-budget-clip.sh);
+        // HardwareCanvasDeviceTest, core's colour fixtures, such as sdr-display-p3.mp4.
         getByName("androidDeviceTest") {
             resources.srcDir(rootProject.layout.projectDirectory.dir("library/codec/src/androidDeviceTest/resources"))
+            resources.srcDir(rootProject.layout.projectDirectory.dir("library/core/src/commonTest/resources"))
         }
         // The device tests decode for real, so their APK links the Android runtime an app would.
         getByName("androidDeviceTest").dependencies {
+            // PlaybackTimingDeviceTest: an activity to show the players in, and Media3 as the reference player.
+            implementation(libs.androidx.activity.compose)
+            implementation(libs.media3.exoplayer)
             runtimeOnly(
                 files(
                     selectedNativeProfile.map { profile ->

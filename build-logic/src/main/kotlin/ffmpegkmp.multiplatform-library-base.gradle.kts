@@ -3,6 +3,7 @@
 import org.gradle.api.artifacts.VersionCatalogsExtension
 import org.gradle.api.publish.PublishingExtension
 import org.jetbrains.kotlin.gradle.dsl.KotlinMultiplatformExtension
+import org.jetbrains.kotlin.gradle.dsl.abi.ExperimentalAbiValidation
 import org.jetbrains.kotlin.gradle.tasks.KotlinJvmCompile
 
 plugins {
@@ -39,6 +40,30 @@ tasks.withType<KotlinJvmCompile>().configureEach {
 }
 
 extensions.configure<KotlinMultiplatformExtension> {
+    // Every published declaration states its visibility and return type, so nothing becomes API by accident.
+    explicitApi()
+
+    // The library uses and tests its own experimental API; applications opt in themselves.
+    sourceSets.configureEach {
+        languageSettings.optIn("io.github.aftrolle.ffmpegkmp.core.ExperimentalFFmpegKmpApi")
+    }
+
+    // The committed dumps under each module's api/ directory make every public ABI change a reviewable diff.
+    // checkKotlinAbi runs as part of check; updateKotlinAbi rewrites the dumps after an intended change.
+    @OptIn(ExperimentalAbiValidation::class)
+    abiValidation {
+        filters {
+            exclude {
+                // Opt-in markers for declarations that connect FFmpegKMP's own modules. They are public only
+                // because Kotlin has no cross-module visibility, and are not part of the supported surface.
+                annotatedWith.addAll(
+                    "io.github.aftrolle.ffmpegkmp.bindings.InternalFFmpegKmpApi",
+                    "io.github.aftrolle.ffmpegkmp.core.InternalFFmpegKmpApi",
+                )
+            }
+        }
+    }
+
     android {
         namespace = androidNamespace.get()
         compileSdk = androidCompileSdk

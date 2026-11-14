@@ -14,19 +14,19 @@ import kotlinx.coroutines.test.runTest
 class DecoderReleaseTest {
     @Test
     fun thePlayerHandsItsDecoderReleaseDelayToTheNativeBridge() = runTest {
-        assertEquals(2.seconds, FFplayConfiguration().releaseDecoderWhenPaused)
+        assertEquals(2.seconds, FFplayConfiguration().decoderIdleRelease)
         assertEquals(2_000_000, nativeConfiguration(FFplayConfiguration()).codecReleaseDelayUs)
-        assertEquals(0, nativeConfiguration(FFplayConfiguration(releaseDecoderWhenPaused = Duration.ZERO)).codecReleaseDelayUs)
+        assertEquals(0, nativeConfiguration(FFplayConfiguration(decoderIdleRelease = Duration.ZERO)).codecReleaseDelayUs)
         assertEquals(
             250_000,
-            nativeConfiguration(FFplayConfiguration(releaseDecoderWhenPaused = 250.milliseconds)).codecReleaseDelayUs,
+            nativeConfiguration(FFplayConfiguration(decoderIdleRelease = 250.milliseconds)).codecReleaseDelayUs,
         )
         // Negative is the bridge's "keep".
-        assertEquals(-1, nativeConfiguration(FFplayConfiguration(releaseDecoderWhenPaused = null)).codecReleaseDelayUs)
+        assertEquals(-1, nativeConfiguration(FFplayConfiguration(decoderIdleRelease = Duration.INFINITE)).codecReleaseDelayUs)
     }
 
     @Test
     fun aNegativeReleaseDelayIsRejected() {
-        assertFailsWith<IllegalArgumentException> { FFplayConfiguration(releaseDecoderWhenPaused = (-1).seconds) }
+        assertFailsWith<IllegalArgumentException> { FFplayConfiguration(decoderIdleRelease = (-1).seconds) }
     }
 }

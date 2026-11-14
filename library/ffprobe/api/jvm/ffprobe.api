@@ -1,0 +1,505 @@
+public final class io/github/aftrolle/ffmpegkmp/ffprobe/FFprobeClient : io/github/aftrolle/ffmpegkmp/core/CommandClient {
+	public fun <init> ()V
+	public fun <init> (Lkotlinx/serialization/json/Json;Lio/github/aftrolle/ffmpegkmp/core/CommandRuntimeLimits;)V
+	public synthetic fun <init> (Lkotlinx/serialization/json/Json;Lio/github/aftrolle/ffmpegkmp/core/CommandRuntimeLimits;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public final fun inspect (Ljava/lang/String;Lio/github/aftrolle/ffmpegkmp/ffprobe/ProbeQuery;Lio/github/aftrolle/ffmpegkmp/core/CommandIo;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
+	public static synthetic fun inspect$default (Lio/github/aftrolle/ffmpegkmp/ffprobe/FFprobeClient;Ljava/lang/String;Lio/github/aftrolle/ffmpegkmp/ffprobe/ProbeQuery;Lio/github/aftrolle/ffmpegkmp/core/CommandIo;Lkotlin/coroutines/Continuation;ILjava/lang/Object;)Ljava/lang/Object;
+	public final fun parse (Ljava/lang/String;)Lio/github/aftrolle/ffmpegkmp/ffprobe/MediaInformation;
+}
+
+public final class io/github/aftrolle/ffmpegkmp/ffprobe/FFprobeParseException : io/github/aftrolle/ffmpegkmp/core/FFmpegKmpException {
+	public fun <init> (Ljava/lang/String;Ljava/lang/Throwable;)V
+	public synthetic fun <init> (Ljava/lang/String;Ljava/lang/Throwable;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
+}
+
+public abstract class io/github/aftrolle/ffmpegkmp/ffprobe/JsonBackedProbeValue {
+	public synthetic fun <init> (Lkotlinx/serialization/json/JsonObject;Lkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public fun getRaw ()Lkotlinx/serialization/json/JsonObject;
+}
+
+public final class io/github/aftrolle/ffmpegkmp/ffprobe/MediaInformation : io/github/aftrolle/ffmpegkmp/ffprobe/JsonBackedProbeValue {
+	public static final field Companion Lio/github/aftrolle/ffmpegkmp/ffprobe/MediaInformation$Companion;
+	public fun <init> (Lkotlinx/serialization/json/JsonObject;)V
+	public final fun component1 ()Lkotlinx/serialization/json/JsonObject;
+	public final fun copy (Lkotlinx/serialization/json/JsonObject;)Lio/github/aftrolle/ffmpegkmp/ffprobe/MediaInformation;
+	public static synthetic fun copy$default (Lio/github/aftrolle/ffmpegkmp/ffprobe/MediaInformation;Lkotlinx/serialization/json/JsonObject;ILjava/lang/Object;)Lio/github/aftrolle/ffmpegkmp/ffprobe/MediaInformation;
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getChapters ()Ljava/util/List;
+	public final fun getError ()Lio/github/aftrolle/ffmpegkmp/ffprobe/ProbeError;
+	public final fun getFormat ()Lio/github/aftrolle/ffmpegkmp/ffprobe/ProbeFormat;
+	public final fun getFrames ()Ljava/util/List;
+	public final fun getLibraryVersions ()Ljava/util/List;
+	public final fun getPackets ()Ljava/util/List;
+	public final fun getPixelFormats ()Ljava/util/List;
+	public final fun getProgramVersion ()Lio/github/aftrolle/ffmpegkmp/ffprobe/ProbeProgramVersion;
+	public final fun getPrograms ()Ljava/util/List;
+	public fun getRaw ()Lkotlinx/serialization/json/JsonObject;
+	public final fun getStreamGroups ()Ljava/util/List;
+	public final fun getStreams ()Ljava/util/List;
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class io/github/aftrolle/ffmpegkmp/ffprobe/MediaInformation$Companion {
+	public final fun serializer ()Lkotlinx/serialization/KSerializer;
+}
+
+public final class io/github/aftrolle/ffmpegkmp/ffprobe/ProbeChapter : io/github/aftrolle/ffmpegkmp/ffprobe/JsonBackedProbeValue {
+	public static final field Companion Lio/github/aftrolle/ffmpegkmp/ffprobe/ProbeChapter$Companion;
+	public fun <init> (Lkotlinx/serialization/json/JsonObject;)V
+	public final fun component1 ()Lkotlinx/serialization/json/JsonObject;
+	public final fun copy (Lkotlinx/serialization/json/JsonObject;)Lio/github/aftrolle/ffmpegkmp/ffprobe/ProbeChapter;
+	public static synthetic fun copy$default (Lio/github/aftrolle/ffmpegkmp/ffprobe/ProbeChapter;Lkotlinx/serialization/json/JsonObject;ILjava/lang/Object;)Lio/github/aftrolle/ffmpegkmp/ffprobe/ProbeChapter;
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getEnd ()Ljava/lang/Long;
+	public final fun getEndTimeSeconds ()Ljava/lang/Double;
+	public final fun getId ()Ljava/lang/Long;
+	public fun getRaw ()Lkotlinx/serialization/json/JsonObject;
+	public final fun getStart ()Ljava/lang/Long;
+	public final fun getStartTimeSeconds ()Ljava/lang/Double;
+	public final fun getTags ()Ljava/util/Map;
+	public final fun getTimeBase ()Ljava/lang/String;
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class io/github/aftrolle/ffmpegkmp/ffprobe/ProbeChapter$Companion {
+	public final fun serializer ()Lkotlinx/serialization/KSerializer;
+}
+
+public final class io/github/aftrolle/ffmpegkmp/ffprobe/ProbeDisposition : io/github/aftrolle/ffmpegkmp/ffprobe/JsonBackedProbeValue {
+	public fun <init> (Lkotlinx/serialization/json/JsonObject;)V
+	public final fun component1 ()Lkotlinx/serialization/json/JsonObject;
+	public final fun copy (Lkotlinx/serialization/json/JsonObject;)Lio/github/aftrolle/ffmpegkmp/ffprobe/ProbeDisposition;
+	public static synthetic fun copy$default (Lio/github/aftrolle/ffmpegkmp/ffprobe/ProbeDisposition;Lkotlinx/serialization/json/JsonObject;ILjava/lang/Object;)Lio/github/aftrolle/ffmpegkmp/ffprobe/ProbeDisposition;
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getAttachedPicture ()Ljava/lang/Boolean;
+	public final fun getCaptions ()Ljava/lang/Boolean;
+	public final fun getCleanEffects ()Ljava/lang/Boolean;
+	public final fun getComment ()Ljava/lang/Boolean;
+	public final fun getDefault ()Ljava/lang/Boolean;
+	public final fun getDependent ()Ljava/lang/Boolean;
+	public final fun getDescriptions ()Ljava/lang/Boolean;
+	public final fun getDub ()Ljava/lang/Boolean;
+	public final fun getForced ()Ljava/lang/Boolean;
+	public final fun getHearingImpaired ()Ljava/lang/Boolean;
+	public final fun getKaraoke ()Ljava/lang/Boolean;
+	public final fun getLyrics ()Ljava/lang/Boolean;
+	public final fun getMetadata ()Ljava/lang/Boolean;
+	public final fun getOriginal ()Ljava/lang/Boolean;
+	public fun getRaw ()Lkotlinx/serialization/json/JsonObject;
+	public final fun getStillImage ()Ljava/lang/Boolean;
+	public final fun getTimedThumbnails ()Ljava/lang/Boolean;
+	public final fun getVisualImpaired ()Ljava/lang/Boolean;
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class io/github/aftrolle/ffmpegkmp/ffprobe/ProbeError : io/github/aftrolle/ffmpegkmp/ffprobe/JsonBackedProbeValue {
+	public static final field Companion Lio/github/aftrolle/ffmpegkmp/ffprobe/ProbeError$Companion;
+	public fun <init> (Lkotlinx/serialization/json/JsonObject;)V
+	public final fun component1 ()Lkotlinx/serialization/json/JsonObject;
+	public final fun copy (Lkotlinx/serialization/json/JsonObject;)Lio/github/aftrolle/ffmpegkmp/ffprobe/ProbeError;
+	public static synthetic fun copy$default (Lio/github/aftrolle/ffmpegkmp/ffprobe/ProbeError;Lkotlinx/serialization/json/JsonObject;ILjava/lang/Object;)Lio/github/aftrolle/ffmpegkmp/ffprobe/ProbeError;
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getCode ()Ljava/lang/Integer;
+	public final fun getMessage ()Ljava/lang/String;
+	public fun getRaw ()Lkotlinx/serialization/json/JsonObject;
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class io/github/aftrolle/ffmpegkmp/ffprobe/ProbeError$Companion {
+	public final fun serializer ()Lkotlinx/serialization/KSerializer;
+}
+
+public final class io/github/aftrolle/ffmpegkmp/ffprobe/ProbeFormat : io/github/aftrolle/ffmpegkmp/ffprobe/JsonBackedProbeValue {
+	public static final field Companion Lio/github/aftrolle/ffmpegkmp/ffprobe/ProbeFormat$Companion;
+	public fun <init> (Lkotlinx/serialization/json/JsonObject;)V
+	public final fun component1 ()Lkotlinx/serialization/json/JsonObject;
+	public final fun copy (Lkotlinx/serialization/json/JsonObject;)Lio/github/aftrolle/ffmpegkmp/ffprobe/ProbeFormat;
+	public static synthetic fun copy$default (Lio/github/aftrolle/ffmpegkmp/ffprobe/ProbeFormat;Lkotlinx/serialization/json/JsonObject;ILjava/lang/Object;)Lio/github/aftrolle/ffmpegkmp/ffprobe/ProbeFormat;
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getBitRate ()Ljava/lang/Long;
+	public final fun getDurationSeconds ()Ljava/lang/Double;
+	public final fun getFilename ()Ljava/lang/String;
+	public final fun getFormatLongName ()Ljava/lang/String;
+	public final fun getFormatName ()Ljava/lang/String;
+	public final fun getProbeScore ()Ljava/lang/Integer;
+	public final fun getProgramCount ()Ljava/lang/Integer;
+	public fun getRaw ()Lkotlinx/serialization/json/JsonObject;
+	public final fun getSizeBytes ()Ljava/lang/Long;
+	public final fun getStartTimeSeconds ()Ljava/lang/Double;
+	public final fun getStreamCount ()Ljava/lang/Integer;
+	public final fun getTags ()Ljava/util/Map;
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class io/github/aftrolle/ffmpegkmp/ffprobe/ProbeFormat$Companion {
+	public final fun serializer ()Lkotlinx/serialization/KSerializer;
+}
+
+public final class io/github/aftrolle/ffmpegkmp/ffprobe/ProbeFrame : io/github/aftrolle/ffmpegkmp/ffprobe/JsonBackedProbeValue {
+	public static final field Companion Lio/github/aftrolle/ffmpegkmp/ffprobe/ProbeFrame$Companion;
+	public fun <init> (Lkotlinx/serialization/json/JsonObject;)V
+	public final fun component1 ()Lkotlinx/serialization/json/JsonObject;
+	public final fun copy (Lkotlinx/serialization/json/JsonObject;)Lio/github/aftrolle/ffmpegkmp/ffprobe/ProbeFrame;
+	public static synthetic fun copy$default (Lio/github/aftrolle/ffmpegkmp/ffprobe/ProbeFrame;Lkotlinx/serialization/json/JsonObject;ILjava/lang/Object;)Lio/github/aftrolle/ffmpegkmp/ffprobe/ProbeFrame;
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getBestEffortTimestamp ()Ljava/lang/Long;
+	public final fun getBestEffortTimestampSeconds ()Ljava/lang/Double;
+	public final fun getChannelLayout ()Ljava/lang/String;
+	public final fun getChannels ()Ljava/lang/Integer;
+	public final fun getDuration ()Ljava/lang/Long;
+	public final fun getDurationSeconds ()Ljava/lang/Double;
+	public final fun getHeight ()Ljava/lang/Integer;
+	public final fun getInterlaced ()Ljava/lang/Boolean;
+	public final fun getKeyFrame ()Ljava/lang/Boolean;
+	public final fun getMediaType ()Ljava/lang/String;
+	public final fun getPacketDts ()Ljava/lang/Long;
+	public final fun getPacketPosition ()Ljava/lang/Long;
+	public final fun getPacketSize ()Ljava/lang/Long;
+	public final fun getPictureType ()Ljava/lang/String;
+	public final fun getPixelFormat ()Ljava/lang/String;
+	public final fun getPts ()Ljava/lang/Long;
+	public final fun getPtsTimeSeconds ()Ljava/lang/Double;
+	public fun getRaw ()Lkotlinx/serialization/json/JsonObject;
+	public final fun getRepeatPicture ()Ljava/lang/Integer;
+	public final fun getSampleCount ()Ljava/lang/Integer;
+	public final fun getSampleFormat ()Ljava/lang/String;
+	public final fun getSideData ()Ljava/util/List;
+	public final fun getStreamIndex ()Ljava/lang/Integer;
+	public final fun getTags ()Ljava/util/Map;
+	public final fun getTopFieldFirst ()Ljava/lang/Boolean;
+	public final fun getWidth ()Ljava/lang/Integer;
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class io/github/aftrolle/ffmpegkmp/ffprobe/ProbeFrame$Companion {
+	public final fun serializer ()Lkotlinx/serialization/KSerializer;
+}
+
+public final class io/github/aftrolle/ffmpegkmp/ffprobe/ProbeLibraryVersion : io/github/aftrolle/ffmpegkmp/ffprobe/JsonBackedProbeValue {
+	public static final field Companion Lio/github/aftrolle/ffmpegkmp/ffprobe/ProbeLibraryVersion$Companion;
+	public fun <init> (Lkotlinx/serialization/json/JsonObject;)V
+	public final fun component1 ()Lkotlinx/serialization/json/JsonObject;
+	public final fun copy (Lkotlinx/serialization/json/JsonObject;)Lio/github/aftrolle/ffmpegkmp/ffprobe/ProbeLibraryVersion;
+	public static synthetic fun copy$default (Lio/github/aftrolle/ffmpegkmp/ffprobe/ProbeLibraryVersion;Lkotlinx/serialization/json/JsonObject;ILjava/lang/Object;)Lio/github/aftrolle/ffmpegkmp/ffprobe/ProbeLibraryVersion;
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getIdentification ()Ljava/lang/String;
+	public final fun getMajor ()Ljava/lang/Integer;
+	public final fun getMicro ()Ljava/lang/Integer;
+	public final fun getMinor ()Ljava/lang/Integer;
+	public final fun getName ()Ljava/lang/String;
+	public fun getRaw ()Lkotlinx/serialization/json/JsonObject;
+	public final fun getVersion ()Ljava/lang/Long;
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class io/github/aftrolle/ffmpegkmp/ffprobe/ProbeLibraryVersion$Companion {
+	public final fun serializer ()Lkotlinx/serialization/KSerializer;
+}
+
+public final class io/github/aftrolle/ffmpegkmp/ffprobe/ProbePacket : io/github/aftrolle/ffmpegkmp/ffprobe/JsonBackedProbeValue {
+	public static final field Companion Lio/github/aftrolle/ffmpegkmp/ffprobe/ProbePacket$Companion;
+	public fun <init> (Lkotlinx/serialization/json/JsonObject;)V
+	public final fun component1 ()Lkotlinx/serialization/json/JsonObject;
+	public final fun copy (Lkotlinx/serialization/json/JsonObject;)Lio/github/aftrolle/ffmpegkmp/ffprobe/ProbePacket;
+	public static synthetic fun copy$default (Lio/github/aftrolle/ffmpegkmp/ffprobe/ProbePacket;Lkotlinx/serialization/json/JsonObject;ILjava/lang/Object;)Lio/github/aftrolle/ffmpegkmp/ffprobe/ProbePacket;
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getCodecType ()Ljava/lang/String;
+	public final fun getData ()Ljava/lang/String;
+	public final fun getDts ()Ljava/lang/Long;
+	public final fun getDtsTimeSeconds ()Ljava/lang/Double;
+	public final fun getDuration ()Ljava/lang/Long;
+	public final fun getDurationSeconds ()Ljava/lang/Double;
+	public final fun getFlags ()Ljava/lang/String;
+	public final fun getPosition ()Ljava/lang/Long;
+	public final fun getPts ()Ljava/lang/Long;
+	public final fun getPtsTimeSeconds ()Ljava/lang/Double;
+	public fun getRaw ()Lkotlinx/serialization/json/JsonObject;
+	public final fun getSideData ()Ljava/util/List;
+	public final fun getSizeBytes ()Ljava/lang/Long;
+	public final fun getStreamIndex ()Ljava/lang/Integer;
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class io/github/aftrolle/ffmpegkmp/ffprobe/ProbePacket$Companion {
+	public final fun serializer ()Lkotlinx/serialization/KSerializer;
+}
+
+public final class io/github/aftrolle/ffmpegkmp/ffprobe/ProbePixelComponent : io/github/aftrolle/ffmpegkmp/ffprobe/JsonBackedProbeValue {
+	public fun <init> (Lkotlinx/serialization/json/JsonObject;)V
+	public final fun component1 ()Lkotlinx/serialization/json/JsonObject;
+	public final fun copy (Lkotlinx/serialization/json/JsonObject;)Lio/github/aftrolle/ffmpegkmp/ffprobe/ProbePixelComponent;
+	public static synthetic fun copy$default (Lio/github/aftrolle/ffmpegkmp/ffprobe/ProbePixelComponent;Lkotlinx/serialization/json/JsonObject;ILjava/lang/Object;)Lio/github/aftrolle/ffmpegkmp/ffprobe/ProbePixelComponent;
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getBitDepth ()Ljava/lang/Integer;
+	public final fun getIndex ()Ljava/lang/Integer;
+	public fun getRaw ()Lkotlinx/serialization/json/JsonObject;
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class io/github/aftrolle/ffmpegkmp/ffprobe/ProbePixelFormat : io/github/aftrolle/ffmpegkmp/ffprobe/JsonBackedProbeValue {
+	public static final field Companion Lio/github/aftrolle/ffmpegkmp/ffprobe/ProbePixelFormat$Companion;
+	public fun <init> (Lkotlinx/serialization/json/JsonObject;)V
+	public final fun component1 ()Lkotlinx/serialization/json/JsonObject;
+	public final fun copy (Lkotlinx/serialization/json/JsonObject;)Lio/github/aftrolle/ffmpegkmp/ffprobe/ProbePixelFormat;
+	public static synthetic fun copy$default (Lio/github/aftrolle/ffmpegkmp/ffprobe/ProbePixelFormat;Lkotlinx/serialization/json/JsonObject;ILjava/lang/Object;)Lio/github/aftrolle/ffmpegkmp/ffprobe/ProbePixelFormat;
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getBitsPerPixel ()Ljava/lang/Integer;
+	public final fun getComponentCount ()Ljava/lang/Integer;
+	public final fun getComponents ()Ljava/util/List;
+	public final fun getFlags ()Ljava/util/Map;
+	public final fun getName ()Ljava/lang/String;
+	public fun getRaw ()Lkotlinx/serialization/json/JsonObject;
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class io/github/aftrolle/ffmpegkmp/ffprobe/ProbePixelFormat$Companion {
+	public final fun serializer ()Lkotlinx/serialization/KSerializer;
+}
+
+public final class io/github/aftrolle/ffmpegkmp/ffprobe/ProbeProgram : io/github/aftrolle/ffmpegkmp/ffprobe/JsonBackedProbeValue {
+	public static final field Companion Lio/github/aftrolle/ffmpegkmp/ffprobe/ProbeProgram$Companion;
+	public fun <init> (Lkotlinx/serialization/json/JsonObject;)V
+	public final fun component1 ()Lkotlinx/serialization/json/JsonObject;
+	public final fun copy (Lkotlinx/serialization/json/JsonObject;)Lio/github/aftrolle/ffmpegkmp/ffprobe/ProbeProgram;
+	public static synthetic fun copy$default (Lio/github/aftrolle/ffmpegkmp/ffprobe/ProbeProgram;Lkotlinx/serialization/json/JsonObject;ILjava/lang/Object;)Lio/github/aftrolle/ffmpegkmp/ffprobe/ProbeProgram;
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getId ()Ljava/lang/Integer;
+	public final fun getNumber ()Ljava/lang/Integer;
+	public final fun getPcrPid ()Ljava/lang/Integer;
+	public final fun getPmtPid ()Ljava/lang/Integer;
+	public fun getRaw ()Lkotlinx/serialization/json/JsonObject;
+	public final fun getStreamCount ()Ljava/lang/Integer;
+	public final fun getStreams ()Ljava/util/List;
+	public final fun getTags ()Ljava/util/Map;
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class io/github/aftrolle/ffmpegkmp/ffprobe/ProbeProgram$Companion {
+	public final fun serializer ()Lkotlinx/serialization/KSerializer;
+}
+
+public final class io/github/aftrolle/ffmpegkmp/ffprobe/ProbeProgramVersion : io/github/aftrolle/ffmpegkmp/ffprobe/JsonBackedProbeValue {
+	public static final field Companion Lio/github/aftrolle/ffmpegkmp/ffprobe/ProbeProgramVersion$Companion;
+	public fun <init> (Lkotlinx/serialization/json/JsonObject;)V
+	public final fun component1 ()Lkotlinx/serialization/json/JsonObject;
+	public final fun copy (Lkotlinx/serialization/json/JsonObject;)Lio/github/aftrolle/ffmpegkmp/ffprobe/ProbeProgramVersion;
+	public static synthetic fun copy$default (Lio/github/aftrolle/ffmpegkmp/ffprobe/ProbeProgramVersion;Lkotlinx/serialization/json/JsonObject;ILjava/lang/Object;)Lio/github/aftrolle/ffmpegkmp/ffprobe/ProbeProgramVersion;
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getCompilerIdentification ()Ljava/lang/String;
+	public final fun getConfiguration ()Ljava/lang/String;
+	public final fun getCopyright ()Ljava/lang/String;
+	public fun getRaw ()Lkotlinx/serialization/json/JsonObject;
+	public final fun getVersion ()Ljava/lang/String;
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class io/github/aftrolle/ffmpegkmp/ffprobe/ProbeProgramVersion$Companion {
+	public final fun serializer ()Lkotlinx/serialization/KSerializer;
+}
+
+public final class io/github/aftrolle/ffmpegkmp/ffprobe/ProbeQuery {
+	public static final field Companion Lio/github/aftrolle/ffmpegkmp/ffprobe/ProbeQuery$Companion;
+	public fun <init> ()V
+	public fun <init> (ZZZZZZZZZZZLjava/lang/String;)V
+	public synthetic fun <init> (ZZZZZZZZZZZLjava/lang/String;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public final fun component1 ()Z
+	public final fun component10 ()Z
+	public final fun component11 ()Z
+	public final fun component12 ()Ljava/lang/String;
+	public final fun component2 ()Z
+	public final fun component3 ()Z
+	public final fun component4 ()Z
+	public final fun component5 ()Z
+	public final fun component6 ()Z
+	public final fun component7 ()Z
+	public final fun component8 ()Z
+	public final fun component9 ()Z
+	public final fun copy (ZZZZZZZZZZZLjava/lang/String;)Lio/github/aftrolle/ffmpegkmp/ffprobe/ProbeQuery;
+	public static synthetic fun copy$default (Lio/github/aftrolle/ffmpegkmp/ffprobe/ProbeQuery;ZZZZZZZZZZZLjava/lang/String;ILjava/lang/Object;)Lio/github/aftrolle/ffmpegkmp/ffprobe/ProbeQuery;
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getChapters ()Z
+	public final fun getData ()Z
+	public final fun getEntries ()Ljava/lang/String;
+	public final fun getFormat ()Z
+	public final fun getFrames ()Z
+	public final fun getLibraryVersions ()Z
+	public final fun getPackets ()Z
+	public final fun getPixelFormats ()Z
+	public final fun getProgramVersion ()Z
+	public final fun getPrograms ()Z
+	public final fun getStreamGroups ()Z
+	public final fun getStreams ()Z
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class io/github/aftrolle/ffmpegkmp/ffprobe/ProbeQuery$Companion {
+	public final fun getDefault ()Lio/github/aftrolle/ffmpegkmp/ffprobe/ProbeQuery;
+	public final fun getFull ()Lio/github/aftrolle/ffmpegkmp/ffprobe/ProbeQuery;
+}
+
+public abstract interface class io/github/aftrolle/ffmpegkmp/ffprobe/ProbeSideData {
+	public abstract fun getRaw ()Lkotlinx/serialization/json/JsonObject;
+	public abstract fun getType ()Ljava/lang/String;
+}
+
+public final class io/github/aftrolle/ffmpegkmp/ffprobe/ProbeSideData$ContentLightLevel : io/github/aftrolle/ffmpegkmp/ffprobe/ProbeSideData {
+	public fun <init> (Lkotlinx/serialization/json/JsonObject;Ljava/lang/Integer;Ljava/lang/Integer;)V
+	public final fun component1 ()Lkotlinx/serialization/json/JsonObject;
+	public final fun component2 ()Ljava/lang/Integer;
+	public final fun component3 ()Ljava/lang/Integer;
+	public final fun copy (Lkotlinx/serialization/json/JsonObject;Ljava/lang/Integer;Ljava/lang/Integer;)Lio/github/aftrolle/ffmpegkmp/ffprobe/ProbeSideData$ContentLightLevel;
+	public static synthetic fun copy$default (Lio/github/aftrolle/ffmpegkmp/ffprobe/ProbeSideData$ContentLightLevel;Lkotlinx/serialization/json/JsonObject;Ljava/lang/Integer;Ljava/lang/Integer;ILjava/lang/Object;)Lio/github/aftrolle/ffmpegkmp/ffprobe/ProbeSideData$ContentLightLevel;
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getMaxAverage ()Ljava/lang/Integer;
+	public final fun getMaxContent ()Ljava/lang/Integer;
+	public fun getRaw ()Lkotlinx/serialization/json/JsonObject;
+	public fun getType ()Ljava/lang/String;
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class io/github/aftrolle/ffmpegkmp/ffprobe/ProbeSideData$DisplayMatrix : io/github/aftrolle/ffmpegkmp/ffprobe/ProbeSideData {
+	public fun <init> (Lkotlinx/serialization/json/JsonObject;Ljava/lang/Double;)V
+	public final fun component1 ()Lkotlinx/serialization/json/JsonObject;
+	public final fun component2 ()Ljava/lang/Double;
+	public final fun copy (Lkotlinx/serialization/json/JsonObject;Ljava/lang/Double;)Lio/github/aftrolle/ffmpegkmp/ffprobe/ProbeSideData$DisplayMatrix;
+	public static synthetic fun copy$default (Lio/github/aftrolle/ffmpegkmp/ffprobe/ProbeSideData$DisplayMatrix;Lkotlinx/serialization/json/JsonObject;Ljava/lang/Double;ILjava/lang/Object;)Lio/github/aftrolle/ffmpegkmp/ffprobe/ProbeSideData$DisplayMatrix;
+	public fun equals (Ljava/lang/Object;)Z
+	public fun getRaw ()Lkotlinx/serialization/json/JsonObject;
+	public final fun getRotationDegrees ()Ljava/lang/Double;
+	public fun getType ()Ljava/lang/String;
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class io/github/aftrolle/ffmpegkmp/ffprobe/ProbeSideData$MasteringDisplayMetadata : io/github/aftrolle/ffmpegkmp/ffprobe/ProbeSideData {
+	public fun <init> (Lkotlinx/serialization/json/JsonObject;)V
+	public final fun component1 ()Lkotlinx/serialization/json/JsonObject;
+	public final fun copy (Lkotlinx/serialization/json/JsonObject;)Lio/github/aftrolle/ffmpegkmp/ffprobe/ProbeSideData$MasteringDisplayMetadata;
+	public static synthetic fun copy$default (Lio/github/aftrolle/ffmpegkmp/ffprobe/ProbeSideData$MasteringDisplayMetadata;Lkotlinx/serialization/json/JsonObject;ILjava/lang/Object;)Lio/github/aftrolle/ffmpegkmp/ffprobe/ProbeSideData$MasteringDisplayMetadata;
+	public fun equals (Ljava/lang/Object;)Z
+	public fun getRaw ()Lkotlinx/serialization/json/JsonObject;
+	public fun getType ()Ljava/lang/String;
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class io/github/aftrolle/ffmpegkmp/ffprobe/ProbeSideData$Timecode : io/github/aftrolle/ffmpegkmp/ffprobe/ProbeSideData {
+	public fun <init> (Lkotlinx/serialization/json/JsonObject;Ljava/lang/String;)V
+	public final fun component1 ()Lkotlinx/serialization/json/JsonObject;
+	public final fun component2 ()Ljava/lang/String;
+	public final fun copy (Lkotlinx/serialization/json/JsonObject;Ljava/lang/String;)Lio/github/aftrolle/ffmpegkmp/ffprobe/ProbeSideData$Timecode;
+	public static synthetic fun copy$default (Lio/github/aftrolle/ffmpegkmp/ffprobe/ProbeSideData$Timecode;Lkotlinx/serialization/json/JsonObject;Ljava/lang/String;ILjava/lang/Object;)Lio/github/aftrolle/ffmpegkmp/ffprobe/ProbeSideData$Timecode;
+	public fun equals (Ljava/lang/Object;)Z
+	public fun getRaw ()Lkotlinx/serialization/json/JsonObject;
+	public fun getType ()Ljava/lang/String;
+	public final fun getValue ()Ljava/lang/String;
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class io/github/aftrolle/ffmpegkmp/ffprobe/ProbeSideData$Unknown : io/github/aftrolle/ffmpegkmp/ffprobe/ProbeSideData {
+	public fun <init> (Lkotlinx/serialization/json/JsonObject;)V
+	public final fun component1 ()Lkotlinx/serialization/json/JsonObject;
+	public final fun copy (Lkotlinx/serialization/json/JsonObject;)Lio/github/aftrolle/ffmpegkmp/ffprobe/ProbeSideData$Unknown;
+	public static synthetic fun copy$default (Lio/github/aftrolle/ffmpegkmp/ffprobe/ProbeSideData$Unknown;Lkotlinx/serialization/json/JsonObject;ILjava/lang/Object;)Lio/github/aftrolle/ffmpegkmp/ffprobe/ProbeSideData$Unknown;
+	public fun equals (Ljava/lang/Object;)Z
+	public fun getRaw ()Lkotlinx/serialization/json/JsonObject;
+	public fun getType ()Ljava/lang/String;
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class io/github/aftrolle/ffmpegkmp/ffprobe/ProbeStream : io/github/aftrolle/ffmpegkmp/ffprobe/JsonBackedProbeValue {
+	public static final field Companion Lio/github/aftrolle/ffmpegkmp/ffprobe/ProbeStream$Companion;
+	public fun <init> (Lkotlinx/serialization/json/JsonObject;)V
+	public final fun component1 ()Lkotlinx/serialization/json/JsonObject;
+	public final fun copy (Lkotlinx/serialization/json/JsonObject;)Lio/github/aftrolle/ffmpegkmp/ffprobe/ProbeStream;
+	public static synthetic fun copy$default (Lio/github/aftrolle/ffmpegkmp/ffprobe/ProbeStream;Lkotlinx/serialization/json/JsonObject;ILjava/lang/Object;)Lio/github/aftrolle/ffmpegkmp/ffprobe/ProbeStream;
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getAverageFrameRate ()Ljava/lang/String;
+	public final fun getBitRate ()Ljava/lang/Long;
+	public final fun getBitsPerSample ()Ljava/lang/Integer;
+	public final fun getChannelLayout ()Ljava/lang/String;
+	public final fun getChannels ()Ljava/lang/Integer;
+	public final fun getChromaLocation ()Ljava/lang/String;
+	public final fun getCodecLongName ()Ljava/lang/String;
+	public final fun getCodecName ()Ljava/lang/String;
+	public final fun getCodecTag ()Ljava/lang/String;
+	public final fun getCodecType ()Ljava/lang/String;
+	public final fun getCodedHeight ()Ljava/lang/Integer;
+	public final fun getCodedWidth ()Ljava/lang/Integer;
+	public final fun getColorPrimaries ()Ljava/lang/String;
+	public final fun getColorRange ()Ljava/lang/String;
+	public final fun getColorSpace ()Ljava/lang/String;
+	public final fun getColorTransfer ()Ljava/lang/String;
+	public final fun getDisplayAspectRatio ()Ljava/lang/String;
+	public final fun getDisposition ()Lio/github/aftrolle/ffmpegkmp/ffprobe/ProbeDisposition;
+	public final fun getDurationSeconds ()Ljava/lang/Double;
+	public final fun getDurationTs ()Ljava/lang/Long;
+	public final fun getFieldOrder ()Ljava/lang/String;
+	public final fun getFrameCount ()Ljava/lang/Long;
+	public final fun getFrameRate ()Ljava/lang/String;
+	public final fun getHeight ()Ljava/lang/Integer;
+	public final fun getIndex ()Ljava/lang/Integer;
+	public final fun getLevel ()Ljava/lang/Integer;
+	public final fun getMaxBitRate ()Ljava/lang/Long;
+	public final fun getPixelFormat ()Ljava/lang/String;
+	public final fun getProfile ()Ljava/lang/String;
+	public fun getRaw ()Lkotlinx/serialization/json/JsonObject;
+	public final fun getReadFrameCount ()Ljava/lang/Long;
+	public final fun getReadPacketCount ()Ljava/lang/Long;
+	public final fun getSampleAspectRatio ()Ljava/lang/String;
+	public final fun getSampleFormat ()Ljava/lang/String;
+	public final fun getSampleRate ()Ljava/lang/Integer;
+	public final fun getSideData ()Ljava/util/List;
+	public final fun getStartPts ()Ljava/lang/Long;
+	public final fun getStartTimeSeconds ()Ljava/lang/Double;
+	public final fun getTags ()Ljava/util/Map;
+	public final fun getTimeBase ()Ljava/lang/String;
+	public final fun getWidth ()Ljava/lang/Integer;
+	public fun hashCode ()I
+	public final fun isHdrTransfer ()Z
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class io/github/aftrolle/ffmpegkmp/ffprobe/ProbeStream$Companion {
+	public final fun serializer ()Lkotlinx/serialization/KSerializer;
+}
+
+public final class io/github/aftrolle/ffmpegkmp/ffprobe/ProbeStreamGroup : io/github/aftrolle/ffmpegkmp/ffprobe/JsonBackedProbeValue {
+	public static final field Companion Lio/github/aftrolle/ffmpegkmp/ffprobe/ProbeStreamGroup$Companion;
+	public fun <init> (Lkotlinx/serialization/json/JsonObject;)V
+	public final fun component1 ()Lkotlinx/serialization/json/JsonObject;
+	public final fun copy (Lkotlinx/serialization/json/JsonObject;)Lio/github/aftrolle/ffmpegkmp/ffprobe/ProbeStreamGroup;
+	public static synthetic fun copy$default (Lio/github/aftrolle/ffmpegkmp/ffprobe/ProbeStreamGroup;Lkotlinx/serialization/json/JsonObject;ILjava/lang/Object;)Lio/github/aftrolle/ffmpegkmp/ffprobe/ProbeStreamGroup;
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getComponents ()Ljava/util/List;
+	public final fun getId ()Ljava/lang/String;
+	public final fun getIndex ()Ljava/lang/Integer;
+	public fun getRaw ()Lkotlinx/serialization/json/JsonObject;
+	public final fun getStreamCount ()Ljava/lang/Integer;
+	public final fun getStreams ()Ljava/util/List;
+	public final fun getTags ()Ljava/util/Map;
+	public final fun getType ()Ljava/lang/String;
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class io/github/aftrolle/ffmpegkmp/ffprobe/ProbeStreamGroup$Companion {
+	public final fun serializer ()Lkotlinx/serialization/KSerializer;
+}
+

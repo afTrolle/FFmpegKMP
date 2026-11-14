@@ -92,6 +92,25 @@ typedef struct ffmpegkmp_video_encoder_config {
     ffmpegkmp_hdr_metadata hdr_metadata;
     /* 8 or 10; 0 for the dynamic range's own, 8 for SDR and 10 for HDR, which takes 10 only. */
     int32_t bit_depth;
+    /*
+     * An encoder FFmpeg knows by name, as `ffmpeg -c:v` takes it ("libaom-av1", "h264_mediacodec"),
+     * which the writer opens alone: no other is tried and `preference` is ignored. It must encode
+     * `codec`. NULL to choose an encoder by `preference`.
+     */
+    const char *encoder_name;
+    /*
+     * AVOptions to open the named encoder with, generic (b, g, profile, ...) and its own alike:
+     * `options_size` bytes holding, for each option, its key and then its value, each a
+     * NUL-terminated string. Each is set on the encoder as avcodec_open2 sets its options
+     * dictionary's (av_opt_set, private options included), after the fields the writer sets from
+     * this config, so an option overrides one (a "b" option `bit_rate`, a "g" option the keyframe
+     * interval), except the size, the pixel format, the colour description and the global header
+     * the container needs, which the frames and the muxer rely on: an option that changes one
+     * fails the open. An option the encoder does not recognise, one that is no video encoding
+     * option, or a value it does not take fails it too. NULL and 0 for none.
+     */
+    const char *options;
+    int32_t options_size;
 } ffmpegkmp_video_encoder_config;
 
 /* What a video track's encoder takes. */
@@ -100,9 +119,14 @@ typedef struct ffmpegkmp_video_track_info {
     /* Frames in this format reach the encoder without a conversion. */
     ffmpegkmp_frame_format input_format;
     int32_t hardware;
-    /* Bits per second the encoder opened with, or would: the config's, else one that suits the size and rate. */
+    /*
+     * Bits per second the encoder opened with: the config's, else one that suits the size and rate,
+     * or a named encoder's option's; 0 when an option leaves the rate to the encoder (CRF, CQ).
+     */
     int64_t bit_rate;
     char encoder[64];
+    /* Why no encoder opened, when the call that filled this failed or answered 0; empty otherwise. */
+    char error[256];
 } ffmpegkmp_video_track_info;
 
 typedef struct ffmpegkmp_audio_encoder_config {
@@ -129,8 +153,9 @@ FFPLAYKMP_EXPORT void ffmpegkmp_writer_result_init(ffmpegkmp_writer_result *resu
 /*
  * Whether this build and platform have an encoder that opens with `config`,
  * which it opens and closes to find out: 1 when one does, describing it in
- * `info` (may be NULL), 0 when none does, or a negative error for an invalid
- * config.
+ * `info` (may be NULL), 0 when none does, saying why in `info->error`, or a
+ * negative error for an invalid config. With `config->encoder_name` only that
+ * encoder, with its options, is asked.
  */
 FFPLAYKMP_EXPORT int ffmpegkmp_writer_can_encode(
         const ffmpegkmp_video_encoder_config *config,
@@ -161,6 +186,18 @@ FFPLAYKMP_EXPORT ffmpegkmp_writer *ffmpegkmp_writer_create(
  * `info`. Returns the track's index, or FFPLAYKMP_ERROR_UNSUPPORTED when no
  * encoder in this build opens with the config. Tracks are added before the
  * first write.
+ *
+ * With `config->encoder_name` it opens that encoder with its options, or fails
+ * saying why in `info->error`: FFPLAYKMP_ERROR_UNSUPPORTED when this build has
+ * no encoder of that name, FFPLAYKMP_ERROR_INVALID_ARGUMENT when it encodes
+ * another codec or an option changes what the writer relies on,
+ * AVERROR_OPTION_NOT_FOUND when the encoder does not recognise an option, and
+ * FFPLAYKMP_ERROR_INVALID_ARGUMENT as well for an option that is no video
+ * encoding option, and the open's own error otherwise, or the option's for a
+ * value the encoder does not take. `info->hardware` is then 1 for the platform
+ * codec wrappers that `preference` tries as hardware (MediaCodec,
+ * VideoToolbox, NVENC, Quick Sync, AMF, Media Foundation), whichever component
+ * the platform runs behind one, which FFmpeg does not tell.
  */
 FFPLAYKMP_EXPORT int ffmpegkmp_writer_add_video_track(
         ffmpegkmp_writer *writer,
@@ -222,6 +259,17 @@ FFPLAYKMP_EXPORT int ffmpegkmp_writer_write_packet(
 FFPLAYKMP_EXPORT int ffmpegkmp_writer_use_packets(ffmpegkmp_writer *writer, int32_t track);
 /* Drains the track's encoder and frees it, on its thread; the track takes no more input. */
 FFPLAYKMP_EXPORT int ffmpegkmp_writer_end_track(ffmpegkmp_writer *writer, int32_t track);
+/*
+ * The packets the track has handed the muxer so far: its encoder's, or those
+ * ffmpegkmp_writer_write_packet took. Once the track has ended, a track that took frames and
+ * shows 0 had an encoder that gave nothing. FFPLAYKMP_ERROR_INVALID_ARGUMENT for no such track.
+ */
+FFPLAYKMP_EXPORT int64_t ffmpegkmp_writer_track_packets(const ffmpegkmp_writer *writer, int32_t track);
+/*
+ * For tests only: the track drops every packet instead of writing it, as an encoder that takes
+ * frames and gives nothing would. Before the first write; FFPLAYKMP_ERROR_INVALID_STATE after.
+ */
+FFPLAYKMP_EXPORT int ffmpegkmp_writer_discard_packets(ffmpegkmp_writer *writer, int32_t track);
 /* Frees the track's encoder without draining it, on its thread: for an output that is abandoned. */
 FFPLAYKMP_EXPORT void ffmpegkmp_writer_release_track(ffmpegkmp_writer *writer, int32_t track);
 /* Writes the index and closes the output, once every track has ended. */

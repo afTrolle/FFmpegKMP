@@ -1,0 +1,95 @@
+// Klib ABI Dump
+// Targets: [iosArm64, iosSimulatorArm64, js, macosArm64, tvosArm64, tvosSimulatorArm64, wasmJs, watchosArm64, watchosDeviceArm64, watchosSimulatorArm64]
+// Rendering settings:
+// - Signature version: 2
+// - Show manifest properties: true
+// - Show declarations: true
+
+// Library unique name: <io.github.aftrolle.ffmpegkmp:filters>
+final enum class io.github.aftrolle.ffmpegkmp.filters/AudioMixDuration : kotlin/Enum<io.github.aftrolle.ffmpegkmp.filters/AudioMixDuration> { // io.github.aftrolle.ffmpegkmp.filters/AudioMixDuration|null[0]
+    enum entry FIRST // io.github.aftrolle.ffmpegkmp.filters/AudioMixDuration.FIRST|null[0]
+    enum entry LONGEST // io.github.aftrolle.ffmpegkmp.filters/AudioMixDuration.LONGEST|null[0]
+    enum entry SHORTEST // io.github.aftrolle.ffmpegkmp.filters/AudioMixDuration.SHORTEST|null[0]
+
+    final val entries // io.github.aftrolle.ffmpegkmp.filters/AudioMixDuration.entries|#static{}entries[0]
+        final fun <get-entries>(): kotlin.enums/EnumEntries<io.github.aftrolle.ffmpegkmp.filters/AudioMixDuration> // io.github.aftrolle.ffmpegkmp.filters/AudioMixDuration.entries.<get-entries>|<get-entries>#static(){}[0]
+
+    final fun valueOf(kotlin/String): io.github.aftrolle.ffmpegkmp.filters/AudioMixDuration // io.github.aftrolle.ffmpegkmp.filters/AudioMixDuration.valueOf|valueOf#static(kotlin.String){}[0]
+    final fun values(): kotlin/Array<io.github.aftrolle.ffmpegkmp.filters/AudioMixDuration> // io.github.aftrolle.ffmpegkmp.filters/AudioMixDuration.values|values#static(){}[0]
+}
+
+final enum class io.github.aftrolle.ffmpegkmp.filters/FadeType : kotlin/Enum<io.github.aftrolle.ffmpegkmp.filters/FadeType> { // io.github.aftrolle.ffmpegkmp.filters/FadeType|null[0]
+    enum entry IN // io.github.aftrolle.ffmpegkmp.filters/FadeType.IN|null[0]
+    enum entry OUT // io.github.aftrolle.ffmpegkmp.filters/FadeType.OUT|null[0]
+
+    final val entries // io.github.aftrolle.ffmpegkmp.filters/FadeType.entries|#static{}entries[0]
+        final fun <get-entries>(): kotlin.enums/EnumEntries<io.github.aftrolle.ffmpegkmp.filters/FadeType> // io.github.aftrolle.ffmpegkmp.filters/FadeType.entries.<get-entries>|<get-entries>#static(){}[0]
+
+    final fun valueOf(kotlin/String): io.github.aftrolle.ffmpegkmp.filters/FadeType // io.github.aftrolle.ffmpegkmp.filters/FadeType.valueOf|valueOf#static(kotlin.String){}[0]
+    final fun values(): kotlin/Array<io.github.aftrolle.ffmpegkmp.filters/FadeType> // io.github.aftrolle.ffmpegkmp.filters/FadeType.values|values#static(){}[0]
+}
+
+final enum class io.github.aftrolle.ffmpegkmp.filters/TransposeDirection : kotlin/Enum<io.github.aftrolle.ffmpegkmp.filters/TransposeDirection> { // io.github.aftrolle.ffmpegkmp.filters/TransposeDirection|null[0]
+    enum entry CLOCKWISE // io.github.aftrolle.ffmpegkmp.filters/TransposeDirection.CLOCKWISE|null[0]
+    enum entry CLOCKWISE_AND_FLIP // io.github.aftrolle.ffmpegkmp.filters/TransposeDirection.CLOCKWISE_AND_FLIP|null[0]
+    enum entry COUNTER_CLOCKWISE // io.github.aftrolle.ffmpegkmp.filters/TransposeDirection.COUNTER_CLOCKWISE|null[0]
+    enum entry COUNTER_CLOCKWISE_AND_FLIP // io.github.aftrolle.ffmpegkmp.filters/TransposeDirection.COUNTER_CLOCKWISE_AND_FLIP|null[0]
+
+    final val entries // io.github.aftrolle.ffmpegkmp.filters/TransposeDirection.entries|#static{}entries[0]
+        final fun <get-entries>(): kotlin.enums/EnumEntries<io.github.aftrolle.ffmpegkmp.filters/TransposeDirection> // io.github.aftrolle.ffmpegkmp.filters/TransposeDirection.entries.<get-entries>|<get-entries>#static(){}[0]
+
+    final fun valueOf(kotlin/String): io.github.aftrolle.ffmpegkmp.filters/TransposeDirection // io.github.aftrolle.ffmpegkmp.filters/TransposeDirection.valueOf|valueOf#static(kotlin.String){}[0]
+    final fun values(): kotlin/Array<io.github.aftrolle.ffmpegkmp.filters/TransposeDirection> // io.github.aftrolle.ffmpegkmp.filters/TransposeDirection.values|values#static(){}[0]
+}
+
+final class io.github.aftrolle.ffmpegkmp.filters/FilterGraph { // io.github.aftrolle.ffmpegkmp.filters/FilterGraph|null[0]
+    final fun compile(): kotlin/String // io.github.aftrolle.ffmpegkmp.filters/FilterGraph.compile|compile(){}[0]
+
+    final class Builder { // io.github.aftrolle.ffmpegkmp.filters/FilterGraph.Builder|null[0]
+        constructor <init>() // io.github.aftrolle.ffmpegkmp.filters/FilterGraph.Builder.<init>|<init>(){}[0]
+
+        final fun alphaMask(io.github.aftrolle.ffmpegkmp.filters/FilterPad, io.github.aftrolle.ffmpegkmp.filters/FilterPad, kotlin/String? = ...): io.github.aftrolle.ffmpegkmp.filters/FilterPad // io.github.aftrolle.ffmpegkmp.filters/FilterGraph.Builder.alphaMask|alphaMask(io.github.aftrolle.ffmpegkmp.filters.FilterPad;io.github.aftrolle.ffmpegkmp.filters.FilterPad;kotlin.String?){}[0]
+        final fun audioTrack(kotlin/Int, kotlin/Int = ...): io.github.aftrolle.ffmpegkmp.filters/FilterPad // io.github.aftrolle.ffmpegkmp.filters/FilterGraph.Builder.audioTrack|audioTrack(kotlin.Int;kotlin.Int){}[0]
+        final fun audioTrim(io.github.aftrolle.ffmpegkmp.filters/FilterPad, kotlin/Double? = ..., kotlin/Double? = ..., kotlin/String? = ...): io.github.aftrolle.ffmpegkmp.filters/FilterPad // io.github.aftrolle.ffmpegkmp.filters/FilterGraph.Builder.audioTrim|audioTrim(io.github.aftrolle.ffmpegkmp.filters.FilterPad;kotlin.Double?;kotlin.Double?;kotlin.String?){}[0]
+        final fun crop(io.github.aftrolle.ffmpegkmp.filters/FilterPad, kotlin/Int, kotlin/Int, kotlin/Int = ..., kotlin/Int = ..., kotlin/String? = ...): io.github.aftrolle.ffmpegkmp.filters/FilterPad // io.github.aftrolle.ffmpegkmp.filters/FilterGraph.Builder.crop|crop(io.github.aftrolle.ffmpegkmp.filters.FilterPad;kotlin.Int;kotlin.Int;kotlin.Int;kotlin.Int;kotlin.String?){}[0]
+        final fun fade(io.github.aftrolle.ffmpegkmp.filters/FilterPad, io.github.aftrolle.ffmpegkmp.filters/FadeType, kotlin/Double, kotlin/Double, kotlin/String? = ...): io.github.aftrolle.ffmpegkmp.filters/FilterPad // io.github.aftrolle.ffmpegkmp.filters/FilterGraph.Builder.fade|fade(io.github.aftrolle.ffmpegkmp.filters.FilterPad;io.github.aftrolle.ffmpegkmp.filters.FadeType;kotlin.Double;kotlin.Double;kotlin.String?){}[0]
+        final fun frameRate(io.github.aftrolle.ffmpegkmp.filters/FilterPad, kotlin/Double, kotlin/String? = ...): io.github.aftrolle.ffmpegkmp.filters/FilterPad // io.github.aftrolle.ffmpegkmp.filters/FilterGraph.Builder.frameRate|frameRate(io.github.aftrolle.ffmpegkmp.filters.FilterPad;kotlin.Double;kotlin.String?){}[0]
+        final fun input(kotlin/Int, kotlin/String = ...): io.github.aftrolle.ffmpegkmp.filters/FilterPad // io.github.aftrolle.ffmpegkmp.filters/FilterGraph.Builder.input|input(kotlin.Int;kotlin.String){}[0]
+        final fun lumaMask(io.github.aftrolle.ffmpegkmp.filters/FilterPad, io.github.aftrolle.ffmpegkmp.filters/FilterPad, io.github.aftrolle.ffmpegkmp.filters/FilterPad, kotlin/String? = ...): io.github.aftrolle.ffmpegkmp.filters/FilterPad // io.github.aftrolle.ffmpegkmp.filters/FilterGraph.Builder.lumaMask|lumaMask(io.github.aftrolle.ffmpegkmp.filters.FilterPad;io.github.aftrolle.ffmpegkmp.filters.FilterPad;io.github.aftrolle.ffmpegkmp.filters.FilterPad;kotlin.String?){}[0]
+        final fun mixAudio(kotlin.collections/List<kotlin/Pair<io.github.aftrolle.ffmpegkmp.filters/FilterPad, io.github.aftrolle.ffmpegkmp.core/AudioLevel>>, io.github.aftrolle.ffmpegkmp.filters/AudioMixDuration = ..., kotlin/Boolean = ..., kotlin/String? = ...): io.github.aftrolle.ffmpegkmp.filters/FilterPad // io.github.aftrolle.ffmpegkmp.filters/FilterGraph.Builder.mixAudio|mixAudio(kotlin.collections.List<kotlin.Pair<io.github.aftrolle.ffmpegkmp.filters.FilterPad,io.github.aftrolle.ffmpegkmp.core.AudioLevel>>;io.github.aftrolle.ffmpegkmp.filters.AudioMixDuration;kotlin.Boolean;kotlin.String?){}[0]
+        final fun overlay(io.github.aftrolle.ffmpegkmp.filters/FilterPad, io.github.aftrolle.ffmpegkmp.filters/FilterPad, kotlin/String = ..., kotlin/String = ..., kotlin/Double = ..., kotlin/String? = ...): io.github.aftrolle.ffmpegkmp.filters/FilterPad // io.github.aftrolle.ffmpegkmp.filters/FilterGraph.Builder.overlay|overlay(io.github.aftrolle.ffmpegkmp.filters.FilterPad;io.github.aftrolle.ffmpegkmp.filters.FilterPad;kotlin.String;kotlin.String;kotlin.Double;kotlin.String?){}[0]
+        final fun pad(io.github.aftrolle.ffmpegkmp.filters/FilterPad, kotlin/Int, kotlin/Int, kotlin/Int = ..., kotlin/Int = ..., kotlin/String = ..., kotlin/String? = ...): io.github.aftrolle.ffmpegkmp.filters/FilterPad // io.github.aftrolle.ffmpegkmp.filters/FilterGraph.Builder.pad|pad(io.github.aftrolle.ffmpegkmp.filters.FilterPad;kotlin.Int;kotlin.Int;kotlin.Int;kotlin.Int;kotlin.String;kotlin.String?){}[0]
+        final fun raw(kotlin.collections/List<io.github.aftrolle.ffmpegkmp.filters/FilterPad>, kotlin/String, kotlin/String? = ...): io.github.aftrolle.ffmpegkmp.filters/FilterPad // io.github.aftrolle.ffmpegkmp.filters/FilterGraph.Builder.raw|raw(kotlin.collections.List<io.github.aftrolle.ffmpegkmp.filters.FilterPad>;kotlin.String;kotlin.String?){}[0]
+        final fun rotate(io.github.aftrolle.ffmpegkmp.filters/FilterPad, kotlin/String, kotlin/String? = ...): io.github.aftrolle.ffmpegkmp.filters/FilterPad // io.github.aftrolle.ffmpegkmp.filters/FilterGraph.Builder.rotate|rotate(io.github.aftrolle.ffmpegkmp.filters.FilterPad;kotlin.String;kotlin.String?){}[0]
+        final fun scale(io.github.aftrolle.ffmpegkmp.filters/FilterPad, kotlin/Int, kotlin/Int, kotlin/String? = ...): io.github.aftrolle.ffmpegkmp.filters/FilterPad // io.github.aftrolle.ffmpegkmp.filters/FilterGraph.Builder.scale|scale(io.github.aftrolle.ffmpegkmp.filters.FilterPad;kotlin.Int;kotlin.Int;kotlin.String?){}[0]
+        final fun tempo(io.github.aftrolle.ffmpegkmp.filters/FilterPad, kotlin/Double, kotlin/String? = ...): io.github.aftrolle.ffmpegkmp.filters/FilterPad // io.github.aftrolle.ffmpegkmp.filters/FilterGraph.Builder.tempo|tempo(io.github.aftrolle.ffmpegkmp.filters.FilterPad;kotlin.Double;kotlin.String?){}[0]
+        final fun transpose(io.github.aftrolle.ffmpegkmp.filters/FilterPad, io.github.aftrolle.ffmpegkmp.filters/TransposeDirection, kotlin/String? = ...): io.github.aftrolle.ffmpegkmp.filters/FilterPad // io.github.aftrolle.ffmpegkmp.filters/FilterGraph.Builder.transpose|transpose(io.github.aftrolle.ffmpegkmp.filters.FilterPad;io.github.aftrolle.ffmpegkmp.filters.TransposeDirection;kotlin.String?){}[0]
+        final fun trim(io.github.aftrolle.ffmpegkmp.filters/FilterPad, kotlin/Double? = ..., kotlin/Double? = ..., kotlin/String? = ...): io.github.aftrolle.ffmpegkmp.filters/FilterPad // io.github.aftrolle.ffmpegkmp.filters/FilterGraph.Builder.trim|trim(io.github.aftrolle.ffmpegkmp.filters.FilterPad;kotlin.Double?;kotlin.Double?;kotlin.String?){}[0]
+        final fun videoSpeed(io.github.aftrolle.ffmpegkmp.filters/FilterPad, kotlin/Double, kotlin/String? = ...): io.github.aftrolle.ffmpegkmp.filters/FilterPad // io.github.aftrolle.ffmpegkmp.filters/FilterGraph.Builder.videoSpeed|videoSpeed(io.github.aftrolle.ffmpegkmp.filters.FilterPad;kotlin.Double;kotlin.String?){}[0]
+        final fun volume(io.github.aftrolle.ffmpegkmp.filters/FilterPad, io.github.aftrolle.ffmpegkmp.core/AudioLevel, kotlin/String? = ...): io.github.aftrolle.ffmpegkmp.filters/FilterPad // io.github.aftrolle.ffmpegkmp.filters/FilterGraph.Builder.volume|volume(io.github.aftrolle.ffmpegkmp.filters.FilterPad;io.github.aftrolle.ffmpegkmp.core.AudioLevel;kotlin.String?){}[0]
+        final fun volume(io.github.aftrolle.ffmpegkmp.filters/FilterPad, kotlin/Double, kotlin/String? = ...): io.github.aftrolle.ffmpegkmp.filters/FilterPad // io.github.aftrolle.ffmpegkmp.filters/FilterGraph.Builder.volume|volume(io.github.aftrolle.ffmpegkmp.filters.FilterPad;kotlin.Double;kotlin.String?){}[0]
+    }
+
+    final object Companion { // io.github.aftrolle.ffmpegkmp.filters/FilterGraph.Companion|null[0]
+        final fun invoke(kotlin/Function1<io.github.aftrolle.ffmpegkmp.filters/FilterGraph.Builder, kotlin/Unit>): io.github.aftrolle.ffmpegkmp.filters/FilterGraph // io.github.aftrolle.ffmpegkmp.filters/FilterGraph.Companion.invoke|invoke(kotlin.Function1<io.github.aftrolle.ffmpegkmp.filters.FilterGraph.Builder,kotlin.Unit>){}[0]
+    }
+}
+
+final class io.github.aftrolle.ffmpegkmp.filters/FilterPad { // io.github.aftrolle.ffmpegkmp.filters/FilterPad|null[0]
+    final fun toString(): kotlin/String // io.github.aftrolle.ffmpegkmp.filters/FilterPad.toString|toString(){}[0]
+}
+
+final object io.github.aftrolle.ffmpegkmp.filters/ToneMap { // io.github.aftrolle.ffmpegkmp.filters/ToneMap|null[0]
+    final const val Hdr10P010Output // io.github.aftrolle.ffmpegkmp.filters/ToneMap.Hdr10P010Output|{}Hdr10P010Output[0]
+        final fun <get-Hdr10P010Output>(): kotlin/String // io.github.aftrolle.ffmpegkmp.filters/ToneMap.Hdr10P010Output.<get-Hdr10P010Output>|<get-Hdr10P010Output>(){}[0]
+    final const val SdrBt709ToHdr10 // io.github.aftrolle.ffmpegkmp.filters/ToneMap.SdrBt709ToHdr10|{}SdrBt709ToHdr10[0]
+        final fun <get-SdrBt709ToHdr10>(): kotlin/String // io.github.aftrolle.ffmpegkmp.filters/ToneMap.SdrBt709ToHdr10.<get-SdrBt709ToHdr10>|<get-SdrBt709ToHdr10>(){}[0]
+    final const val SrgbToHdr10 // io.github.aftrolle.ffmpegkmp.filters/ToneMap.SrgbToHdr10|{}SrgbToHdr10[0]
+        final fun <get-SrgbToHdr10>(): kotlin/String // io.github.aftrolle.ffmpegkmp.filters/ToneMap.SrgbToHdr10.<get-SrgbToHdr10>|<get-SrgbToHdr10>(){}[0]
+    final const val ToHdr10Bt2020 // io.github.aftrolle.ffmpegkmp.filters/ToneMap.ToHdr10Bt2020|{}ToHdr10Bt2020[0]
+        final fun <get-ToHdr10Bt2020>(): kotlin/String // io.github.aftrolle.ffmpegkmp.filters/ToneMap.ToHdr10Bt2020.<get-ToHdr10Bt2020>|<get-ToHdr10Bt2020>(){}[0]
+    final const val ToSdrBt709 // io.github.aftrolle.ffmpegkmp.filters/ToneMap.ToSdrBt709|{}ToSdrBt709[0]
+        final fun <get-ToSdrBt709>(): kotlin/String // io.github.aftrolle.ffmpegkmp.filters/ToneMap.ToSdrBt709.<get-ToSdrBt709>|<get-ToSdrBt709>(){}[0]
+}
+
+final fun (io.github.aftrolle.ffmpegkmp.ffmpeg/FFmpegCommand.Builder).io.github.aftrolle.ffmpegkmp.filters/filterGraph(io.github.aftrolle.ffmpegkmp.filters/FilterGraph) // io.github.aftrolle.ffmpegkmp.filters/filterGraph|filterGraph@io.github.aftrolle.ffmpegkmp.ffmpeg.FFmpegCommand.Builder(io.github.aftrolle.ffmpegkmp.filters.FilterGraph){}[0]

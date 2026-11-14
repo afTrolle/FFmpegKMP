@@ -22,7 +22,7 @@ public actual class DecoderThread actual constructor(name: String) {
     public actual fun <T> submit(block: suspend () -> T): Deferred<T> =
         scope.async(start = CoroutineStart.UNDISPATCHED) { order.withLock { block() } }
 
-    public actual fun interrupt() = Unit
+    public actual fun interrupt(): Unit = Unit
 
     // The page cannot block to wait for it: the block runs once the blocks before it have ended.
     public actual fun finish(bound: Duration, block: () -> Unit) {

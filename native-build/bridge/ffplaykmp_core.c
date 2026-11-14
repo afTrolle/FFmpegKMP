@@ -5,6 +5,7 @@
 #include <limits.h>
 #include <math.h>
 #include <pthread.h>
+#include <stdarg.h>
 #include <stdatomic.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -23,6 +24,8 @@
 #include <libavutil/hwcontext.h>
 #include <libavutil/imgutils.h>
 #include <libavutil/mastering_display_metadata.h>
+#include <libavutil/avstring.h>
+#include <libavutil/opt.h>
 #include <libavutil/pixdesc.h>
 
 static _Atomic uint64_t ffplaykmp_codec_opens;
@@ -492,8 +495,8 @@ static int ffplaykmp_select_hardware_config(
 #endif
 
 /*
- * FFmpeg's automatic count is one more than the cores; above the cap the
- * frames in flight cost more memory than the threads gain.
+ * The browser's worker has a fixed pthread pool, which FFmpeg's automatic
+ * count, one more than the cores, must not outgrow.
  */
 int ffplaykmp_decoder_thread_count(int threads) {
     const int automatic = av_cpu_count() + 1;
@@ -611,6 +614,99 @@ static void ffplaykmp_budget_return(ffplaykmp_video_codec *codec) {
     pthread_mutex_unlock(&ffplaykmp_budget_mutex);
 }
 
+#if defined(__ANDROID__)
+/*
+ * The MediaCodec decoder for `id`, found as FFmpeg lists it: a decoder of that codec whose
+ * wrapper is MediaCodec. Not by the software decoder's name plus "_mediacodec", which misses
+ * wherever the codec's first decoder is an external library's: with libaom built, AV1's is
+ * "libaom-av1", and "libaom-av1_mediacodec" does not exist.
+ */
+static const AVCodec *ffplaykmp_mediacodec_decoder(enum AVCodecID id) {
+    void *iterator = NULL;
+    const AVCodec *codec;
+    while ((codec = av_codec_iterate(&iterator))) {
+        if (codec->id == id && av_codec_is_decoder(codec) && (codec->capabilities & AV_CODEC_CAP_HARDWARE) &&
+                codec->wrapper_name && strcmp(codec->wrapper_name, "mediacodec") == 0)
+            return codec;
+    }
+    return NULL;
+}
+#endif
+
+/*
+ * Allocates `codec`'s context for `decoder` and the stream and prepares it as `hardware` asks:
+ * on Android MediaCodec onto `android_surface` (or into memory without one), elsewhere the hwaccel
+ * of `hardware_device_type` when it is not NONE. A software decoder (not a hardware wrapper) gets
+ * `threads` of `thread_type`.
+ */
+static int ffplaykmp_video_codec_prepare(
+        ffplaykmp_video_codec *codec,
+        const AVCodec *decoder,
+        const AVStream *stream,
+        int hardware,
+        int hardware_device_type,
+        int threads,
+        int thread_type,
+        void *android_surface) {
+    int result;
+    codec->decoder = avcodec_alloc_context3(decoder);
+    if (!codec->decoder)
+        return AVERROR(ENOMEM);
+    if ((result = avcodec_parameters_to_context(codec->decoder, stream->codecpar)) < 0)
+        return result;
+    codec->decoder->pkt_timebase = stream->time_base;
+#if defined(__ANDROID__)
+    (void)hardware_device_type;
+    /* Without a Surface MediaCodec decodes into memory (ByteBuffer mode), which needs no context. */
+    if (hardware && android_surface) {
+        codec->mediacodec_context = av_mediacodec_alloc_context();
+        if (!codec->mediacodec_context)
+            return AVERROR(ENOMEM);
+        if ((result = av_mediacodec_default_init(
+                codec->decoder, codec->mediacodec_context, android_surface)) < 0) {
+            /* Not attached to the decoder, so av_mediacodec_default_free won't free it. */
+            av_freep(&codec->mediacodec_context);
+            return result;
+        }
+        codec->decoder->get_format = ffplaykmp_mediacodec_format;
+    }
+#else
+    (void)android_surface;
+    if (hardware && hardware_device_type != AV_HWDEVICE_TYPE_NONE) {
+        if ((result = av_hwdevice_ctx_create(
+                &codec->hardware_device, hardware_device_type, NULL, NULL, 0)) < 0)
+            return result;
+        codec->decoder->hw_device_ctx = av_buffer_ref(codec->hardware_device);
+        if (!codec->decoder->hw_device_ctx)
+            return AVERROR(ENOMEM);
+        codec->decoder->opaque = &codec->hardware_format;
+        codec->decoder->get_format = ffplaykmp_hardware_format;
+    }
+#endif
+    if (!hardware && !(decoder->capabilities & AV_CODEC_CAP_HARDWARE)) {
+#if defined(__EMSCRIPTEN__)
+        codec->decoder->thread_count = ffplaykmp_decoder_thread_count(threads);
+#else
+        /* 0 is FFmpeg's own automatic count, as `-threads 0`. */
+        codec->decoder->thread_count = threads;
+#endif
+        /* 0 leaves FFmpeg's default, frame and slice threads. */
+        if (thread_type)
+            codec->decoder->thread_type = thread_type;
+    }
+    return 0;
+}
+
+/* Clears `codec` for an open of `stream_index`, counted as one. */
+static void ffplaykmp_video_codec_reset(ffplaykmp_video_codec *codec, int stream_index) {
+    memset(codec, 0, sizeof(*codec));
+    codec->stream_index = stream_index;
+    atomic_fetch_add(&ffplaykmp_codec_opens, 1);
+#if !defined(__ANDROID__)
+    codec->hardware_format = AV_PIX_FMT_NONE;
+#endif
+}
+
 static int ffplaykmp_video_codec_open_leased(
         ffplaykmp_video_codec *codec,
         AVFormatContext *format,
@@ -623,32 +719,23 @@ static int ffplaykmp_video_codec_open_leased(
         AVDictionary **options) {
     const AVStream *stream = format->streams[stream_index];
     const AVCodec *decoder = avcodec_find_decoder(stream->codecpar->codec_id);
+    int hardware_device_type = AV_HWDEVICE_TYPE_NONE;
     int result;
-#if !defined(__ANDROID__)
-    enum AVHWDeviceType hardware_device_type = AV_HWDEVICE_TYPE_NONE;
-#endif
-    memset(codec, 0, sizeof(*codec));
-    codec->stream_index = stream_index;
-    atomic_fetch_add(&ffplaykmp_codec_opens, 1);
-#if !defined(__ANDROID__)
-    codec->hardware_format = AV_PIX_FMT_NONE;
-    (void)android_surface;
-#endif
+    ffplaykmp_video_codec_reset(codec, stream_index);
     if (!decoder)
         return AVERROR_DECODER_NOT_FOUND;
     if (hardware) {
 #if defined(__ANDROID__)
-        char decoder_name[96];
-        const AVCodec *hardware_codec = NULL;
-        if (snprintf(decoder_name, sizeof(decoder_name), "%s_mediacodec", decoder->name) > 0)
-            hardware_codec = avcodec_find_decoder_by_name(decoder_name);
+        const AVCodec *hardware_codec = ffplaykmp_mediacodec_decoder(stream->codecpar->codec_id);
         if (hardware_codec)
             decoder = hardware_codec;
         else
             hardware = 0;
 #else
+        enum AVHWDeviceType device_type = AV_HWDEVICE_TYPE_NONE;
         hardware = ffplaykmp_select_hardware_config(
-                decoder, &hardware_device_type, &codec->hardware_format) >= 0;
+                decoder, &device_type, &codec->hardware_format) >= 0;
+        hardware_device_type = device_type;
 #endif
     }
     if (require_hardware && !hardware)
@@ -656,42 +743,9 @@ static int ffplaykmp_video_codec_open_leased(
     if (hardware && (result = ffplaykmp_budget_lease(codec)) < 0)
         return result;
     codec->hardware = hardware;
-
-    codec->decoder = avcodec_alloc_context3(decoder);
-    if (!codec->decoder)
-        return AVERROR(ENOMEM);
-    if ((result = avcodec_parameters_to_context(codec->decoder, stream->codecpar)) < 0)
+    if ((result = ffplaykmp_video_codec_prepare(
+            codec, decoder, stream, hardware, hardware_device_type, threads, thread_type, android_surface)) < 0)
         return result;
-    codec->decoder->pkt_timebase = stream->time_base;
-    if (hardware) {
-#if defined(__ANDROID__)
-        /* Without a Surface MediaCodec decodes into memory (ByteBuffer mode), which needs no context. */
-        if (android_surface) {
-            codec->mediacodec_context = av_mediacodec_alloc_context();
-            if (!codec->mediacodec_context)
-                return AVERROR(ENOMEM);
-            if ((result = av_mediacodec_default_init(
-                    codec->decoder, codec->mediacodec_context, android_surface)) < 0) {
-                /* Not attached to the decoder, so av_mediacodec_default_free won't free it. */
-                av_freep(&codec->mediacodec_context);
-                return result;
-            }
-            codec->decoder->get_format = ffplaykmp_mediacodec_format;
-        }
-#else
-        if ((result = av_hwdevice_ctx_create(
-                &codec->hardware_device, hardware_device_type, NULL, NULL, 0)) < 0)
-            return result;
-        codec->decoder->hw_device_ctx = av_buffer_ref(codec->hardware_device);
-        if (!codec->decoder->hw_device_ctx)
-            return AVERROR(ENOMEM);
-        codec->decoder->opaque = &codec->hardware_format;
-        codec->decoder->get_format = ffplaykmp_hardware_format;
-#endif
-    } else {
-        codec->decoder->thread_count = ffplaykmp_decoder_thread_count(threads);
-        codec->decoder->thread_type = thread_type;
-    }
     return avcodec_open2(codec->decoder, decoder, options);
 }
 
@@ -713,6 +767,201 @@ int ffplaykmp_video_codec_open(
     return result;
 }
 
+int ffplaykmp_video_codec_open_preferred(
+        ffplaykmp_video_codec *codec,
+        AVFormatContext *format,
+        int stream_index,
+        ffplaykmp_decoder_preference preference,
+        int hardware_wanted,
+        ffplaykmp_decoder_fallback earlier,
+        int threads,
+        int thread_type,
+        void *android_surface,
+        const AVDictionary *hardware_options,
+        ffplaykmp_decoder_fallback *fallback) {
+    const int automatic = preference == FFPLAYKMP_DECODER_AUTO;
+    int hardware = preference != FFPLAYKMP_DECODER_SOFTWARE && hardware_wanted;
+    AVDictionary *options = NULL;
+    int result;
+    *fallback = FFPLAYKMP_DECODER_FALLBACK_NONE;
+    if (hardware && automatic && earlier != FFPLAYKMP_DECODER_FALLBACK_NONE) {
+        hardware = 0;
+        *fallback = earlier;
+    }
+    if (hardware && hardware_options && (result = av_dict_copy(&options, hardware_options, 0)) < 0) {
+        av_dict_free(&options);
+        return result;
+    }
+    result = ffplaykmp_video_codec_open(
+            codec, format, stream_index, hardware, preference == FFPLAYKMP_DECODER_REQUIRE_HARDWARE,
+            threads, thread_type, hardware ? android_surface : NULL, hardware ? &options : NULL);
+    av_dict_free(&options);
+    if (!hardware || !automatic)
+        return result;
+    if (result == FFPLAYKMP_ERROR_BUSY || (result < 0 && codec->hardware)) {
+        /* A full budget is no failure of this source, which the caller tells apart. */
+        *fallback = result == FFPLAYKMP_ERROR_BUSY ? FFPLAYKMP_DECODER_FALLBACK_BUDGET : FFPLAYKMP_DECODER_FALLBACK_FAILED;
+        ffplaykmp_video_codec_close(codec);
+        return ffplaykmp_video_codec_open(codec, format, stream_index, 0, 0, threads, thread_type, NULL, NULL);
+    }
+    if (result >= 0 && !codec->hardware)
+        *fallback = FFPLAYKMP_DECODER_FALLBACK_UNSUPPORTED;
+    return result;
+}
+
+/* Writes the reason a codec did not open into `error`, which may be NULL. */
+static void ffmpegkmp_codec_report(char *error, size_t error_size, const char *format, ...) {
+    va_list arguments;
+    if (!error || !error_size)
+        return;
+    va_start(arguments, format);
+    vsnprintf(error, error_size, format, arguments);
+    va_end(arguments);
+}
+
+int ffmpegkmp_codec_options_check(const char *options, int options_size, char *error, size_t error_size) {
+    const char *at = options;
+    const char *end = at + (options_size > 0 ? options_size : 0);
+    if (options_size < 0 || (options_size > 0 && (!options || options[options_size - 1] != '\0'))) {
+        ffmpegkmp_codec_report(error, error_size, "malformed options: each is a key and a value, the key not empty");
+        return FFPLAYKMP_ERROR_INVALID_ARGUMENT;
+    }
+    while (at && at < end) {
+        const char *value = at + strlen(at) + 1;
+        if (!*at || value >= end) {
+            ffmpegkmp_codec_report(error, error_size, "malformed options: each is a key and a value, the key not empty");
+            return FFPLAYKMP_ERROR_INVALID_ARGUMENT;
+        }
+        at = value + strlen(value) + 1;
+    }
+    return 0;
+}
+
+int ffmpegkmp_codec_options_set(
+        AVCodecContext *context,
+        const AVCodec *codec,
+        const char *options,
+        int options_size,
+        char *error,
+        size_t error_size) {
+    const int encoding = av_codec_is_encoder(codec);
+    const int wanted = (encoding ? AV_OPT_FLAG_ENCODING_PARAM : AV_OPT_FLAG_DECODING_PARAM) | AV_OPT_FLAG_VIDEO_PARAM;
+    const char *at = options;
+    const char *end = at + (options_size > 0 ? options_size : 0);
+    char unknown[192] = "";
+    int refused = 0;
+    while (at && at < end) {
+        const char *key = at;
+        const char *value = key + strlen(key) + 1;
+        const AVOption *option = av_opt_find(context, key, NULL, 0, AV_OPT_SEARCH_CHILDREN);
+        int result;
+        at = value + strlen(value) + 1;
+        if (!option) {
+            av_strlcatf(unknown, sizeof(unknown), "%s'%s'", *unknown ? ", " : "", key);
+            continue;
+        }
+        if (refused < 0)
+            continue;
+        if ((option->flags & wanted) != wanted) {
+            ffmpegkmp_codec_report(error, error_size, "'%s' is no video %s option of %s",
+                    key, encoding ? "encoding" : "decoding", codec->name);
+            refused = FFPLAYKMP_ERROR_INVALID_ARGUMENT;
+        } else if ((result = av_opt_set(context, key, value, AV_OPT_SEARCH_CHILDREN)) < 0) {
+            ffmpegkmp_codec_report(error, error_size, "%s does not take '%s' for its option '%s': %s",
+                    codec->name, value, key, av_err2str(result));
+            refused = result;
+        }
+    }
+    if (*unknown) {
+        ffmpegkmp_codec_report(error, error_size, "%s has no option %s", codec->name, unknown);
+        return AVERROR_OPTION_NOT_FOUND;
+    }
+    return refused;
+}
+
+static int ffplaykmp_video_codec_open_named_leased(
+        ffplaykmp_video_codec *codec,
+        AVFormatContext *format,
+        int stream_index,
+        const char *name,
+        const char *options,
+        int options_size,
+        int threads,
+        int thread_type,
+        void *android_surface,
+        const AVDictionary *hardware_options,
+        char *error,
+        size_t error_size) {
+    const AVStream *stream = format->streams[stream_index];
+    const AVCodec *decoder = avcodec_find_decoder_by_name(name);
+    AVDictionary *bridge_options = NULL;
+    int hardware;
+    int result;
+    ffplaykmp_video_codec_reset(codec, stream_index);
+    if (!decoder) {
+        ffmpegkmp_codec_report(error, error_size, "this build has no decoder named '%s'", name);
+        return FFPLAYKMP_ERROR_UNSUPPORTED;
+    }
+    if (decoder->type != AVMEDIA_TYPE_VIDEO || decoder->id != stream->codecpar->codec_id) {
+        ffmpegkmp_codec_report(error, error_size, "%s decodes %s, not %s",
+                decoder->name, avcodec_get_name(decoder->id), avcodec_get_name(stream->codecpar->codec_id));
+        return FFPLAYKMP_ERROR_INVALID_ARGUMENT;
+    }
+    /* A platform wrapper (MediaCodec and the like) is the hardware it names; FFmpeg's own decoders
+     * are software, as hwaccels are not chosen by name. */
+    hardware = (decoder->capabilities & AV_CODEC_CAP_HARDWARE) != 0;
+    if (hardware && (result = ffplaykmp_budget_lease(codec)) < 0) {
+        ffmpegkmp_codec_report(error, error_size, "every hardware decoder the budget allows is open, so %s cannot",
+                decoder->name);
+        return result;
+    }
+    codec->hardware = hardware;
+    if ((result = ffplaykmp_video_codec_prepare(
+            codec, decoder, stream, hardware, AV_HWDEVICE_TYPE_NONE, threads, thread_type, android_surface)) < 0) {
+        ffmpegkmp_codec_report(error, error_size, "%s did not open: %s", decoder->name, av_err2str(result));
+        return result;
+    }
+    /* The caller's options are set as avcodec_open2 sets a dictionary's, once, by name, so a failure names them. */
+    if ((result = ffmpegkmp_codec_options_set(codec->decoder, decoder, options, options_size, error, error_size)) < 0)
+        return result;
+    if (hardware && hardware_options && (result = av_dict_copy(&bridge_options, hardware_options, 0)) < 0) {
+        av_dict_free(&bridge_options);
+        return result;
+    }
+    result = avcodec_open2(codec->decoder, decoder, hardware ? &bridge_options : NULL);
+    av_dict_free(&bridge_options);
+    if (result < 0)
+        ffmpegkmp_codec_report(error, error_size, "%s did not open: %s", decoder->name, av_err2str(result));
+    return result;
+}
+
+int ffplaykmp_video_codec_open_named(
+        ffplaykmp_video_codec *codec,
+        AVFormatContext *format,
+        int stream_index,
+        const char *name,
+        const char *options,
+        int options_size,
+        int threads,
+        int thread_type,
+        void *android_surface,
+        const AVDictionary *hardware_options,
+        char *error,
+        size_t error_size) {
+    int result;
+    if (error && error_size)
+        error[0] = '\0';
+    if (!name || !*name)
+        return FFPLAYKMP_ERROR_INVALID_ARGUMENT;
+    if ((result = ffmpegkmp_codec_options_check(options, options_size, error, error_size)) < 0)
+        return result;
+    result = ffplaykmp_video_codec_open_named_leased(codec, format, stream_index, name, options, options_size,
+            threads, thread_type, android_surface, hardware_options, error, error_size);
+    if (result < 0)
+        ffplaykmp_budget_return(codec);
+    return result;
+}
+
 int ffplaykmp_video_codec_frame_is_hardware(const ffplaykmp_video_codec *codec, const AVFrame *frame) {
 #if defined(__ANDROID__)
     if (codec->hardware)
@@ -721,6 +970,18 @@ int ffplaykmp_video_codec_frame_is_hardware(const ffplaykmp_video_codec *codec, 
     (void)codec;
 #endif
     return ffplaykmp_is_hardware_frame(frame);
+}
+
+/* How long MediaCodec waits on a stalled codec before it returns EAGAIN: 50 ms, a few frames. */
+#define FFPLAYKMP_MEDIACODEC_WAIT_US "50000"
+
+int ffplaykmp_mediacodec_wait_options(AVDictionary **options) {
+#if defined(__ANDROID__)
+    return av_dict_set(options, "ffmpegkmp_wait_timeout", FFPLAYKMP_MEDIACODEC_WAIT_US, 0);
+#else
+    (void)options;
+    return 0;
+#endif
 }
 
 void ffplaykmp_video_codec_close(ffplaykmp_video_codec *codec) {
@@ -789,8 +1050,8 @@ void ffplaykmp_android_release_global(JavaVM *vm, jobject object) {
 #define FFMPEGKMP_CONVERTER_THREADS 4
 #define FFMPEGKMP_SCALER_THREADS FFMPEGKMP_CONVERTER_THREADS
 #else
-/* The transfer step is memory bound; more workers than this gain little. */
-#define FFMPEGKMP_CONVERTER_THREADS 8
+/* The most threads a converter's pool has: a count the caller configures above it is cut to it. */
+#define FFMPEGKMP_CONVERTER_THREADS 64
 /* swscale's automatic count. */
 #define FFMPEGKMP_SCALER_THREADS 0
 #endif
@@ -1225,9 +1486,10 @@ static void *ffmpegkmp_worker_main(void *opaque) {
 
 static void ffmpegkmp_pool_start(ffmpegkmp_worker_pool *pool) {
     int cores = av_cpu_count();
-    int wanted = (cores < FFMPEGKMP_CONVERTER_THREADS ? cores : FFMPEGKMP_CONVERTER_THREADS) - 1;
-    if (pool->threads > 0 && pool->threads - 1 < wanted)
-        wanted = pool->threads - 1;
+    /* The caller's count, its own thread included; unset, one per core, as swscale's automatic count. */
+    int wanted = (pool->threads > 0 ? pool->threads : cores) - 1;
+    if (wanted > FFMPEGKMP_CONVERTER_THREADS - 1)
+        wanted = FFMPEGKMP_CONVERTER_THREADS - 1;
     if (pool->initialized)
         return;
     if (pthread_mutex_init(&pool->mutex, NULL) != 0)
@@ -1310,7 +1572,7 @@ typedef enum ffmpegkmp_route {
     FFMPEGKMP_ROUTE_SCALE,
     /* The transfer step, with swscale for layout on either side. */
     FFMPEGKMP_ROUTE_TRANSFER,
-    /* HDR to SDR: the transfer step tone maps, and swscale then maps the gamut. */
+    /* HDR to SDR: the transfer step tone maps, then maps the gamut through a lattice of swscale's mapping. */
     FFMPEGKMP_ROUTE_TONE_MAP,
     /* SDR to SDR through swscale's colour management. */
     FFMPEGKMP_ROUTE_SCALE_MAPPED,
@@ -1348,6 +1610,8 @@ typedef struct ffmpegkmp_transfer {
     /* The tone map's octave table, and the scale from SDR white's units to a fraction of the clip's peak. */
     const float *tone_map;
     float tone_map_input;
+    /* The tone map's gamut map's points into the destination's primaries (ffmpegkmp_gamut_map); NULL when they are the source's. */
+    const float *gamut;
     const uint16_t *srgb;
     /* AV_PIX_FMT_RGBA, BGRA, RGBAF16, or the intermediate's planes, which may be the input's. */
     enum AVPixelFormat output_format;
@@ -1393,6 +1657,65 @@ static inline float ffmpegkmp_scaled_lookup(const float *table, uint16_t code, f
     if (index >= 65535)
         return table[65535];
     return table[index] + (position - index) * (table[index + 1] - table[index]);
+}
+
+/*
+ * The gamut map's lattice points per side (ffmpegkmp_gamut_map). swscale's own
+ * perceptual table takes codes in on 65 points per side and interpolates them
+ * tetrahedrally (lut3d.c), so on the same 65 the lattice lands on its nodes and
+ * a frame through it matches swscale's own mapping to a few hundredths of an
+ * 8-bit code (scripts/test-converter.sh measures it). 33 points strayed by more
+ * than a just-noticeable difference in dark saturated colours into the BT.709
+ * curve.
+ */
+#define FFMPEGKMP_GAMUT_POINTS 65
+_Static_assert(FFMPEGKMP_GAMUT_POINTS == FFMPEGKMP_GAMUT_MAP_POINTS, "ffmpegkmp_frame_gamut_map hands out these points");
+
+/*
+ * `value`, SDR codes from 0 to 1, through a gamut map's points: tetrahedral
+ * interpolation, between the four corners of its cell's tetrahedron that
+ * holds it, which step from the cell's origin along the axes by falling
+ * fraction. Unlike trilinear interpolation, it takes a grey from the cell's
+ * diagonal alone, so greys come out grey, and it is half the reads; a shader
+ * does the same with four fetches. Without branches on the colour, which
+ * would mispredict pixel by pixel.
+ */
+static inline void ffmpegkmp_gamut_lookup(const float *map, float value[3]) {
+    const int points = FFMPEGKMP_GAMUT_POINTS;
+    /* The codes come from the sRGB table, in [0, 1]; 1.0 falls in the last cell, at its far side. */
+    const float red = value[0] * (points - 1);
+    const float green = value[1] * (points - 1);
+    const float blue = value[2] * (points - 1);
+    const int red_cell = (int)red < points - 2 ? (int)red : points - 2;
+    const int green_cell = (int)green < points - 2 ? (int)green : points - 2;
+    const int blue_cell = (int)blue < points - 2 ? (int)blue : points - 2;
+    const float red_fraction = red - red_cell;
+    const float green_fraction = green - green_cell;
+    const float blue_fraction = blue - blue_cell;
+    /* Floats from one point to the next along each axis. */
+    const int red_step = 3;
+    const int green_step = 3 * points;
+    const int blue_step = 3 * points * points;
+    const float high = fmaxf(red_fraction, fmaxf(green_fraction, blue_fraction));
+    const float low = fminf(red_fraction, fminf(green_fraction, blue_fraction));
+    const float middle = red_fraction + green_fraction + blue_fraction - high - low;
+    /* The axes of the highest and lowest fractions; distinct even when all three tie. */
+    const int first = red_fraction >= green_fraction && red_fraction >= blue_fraction ? red_step
+            : green_fraction >= blue_fraction ? green_step : blue_step;
+    const int last = red_fraction < green_fraction && red_fraction < blue_fraction ? red_step
+            : green_fraction < blue_fraction ? green_step : blue_step;
+    const float *origin = map + red_cell * red_step + green_cell * green_step + blue_cell * blue_step;
+    const float *second = origin + first;
+    const float *third = origin + (red_step + green_step + blue_step - last);
+    const float *far = origin + red_step + green_step + blue_step;
+    const float origin_weight = 1.0f - high;
+    const float second_weight = high - middle;
+    const float third_weight = middle - low;
+    int channel;
+    for (channel = 0; channel < 3; channel++) {
+        value[channel] = origin_weight * origin[channel] + second_weight * second[channel] +
+                third_weight * third[channel] + low * far[channel];
+    }
 }
 
 static void ffmpegkmp_transfer_rows(void *opaque, int first_row, int end_row) {
@@ -1455,7 +1778,7 @@ static void ffmpegkmp_transfer_rows(void *opaque, int first_row, int end_row) {
                 break;
             }
             case FFMPEGKMP_ENCODING_TONE_MAP: {
-                /* On the brightest component, so each colour keeps its hue; the gamut is mapped after. */
+                /* On the brightest component, so each colour keeps its hue; the gamut is mapped after, from the codes. */
                 const float brightest = fmaxf(fmaxf(value[0], value[1]), value[2]);
                 const float scale = brightest > 0.0f
                         ? ffmpegkmp_octave_lookup(transfer->tone_map, brightest * transfer->tone_map_input) / brightest
@@ -1464,6 +1787,8 @@ static void ffmpegkmp_transfer_rows(void *opaque, int first_row, int end_row) {
                     const float mapped = fminf(fmaxf(value[channel] * scale, 0.0f), 1.0f);
                     value[channel] = transfer->srgb[(int)(mapped * 65535.0f + 0.5f)] * (1.0f / 65535.0f);
                 }
+                if (transfer->gamut)
+                    ffmpegkmp_gamut_lookup(transfer->gamut, value);
                 break;
             }
             default:
@@ -1559,7 +1884,7 @@ static int ffmpegkmp_transfer_setup(
         if (!(transfer->decode_gain = ffmpegkmp_octave_table_get(FFMPEGKMP_TABLE_HLG_GAIN)))
             return AVERROR(ENOMEM);
     }
-    /* A tone map keeps the source's primaries: swscale maps its gamut perceptually afterwards. */
+    /* A tone map keeps the source's primaries: its gamut map takes the codes into the destination's. */
     ffmpegkmp_primaries_matrix(
             ffmpegkmp_known_primaries(source->color_primaries),
             ffmpegkmp_known_primaries(route == FFMPEGKMP_ROUTE_TONE_MAP ? source->color_primaries : destination->color_primaries),
@@ -1742,6 +2067,172 @@ static const float *ffmpegkmp_tone_map_for(ffmpegkmp_converter *converter, const
     return converter->tone_map;
 }
 
+static SwsContext *ffmpegkmp_scaler_alloc(int threads);
+
+/*
+ * A tone map's gamut map: swscale's perceptual mapping from `from` primaries
+ * into `to`'s, sampled once on a lattice of FFMPEGKMP_GAMUT_POINTS per side.
+ * Through swscale itself every frame would go through a 3D table that swscale
+ * remakes whenever the frame's size changes, long enough to stall a player
+ * whose picture is resized.
+ *
+ * Both sides are SDR codes from 0 to 1 in `transfer`, the curve the tone map's
+ * output is shown with: the point at (red, green, blue) holds the codes, in
+ * `to`'s primaries, of the colour whose codes in `from`'s are (red, green,
+ * blue) / (FFMPEGKMP_GAMUT_POINTS - 1). Points are red, green and blue floats,
+ * red varying fastest, then green, then blue, as a 3D texture lays them out:
+ * 65 x 65 x 65, or as a 2D image 4225 x 65 (red and green along a row, one row
+ * per blue), 3.3 MB as RGB32F or 1.6 MB as RGB16; 4225 is wider than the 4096
+ * many GPUs allow, where its 65 slices tile as 8 x 9 into 520 x 585. Look it up
+ * tetrahedrally, as ffmpegkmp_gamut_lookup does: trilinear filtering tints greys.
+ */
+typedef struct ffmpegkmp_gamut_map {
+    struct ffmpegkmp_gamut_map *next;
+    enum AVColorPrimaries from;
+    enum AVColorPrimaries to;
+    enum AVColorTransferCharacteristic transfer;
+    float points[FFMPEGKMP_GAMUT_POINTS * FFMPEGKMP_GAMUT_POINTS * FFMPEGKMP_GAMUT_POINTS * 3];
+} ffmpegkmp_gamut_map;
+
+/*
+ * Every gamut map made, kept for the process like the other tables, under
+ * ffmpegkmp_tables_lock. Nothing is evicted: the transfer step's workers read a
+ * map outside the lock, so freeing one would need every converter to count its
+ * uses, and there are few to keep. A map is 3.3 MB, and its key is a pair of
+ * the three primaries the converter tells apart (ffmpegkmp_known_primaries)
+ * and the destination's SDR curve: a process that shows HDR video as sRGB
+ * makes one for each source primaries it meets, usually one or two, and the
+ * API can name no more than twelve, 40 MB.
+ */
+static ffmpegkmp_gamut_map *ffmpegkmp_gamut_maps;
+static _Atomic uint64_t ffmpegkmp_gamut_map_count;
+
+/* A new gamut map for the key, or NULL with swscale's or the allocator's error in *error. */
+static ffmpegkmp_gamut_map *ffmpegkmp_gamut_map_make(
+        enum AVColorPrimaries from,
+        enum AVColorPrimaries to,
+        enum AVColorTransferCharacteristic transfer,
+        int *error) {
+    const int points = FFMPEGKMP_GAMUT_POINTS;
+    AVFrame *lattice = av_frame_alloc();
+    AVFrame *mapped = av_frame_alloc();
+    SwsContext *scaler = ffmpegkmp_scaler_alloc(0);
+    ffmpegkmp_gamut_map *map = av_mallocz(sizeof(*map));
+    int result = lattice && mapped && scaler && map ? 0 : AVERROR(ENOMEM);
+    AVFrame *frames[2] = { lattice, mapped };
+    int index;
+    /* One row of the frames per blue, and in it a run of red for each green. */
+    for (index = 0; index < 2 && result >= 0; index++) {
+        frames[index]->format = FFMPEGKMP_INTERMEDIATE;
+        frames[index]->width = points * points;
+        frames[index]->height = points;
+        frames[index]->color_range = AVCOL_RANGE_JPEG;
+        frames[index]->colorspace = AVCOL_SPC_RGB;
+        frames[index]->color_trc = transfer;
+        frames[index]->color_primaries = index == 0 ? from : to;
+        result = av_frame_get_buffer(frames[index], 0);
+    }
+    if (result >= 0) {
+        uint8_t *planes[3];
+        int stride;
+        int x;
+        int blue;
+        ffmpegkmp_rgb_planes(lattice, planes, &stride, NULL);
+        for (blue = 0; blue < points; blue++) {
+            for (x = 0; x < points * points; x++) {
+                const int codes[3] = { x % points, x / points, blue };
+                int channel;
+                for (channel = 0; channel < 3; channel++)
+                    ((uint16_t *)(planes[channel] + (size_t)blue * stride))[x] =
+                            (uint16_t)((codes[channel] * 65535 + (points - 1) / 2) / (points - 1));
+            }
+        }
+        result = ffmpegkmp_scale_mapped(scaler, mapped, lattice, SWS_INTENT_PERCEPTUAL);
+    }
+    if (result >= 0) {
+        uint8_t *planes[3];
+        int stride;
+        int x;
+        int blue;
+        ffmpegkmp_rgb_planes(mapped, planes, &stride, NULL);
+        for (blue = 0; blue < points; blue++) {
+            for (x = 0; x < points * points; x++) {
+                float *point = map->points + ((size_t)blue * points * points + x) * 3;
+                int channel;
+                for (channel = 0; channel < 3; channel++)
+                    point[channel] = ((const uint16_t *)(planes[channel] + (size_t)blue * stride))[x] * (1.0f / 65535.0f);
+            }
+        }
+        map->from = from;
+        map->to = to;
+        map->transfer = transfer;
+    } else {
+        av_freep(&map);
+    }
+    sws_free_context(&scaler);
+    av_frame_free(&lattice);
+    av_frame_free(&mapped);
+    *error = result;
+    return map;
+}
+
+/* The kept map for the key, or NULL; under ffmpegkmp_tables_lock. */
+static ffmpegkmp_gamut_map *ffmpegkmp_gamut_map_find(
+        enum AVColorPrimaries from,
+        enum AVColorPrimaries to,
+        enum AVColorTransferCharacteristic transfer) {
+    ffmpegkmp_gamut_map *map = ffmpegkmp_gamut_maps;
+    while (map && !(map->from == from && map->to == to && map->transfer == transfer))
+        map = map->next;
+    return map;
+}
+
+/*
+ * The gamut map from `from` primaries into `to`'s for SDR codes in `transfer`,
+ * made on first use and kept. It is made outside the lock, which every
+ * converter takes for its tables: sampling swscale takes long enough to hold
+ * up the other videos playing. Two converters that need a new map at once both
+ * make it, and the second to finish frees its own and takes the first's.
+ * Returns NULL with the error in *error when it cannot be made.
+ */
+static const ffmpegkmp_gamut_map *ffmpegkmp_gamut_map_for(
+        enum AVColorPrimaries from,
+        enum AVColorPrimaries to,
+        enum AVColorTransferCharacteristic transfer,
+        int *error) {
+    ffmpegkmp_gamut_map *map;
+    ffmpegkmp_gamut_map *made;
+    pthread_mutex_lock(&ffmpegkmp_tables_lock);
+    map = ffmpegkmp_gamut_map_find(from, to, transfer);
+    pthread_mutex_unlock(&ffmpegkmp_tables_lock);
+    if (map || !(made = ffmpegkmp_gamut_map_make(from, to, transfer, error)))
+        return map;
+    pthread_mutex_lock(&ffmpegkmp_tables_lock);
+    if (!(map = ffmpegkmp_gamut_map_find(from, to, transfer))) {
+        made->next = ffmpegkmp_gamut_maps;
+        ffmpegkmp_gamut_maps = map = made;
+        made = NULL;
+        atomic_fetch_add(&ffmpegkmp_gamut_map_count, 1);
+    }
+    pthread_mutex_unlock(&ffmpegkmp_tables_lock);
+    av_free(made);
+    return map;
+}
+
+const float *ffmpegkmp_gamut_map_points(
+        enum AVColorPrimaries from,
+        enum AVColorPrimaries to,
+        enum AVColorTransferCharacteristic transfer,
+        int *error) {
+    const ffmpegkmp_gamut_map *map =
+            ffmpegkmp_gamut_map_for(ffmpegkmp_known_primaries(from), ffmpegkmp_known_primaries(to), transfer, error);
+    return map ? map->points : NULL;
+}
+
+uint64_t ffmpegkmp_gamut_maps_made(void) {
+    return atomic_load(&ffmpegkmp_gamut_map_count);
+}
+
 static int ffmpegkmp_convert_transfer(
         ffmpegkmp_converter *converter,
         AVFrame *destination,
@@ -1749,17 +2240,28 @@ static int ffmpegkmp_convert_transfer(
         ffmpegkmp_route route) {
     ffmpegkmp_transfer transfer;
     const AVFrame *input = source;
-    /* A tone map goes through the intermediate, which swscale maps into the destination's gamut. */
+    /*
+     * A tone map goes through the intermediate, and swscale lays it out: its
+     * rounding into 8 bits is the one the tone map's references were made with.
+     */
     const int direct = route != FFMPEGKMP_ROUTE_TONE_MAP && (destination->format == AV_PIX_FMT_RGBA ||
             destination->format == AV_PIX_FMT_BGRA || destination->format == AV_PIX_FMT_RGBAF16);
     int result;
     if ((result = ffmpegkmp_transfer_setup(&transfer, destination, source, route)) < 0)
         return result;
     if (route == FFMPEGKMP_ROUTE_TONE_MAP) {
+        const enum AVColorPrimaries from = ffmpegkmp_known_primaries(source->color_primaries);
+        const enum AVColorPrimaries to = ffmpegkmp_known_primaries(destination->color_primaries);
         double peak;
         if (!(transfer.tone_map = ffmpegkmp_tone_map_for(converter, source, &peak)))
             return AVERROR(ENOMEM);
         transfer.tone_map_input = (float)(FFMPEGKMP_REFERENCE_WHITE_NITS / peak);
+        if (from != to) {
+            const ffmpegkmp_gamut_map *map = ffmpegkmp_gamut_map_for(from, to, destination->color_trc, &result);
+            if (!map)
+                return result;
+            transfer.gamut = map->points;
+        }
     }
     transfer.input_scale = source->format == AV_PIX_FMT_RGBAF16 ? 1.0f : 1.0f / ffmpegkmp_range_factor(source);
     transfer.output_scale = direct ? 1.0f : ffmpegkmp_range_factor(destination);
@@ -1767,7 +2269,7 @@ static int ffmpegkmp_convert_transfer(
         /*
          * Into the intermediate in the source's own colour, at the destination's
          * size: layout and scale only, nothing clipped, so the transfer step
-         * and the gamut pass work on the scaled frame.
+         * works on the scaled frame.
          */
         if ((result = ffmpegkmp_intermediate(converter, source, source, destination)) < 0 ||
                 (result = ffmpegkmp_scale(converter->input_scaler, converter->intermediate, source)) < 0)
@@ -1801,11 +2303,6 @@ static int ffmpegkmp_convert_transfer(
         av_frame_remove_side_data(converter->intermediate, AV_FRAME_DATA_MASTERING_DISPLAY_METADATA);
         av_frame_remove_side_data(converter->intermediate, AV_FRAME_DATA_CONTENT_LIGHT_LEVEL);
         av_frame_remove_side_data(converter->intermediate, AV_FRAME_DATA_DYNAMIC_HDR_PLUS);
-        if (converter->intermediate->color_primaries != destination->color_primaries) {
-            /* Colours outside the destination's gamut are compressed, keeping their hue, not clipped. */
-            return ffmpegkmp_scale_mapped(
-                    converter->output_scaler, destination, converter->intermediate, SWS_INTENT_PERCEPTUAL);
-        }
     }
     /* Out of the intermediate in the destination's colour: layout only again. */
     converter->intermediate->color_primaries = destination->color_primaries;
@@ -1820,6 +2317,10 @@ static SwsContext *ffmpegkmp_scaler_alloc(int threads) {
         scaler->flags = SWS_BILINEAR;
     }
     return scaler;
+}
+
+int ffmpegkmp_converter_threads(const ffmpegkmp_converter *converter) {
+    return converter ? converter->pool.threads : 0;
 }
 
 ffmpegkmp_converter *ffmpegkmp_converter_alloc(int threads) {

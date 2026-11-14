@@ -73,7 +73,7 @@ class FFplayDecoderFallbackTest {
         update: (FFplaySnapshot) -> Unit = {},
         emit: (FFplayEvent) -> Unit = {},
     ): FFplayEngine = createFFplayEngineWithBridge(
-        FFplayConfiguration(decoderPreference = CodecPreference.AUTO, audio = false),
+        FFplayConfiguration(decoder = CodecPreference.AUTO, audio = false),
         update,
         emit,
     ) { configuration, nativeUpdate, _, _ ->

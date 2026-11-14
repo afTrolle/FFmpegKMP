@@ -45,6 +45,11 @@ cd FFmpegKMP
 For example, Maven version `1.2.3` is normally built from release tag `v1.2.3`
 or `1.2.3`.
 
+Before 1.0 a minor release may break the API. Each break is listed with its
+migration in the [changelog](../CHANGELOG.md); moving from 0.5 to 0.6, read
+[Migrating to 0.6](migrating-to-0.6.md). Rebuild the native runtime from the new
+tag too: the bridge's C API changes with the Kotlin one.
+
 Select `min`, `standard` (the default), or `full` with
 `-Pffmpegkmp.profile=<profile>`. Keep the same profile for every build and app
 preparation step.

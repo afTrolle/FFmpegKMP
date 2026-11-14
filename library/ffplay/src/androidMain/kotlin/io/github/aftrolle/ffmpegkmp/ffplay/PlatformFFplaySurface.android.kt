@@ -36,10 +36,17 @@ internal actual fun PlatformFFplaySurface(
     modifier: Modifier,
     contentScale: ContentScale,
     backgroundColor: Color,
-    resolution: IntSize?,
+    targetSize: IntSize?,
 ) {
     if (player.configuration.outputPreference == FFplayOutputPreference.COMPOSE_CANVAS) {
-        ComposeCanvasFFplaySurface(player, modifier, contentScale, backgroundColor, resolution)
+        // Choreographer's frame times, and so the composition's, are System.nanoTime's, the player's clock.
+        // Android 14's ImageReader gives MediaCodec's frames to the canvas from GPU memory.
+        val hardwareFrames = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+            { ImageReaderCanvasFrames(player.configuration.canvasFrames) }
+        } else {
+            null
+        }
+        ComposeCanvasFFplaySurface(player, modifier, contentScale, backgroundColor, targetSize, System::nanoTime, hardwareFrames)
         return
     }
 
@@ -51,7 +58,7 @@ internal actual fun PlatformFFplaySurface(
     // One output per player: presentation changes are applied to it, not by replacing it, since
     // the external surface below is bound to the output it was created with.
     val output = remember(player) { AndroidSurfaceOutput(contentScale, backgroundColor.toArgb()) }
-    output.updatePresentation(contentScale, backgroundColor.toArgb(), resolution)
+    output.updatePresentation(contentScale, backgroundColor.toArgb(), targetSize)
     output.updateVideoInfo(video)
     remember(output, hostView.display) { output.updateDisplayCapabilities(hostView.display) }
 
@@ -107,7 +114,7 @@ internal class AndroidSurfaceOutput(
     private var backgroundArgb = backgroundArgb
 
     /** The size the picture is rendered at, for software frames converted at that size; null for the drawn size. */
-    private var resolution: IntSize? = null
+    private var targetSize: IntSize? = null
     private var videoInfo: VideoInfo? = null
     private var displayHdrTransfers: Set<ColorTransfer> = emptySet()
     private var displayColorSpaces: Set<ColorPrimaries> = setOf(ColorPrimaries.BT709)
@@ -150,11 +157,11 @@ internal class AndroidSurfaceOutput(
     override val platformTarget: Any?
         get() = synchronized(lock) { surface }
 
-    fun updatePresentation(contentScale: ContentScale, backgroundArgb: Int, resolution: IntSize? = null) =
+    fun updatePresentation(contentScale: ContentScale, backgroundArgb: Int, targetSize: IntSize? = null) =
         synchronized(lock) {
             this.contentScale = contentScale
             this.backgroundArgb = backgroundArgb
-            this.resolution = resolution
+            this.targetSize = targetSize
         }
 
     fun updateVideoInfo(videoInfo: VideoInfo?) = synchronized(lock) {
@@ -211,7 +218,7 @@ internal class AndroidSurfaceOutput(
         val destination = contentScale.place(display, Size(width.toFloat(), height.toFloat()))
         val size = sizing.sizeFor(
             frame,
-            resolution ?: IntSize(destination.width.roundToInt(), destination.height.roundToInt()),
+            targetSize ?: IntSize(destination.width.roundToInt(), destination.height.roundToInt()),
         )
         // The frame is drawn before this returns, so one bitmap serves every frame of its size and format.
         val format = frame.bitmapFormat()

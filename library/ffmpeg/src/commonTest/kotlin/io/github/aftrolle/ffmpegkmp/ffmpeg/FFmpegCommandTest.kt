@@ -1,4 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
+@file:OptIn(io.github.aftrolle.ffmpegkmp.core.InternalFFmpegKmpApi::class)
+
 package io.github.aftrolle.ffmpegkmp.ffmpeg
 
 import io.github.aftrolle.ffmpegkmp.core.AudioLevel

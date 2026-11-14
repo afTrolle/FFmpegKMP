@@ -9,9 +9,11 @@ plain JVM server can decode video without depending on it:
 - `VideoDecoder`, frame-accurate pull decoding;
 - `MediaWriter`, encoding video and audio tracks into an MP4, with the export's
   `DynamicRange` (`SDR`, `HDR10` or `HLG`) deciding every format along the way;
-- `CodecPreference` (`AUTO`, `REQUIRE_HARDWARE`, `SOFTWARE`), the `DecoderKind` that actually took
-  a source, `DecoderThreads`, the software decoder's threads, and `DecoderBudget`, how many
-  hardware decoders the process's decoders and players keep open at once;
+- `CodecSelection`, which decoder or encoder to open: a `CodecPreference` (`AUTO`,
+  `REQUIRE_HARDWARE`, `SOFTWARE`) or a `NamedCodec`, one FFmpeg codec by name with its options; the
+  `DecoderKind` that actually took a source; `DecoderThreads`, the software decoder's threads and
+  their `DecoderThreadType`; and `DecoderBudget`, how many hardware decoders the process's decoders
+  and players keep open at once;
 - `VideoInfo`, a stream's size, aspect ratio, rotation, pixel format, bit depth and its colour as
   the same `FrameColor` a frame carries, with the `HdrMetadata` it carries: HDR10's mastering
   display and content light levels, which an HDR10 export takes, and Dolby Vision and HDR10+ as
@@ -73,7 +75,9 @@ Frames change format in one place, the bridge's converter (see
   peak: the lower of its MaxCLL and its mastering display's peak, or 1,000 nits when it gives
   neither. A 1,000-nit master puts reference white at about 90%, a 4,000-nit one at about 82%.
   Colours outside BT.709 are then compressed into it with swscale's perceptual mapping rather than
-  clipped. Decoder frames, `convert`, the player's Compose canvas and SDR exports all share it.
+  clipped, sampled once per pair of primaries, so a frame tone-mapped into a new size costs no more
+  than one of the same size. Decoder frames, `convert`, the player's Compose canvas and SDR exports
+  all share it.
 - `convertInto(target)` converts into memory another frame owns, such as a render target or an
   encoder input; the target keeps its format and size. A target of another size is scaled into,
   bilinearly in the same pass, except from one `RgbaF16` frame into another.
@@ -132,6 +136,28 @@ Elsewhere `Memory()` hands out avcodec's own buffers, which avcodec reuses, or a
 into memory of its own; VideoToolbox's frames are VideoToolbox's. A `GpuBuffers` output's ring is the three images of its `ImageReader` (see below).
 The browser copies each frame into page memory and has no ring.
 
+### One frame: posters and thumbnails
+
+`VideoDecoder.extractFrame` opens a decoder, takes the frame `frameAt` returns at a position, and
+closes everything but that frame, which the caller closes:
+
+```kotlin
+val poster = VideoDecoder.extractFrame(MediaSource("clip.mp4"), 2.seconds, FrameSize(256, 256), FrameScale.CROP)
+```
+
+The frame is RGBA8 sRGB (HDR tone mapped, as `Memory(FrameFormat.Rgba8)` gives it), upright (the
+frame's display matrix applied with libavfilter's `transpose`, `hflip` and `vflip`, mirrors
+included, exactly as FFmpeg's tools autorotate) and with square pixels (an anamorphic source at its
+display aspect). The size is a box in upright pixels that never enlarges: `FIT` gives the whole
+picture inside it, `CROP` covers it and cuts the centre; null is the upright source at its display
+size. The decoder is resized before it converts anything, so a 4K source tone maps and scales once,
+straight to the thumbnail's size, and the turn and cut work on that small frame, off the caller's
+thread. `timeout` bounds each attempt: under `AUTO`, an attempt that timed out or failed on a
+hardware decoder is made once more in software, within the same timeout (the first attempt gets half of it); any
+other `decoder`, a `NamedCodec` included, makes one attempt. On a timeout or cancellation the frame
+and the decoder are closed. The browser does not extract frames yet and throws
+`UnsupportedOperationException`.
+
 ### Frame flows
 
 `frames()` walks a video as a `Flow`, decoding ahead of its collector on the decoder's thread:
@@ -178,7 +204,21 @@ blocked in; elsewhere such a read has to return on its own first.
   still decodes at its own size, and hardware frames, VideoToolbox's included, are read into memory
   before they scale. Frames keep their rotation and report the sample aspect ratio of the new size,
   so an anamorphic source scaled to its display aspect comes out with square pixels. A size needs a
-  format and is even for the 4:2:0 layouts; to change it, open another decoder.
+  format and is even for the 4:2:0 layouts. The size is not fixed for the decoder's life:
+  `decoder.resize(FrameSize(640, 360))` changes it on the open decoder (`null` for the source's
+  size). The next `frameAt`, at the same position too, converts the decoded frame again at the new
+  size, without decoding or seeking, and gives byte for byte what a decoder opened at that size
+  gives; frames already handed out keep theirs, and `frames()` may still deliver its one frame
+  decoded ahead at the old size. The decoder frees the old size's ring, so a decoder resized again
+  and again holds one size's frames, and a resize back allocates again. It throws
+  `UnsupportedOperationException` in the browser, which does not resize yet, and for `GpuBuffers`,
+  whose frames the GPU scales as it draws them.
+
+  ```kotlin
+  // A tile that grows while the decoder stays open.
+  decoder.resize(FrameSize(1280, 720))
+  decoder.frameAt(position).use(image::update)
+  ```
 - `VideoOutput.Memory()`, with no format and the default, hands out frames as decoded, in the
   source's own layout and colour, and hardware frames downloaded. On Apple every frame is then a
   `CVPixelBuffer`, whatever the source's bit depth: VideoToolbox's own, or for software decoding a
@@ -186,7 +226,9 @@ blocked in; elsewhere such a read has to return on its own first.
   P010 (`'x420'`/`'xf20'`) for deeper ones such as HDR10, or BGRA for RGB, in the source's range
   and colour (4:2:2 and 4:4:4 are subsampled). Its colour attachments match the frame's format.
 - On Android, `Memory` output decodes 8-bit sources with MediaCodec straight into memory (its
-  ByteBuffer mode, as NV12 or YUV420P), with the software decoder as the `AUTO` fallback. Deeper
+  ByteBuffer mode, as NV12 or YUV420P), with the software decoder as the `AUTO` fallback. The
+  MediaCodec decoder is found by codec id among FFmpeg's `mediacodec` wrappers, so AV1 decodes in
+  hardware where the device has a decoder for it, also in builds with libaom. Deeper
   sources such as HDR10 decode in software, because MediaCodec's memory output would drop their
   precision, so `REQUIRE_HARDWARE` fails on them.
 - `VideoOutput.GpuBuffers` (Android 14, API 34, and later) has MediaCodec decode each frame into GPU
@@ -234,34 +276,40 @@ seeking behave the same. Differences:
 
 ### Decoder threads
 
-`threads` on `VideoDecoder.open` and on `FFplayConfiguration` sets how many threads a software
-decoder gets:
+`threads` on `VideoDecoder.open` and on `FFplayConfiguration` sets a software decoder's threads
+with FFmpeg's two knobs, `thread_count` and `thread_type`:
 
-- `DecoderThreads.Auto`, the default, is FFmpeg's automatic count (one more than the CPU cores)
-  capped at 8.
-- `DecoderThreads.Fixed(count)` uses exactly `count`; `Fixed(1)` decodes on the decoder's own
-  thread.
+- `DecoderThreads.Auto`, `VideoDecoder`'s default: FFmpeg's own automatic count (one more than the
+  CPU cores, at most 16) and thread types, as `ffmpeg -threads 0`. A player's default is
+  `Fixed(2, setOf(DecoderThreadType.FRAME))`.
+- `DecoderThreads.Fixed(count, types)` uses exactly `count` threads of the `DecoderThreadType`s
+  allowed, as `ffmpeg -threads count` with `thread_type` set. The default allows `FRAME` and
+  `SLICE`, as `ffmpeg` does; `Fixed(1)` decodes on the decoder's own thread.
 
-A `VideoDecoder` decodes each video with one decoder and one frame in progress, because in a
-composite of several videos memory matters more than one video's speed. It uses FFmpeg's slice
-threads, never its frame threads, and the count is the budget for every thread working on that
-video's frames: converting them, on any decoder, takes at most as many. Slice threads split what
-the stream lets them split:
+The two kinds cost different things:
 
-- HEVC with wavefront rows, x265's default, keeps most of its speed. HEVC recorded on phones often
-  has none, and then decodes as if on one thread.
-- H.264 written as one slice a frame, as most encoders write it, decodes as if on one thread.
+- Frame threads (`FRAME`) decode a frame each, so several are in progress at once. They speed up
+  every codec FFmpeg has them for, however the stream was written, and each holds one decoded
+  picture (about 24 MB for 4K 10-bit video) and reads one packet further ahead, also after a seek.
+- Slice threads (`SLICE`) share one frame, so memory stays at one picture whatever the count. They
+  split what the stream lets them: HEVC with wavefront rows, x265's default, keeps most of its
+  speed; HEVC recorded on phones often has none, and H.264 written as one slice a frame decodes as
+  if on one thread.
 - Hardware decoders (MediaCodec, VideoToolbox and the desktop hwaccels), which ignore the count,
   and libaom, which threads AV1 its own way, are unaffected.
 
-The player keeps frame threading as well, as `ffplay` does, since it shows one video in real time:
-it decodes several frames at once and keeps about one frame in flight per thread, roughly 24 MB
-each for 4K 10-bit video.
+`Auto` is the fastest and, with frame threads, holds a decoded picture per thread: in a composite of
+several large videos give each a `Fixed` count or slice threads. A player defaults to two frame
+threads because it decodes about a frame ahead of real time, not as fast as it can, and several
+players should leave the other cores to the app. The count is the budget for every thread working on that video's frames:
+converting them, on any decoder, takes at most as many. To keep one frame in progress with more
+threads, pass `Fixed(n, setOf(DecoderThreadType.SLICE))`.
 
 Threading changes how far ahead the decoder reads, not what it returns: `frameAt`, `seekTo`, the
 end-of-stream hold, the AUTO fallback and the timeouts behave the same for every count, and the
-software fallback under AUTO gets the same threads. `scripts/bench-video-decoder.sh` measures both
-settings, and its `parallel` mode several decoders at once.
+software fallback under AUTO gets the same threads. The browser ignores the types.
+`scripts/bench-video-decoder.sh` measures the settings, and its `parallel` mode several decoders at
+once.
 
 ### Timeouts
 
@@ -269,18 +317,34 @@ settings, and its `parallel` mode several decoders at once.
 of time, whether its input stalls or a MediaCodec decoder takes input and never outputs, throws a
 `VideoDecodingException` ("… timed out after …"); the decoder is then unusable, and `close()`
 returns promptly and releases the codec once the stuck call has unwound. Under `AUTO` a hardware
-decoder that fails or times out before its first frame is replaced once by the software one, with
-a timeout of its own, and `decoderKind` reports `SOFTWARE`. FFmpeg's I/O and decoding stop at the
+decoder that fails to open, or fails or times out before its first frame, is replaced once by the
+software one, with a timeout of its own, `decoderKind` reports `SOFTWARE` and `decoderFallback`
+`FAILED`. FFmpeg's I/O and decoding stop at the
 deadline by themselves; only a mounted `Source` blocked in `read` needs the watchdog, which on the
 JVM and Android interrupts the thread (ending an Okio `Pipe` read) and elsewhere leaves the read to
 finish on its own. A frame decoded for a call nobody waits for any more is closed.
+
+### Named decoders
+
+`decoder = NamedCodec(name, options)` opens exactly the FFmpeg decoder of that name, as `ffmpeg
+-c:v name` before an input does, with its AVOptions, and nothing in its place:
+
+```kotlin
+// FFmpeg's own H.264 decoder, never MediaCodec or VideoToolbox.
+VideoDecoder.open(source, VideoOutput.Memory(FrameFormat.Rgba8), decoder = NamedCodec("h264"))
+```
+
+An unknown name, a decoder for another codec, an option it does not recognise (each is named), an
+option that is no decoding option, or a value it does not take fails `open` with a
+`VideoDecodingException` giving the reason. A MediaCodec decoder named this way counts as hardware
+and takes a `DecoderBudget` place. The browser fails a `NamedCodec` as unsupported.
 
 ### Hardware decoder budget
 
 `DecoderBudget.hardwareDecoders` caps the hardware decoders open at once in the process, shared by
 every `VideoDecoder` and every `FFplayPlayer` (0 for no limit). A hardware decoder takes a place
 when it opens and gives it back when it closes: a `VideoDecoder` at `close()`, a player once it has
-been idle for its `releaseDecoderWhenPaused` grace. Nothing waits for a place: with every place
+been idle for its `decoderIdleRelease` grace. Nothing waits for a place: with every place
 taken, `AUTO` opens the software decoder at once and `decoderFallback` reports
 `DecoderFallbackReason.BUDGET`, and `REQUIRE_HARDWARE` fails with a `VideoDecodingException`.
 `decoderFallback` is fixed when the decoder opens, like `decoderKind`; `hardwareDecodersInUse`
@@ -370,7 +434,49 @@ an encoder takes it, as for HDR.
   have no software H.264 or HEVC encoder, libx264 and libx265 being GPL, so `SOFTWARE` H.264 fails;
   the Android standard build has libaom for AV1. `MediaWriter.canEncode(config)` answers before
   opening, and `addVideoTrack` fails with the reason, HDR10 without a 10-bit encoder included:
-  falling back to SDR is the caller's choice.
+  falling back to SDR is the caller's choice. `SOFTWARE` never opens a MediaCodec encoder, whatever
+  its component: naming one is the caller's choice, below.
+- `encoder = NamedCodec(name, options)` opens exactly one FFmpeg encoder, by the name `ffmpeg -c:v`
+  takes, with AVOptions as `ffmpeg` takes them after it: no ranking and no fallback. A MediaCodec
+  component is FFmpeg's `codec_name` option, and libaom's speed is its own options:
+
+  ```kotlin
+  val softwareAvc = NamedCodec("h264_mediacodec", mapOf("codec_name" to "c2.android.avc.encoder"))
+  val realtimeAv1 = NamedCodec("libaom-av1", mapOf("usage" to "realtime", "cpu-used" to "8"))
+  ```
+
+  Each option is set on the encoder as `avcodec_open2` sets its options dictionary's, after the
+  writer has set the encoder's fields from the config, so an option overrides a field: `b` the bit
+  rate, `g` the keyframe interval, `profile` the profile. The size, the pixel format, the colour the
+  dynamic range calls for and the container's global header are the writer's, which its frames and
+  muxer rely on, and an option that changes one fails the track, naming which. `addVideoTrack`
+  fails, saying why, when this build has no encoder of that name, when it encodes another codec
+  than the config's, when it does not recognise an option (each is named, as `ffmpeg` names them),
+  when an option is no video encoding option (a decoder's or an audio one), when it does not take a
+  value, and when it does not open; `canEncode` is false for each. `encoderName` is the name.
+  `isHardware` is true for the platform codec wrappers `AUTO` tries as hardware, except that a
+  MediaCodec encoder reports Android's own answer for its component, the one `codec_name` pins or
+  else the one MediaCodec opens by default for the type, so `c2.android.avc.encoder` is software;
+  FFmpeg tells no more of VideoToolbox, so VideoToolbox with `require_sw`
+  still reports true. A series of tries, varying the encoder and anything else, stays in the app:
+
+  ```kotlin
+  val base = VideoEncoderConfig(1920, 1080, FrameRate(30))
+  val tries = listOf(
+      base.copy(codec = VideoCodec.HEVC, encoder = CodecPreference.REQUIRE_HARDWARE),
+      base.copy(codec = VideoCodec.H264, encoder = CodecPreference.REQUIRE_HARDWARE),
+      base.copy(codec = VideoCodec.H264, encoder = softwareAvc),
+      base.copy(codec = VideoCodec.AV1, encoder = realtimeAv1),
+  )
+  val config = tries.firstOrNull { MediaWriter.canEncode(it) }
+  ```
+
+  `canEncode` opens the encoder to answer, but an encoder can still fail later; an app that wants
+  to go on to the next try wraps the export, `finish()` included, and catches
+  `MediaWritingException`.
+
+  On Android 14 a named MediaCodec encoder with no option but `codec_name` takes the input surface
+  through that same component; any other named encoder keeps FFmpeg's and takes frames from memory.
 - Outputs are a `File`, or a seekable read-write `Handle`, which an MP4's fast start reads back to
   put its index first. The container is an MP4; `open(..., fastStart = true)` moves its index to
   the front.
@@ -380,12 +486,18 @@ an encoder takes it, as for HDR.
   encoder that holds frames for that long without a packet fails the same way. `close()`
   without `finish()` abandons the output and returns promptly.
 - `progress` reports frames taken so far; `finish()` returns the size, duration and frame counts.
+  A track whose encoder took frames and produced no packets fails `finish()` with a
+  `MediaWritingException` ("encoder X took N frames and produced no packets") instead of leaving an
+  empty track in the output, so a broken encoder is a failure the app can fall back from. A track
+  never given a frame finishes as before, and MP4 leaves it out. The browser's writer does not check
+  this.
 - An `AudioTrack` encodes interleaved float PCM as AAC.
 
 In the browser WebCodecs encodes the video and FFmpeg's AAC encoder the audio, in a worker of the
 writer's own, where FFmpeg's muxer writes the output into memory; `finish()` then writes it to the
 `Handle`. There is no file system, so a `File` output fails. The browser encodes 8-bit
-SDR only: its frames are 8-bit RGB, so `canEncode` is false for HDR10, HLG and `bitDepth = 10`. Each frame is copied
+SDR only: its frames are 8-bit RGB, so `canEncode` is false for HDR10, HLG and `bitDepth = 10`, and
+for a `NamedCodec`, which WebCodecs cannot open: `addVideoTrack` fails saying so. Each frame is copied
 into a buffer the worker takes, once on Kotlin/JS and twice on Kotlin/Wasm, and WebCodecs copies it
 again into its `VideoFrame`; the tracks take `Rgba8`, as `ComposeFrameRenderer` draws it, without a
 conversion.

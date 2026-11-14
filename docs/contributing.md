@@ -35,6 +35,28 @@ host with a tvOS simulator runtime, opt into execution with:
 ./gradlew allTests -Pffmpegkmp.runTvosSimulatorTests=true
 ```
 
+## Public API
+
+Every published module (`:bindings` and the modules under `library/`) is
+compiled in Kotlin's explicit API mode: a public declaration must state its
+visibility and its return type, so nothing becomes API by accident.
+
+Each module's public ABI is recorded in its `api/` directory: one dump per JVM
+target (`api/jvm/`, `api/android/`) and one klib dump for the Apple, JS and
+Wasm targets (`<module>.klib.api`). Declarations marked with an
+`InternalFFmpegKmpApi` opt-in annotation are left out. `checkKotlinAbi` runs as
+part of `check` and fails when the compiled ABI differs from the dumps. After
+an intended API change, regenerate the dumps and commit them with the change:
+
+```shell
+./gradlew updateKotlinAbi
+```
+
+Regenerate them on macOS, where every Apple target compiles; elsewhere the
+klib dump keeps the Apple declarations from the committed file. Record every
+user-visible API change, and a migration note for every break, under
+`[Unreleased]` in [CHANGELOG.md](../CHANGELOG.md).
+
 ## Dependency integrity
 
 Gradle dependency versions are centralized in `gradle/libs.versions.toml`, and

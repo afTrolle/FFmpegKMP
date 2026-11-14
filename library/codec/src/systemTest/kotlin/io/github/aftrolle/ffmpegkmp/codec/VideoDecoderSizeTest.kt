@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
+@file:OptIn(io.github.aftrolle.ffmpegkmp.bindings.InternalFFmpegKmpApi::class)
+
 package io.github.aftrolle.ffmpegkmp.codec
 
+import io.github.aftrolle.ffmpegkmp.bindings.nativeFrameStatistics
 import io.github.aftrolle.ffmpegkmp.core.CommandIo
 import io.github.aftrolle.ffmpegkmp.core.MediaSource
 import io.github.aftrolle.ffmpegkmp.ffmpeg.FFmpegClient
@@ -47,7 +50,7 @@ class VideoDecoderSizeTest {
     }
 
     /**
-     * The first swscale step scales, so the transfer step, the tone map and the gamut pass run on
+     * The first swscale step scales, so the transfer step, the tone map and its gamut map run on
      * the small frame: as FFmpeg's `scale` into 16-bit 4:4:4 in the source's colour, then the same
      * conversion at that size. 4:4:4 keeps FFmpeg from subsampling chroma that the one pass
      * interpolates straight into RGB.
@@ -105,6 +108,69 @@ class VideoDecoderSizeTest {
                 assertEquals(1.0, frame.sampleAspectRatio)
                 assertEquals(FrameSize(48, 32), FrameSize(frame.width, frame.height))
                 assertEquals(FrameFormat.Rgba8, frame.format)
+            }
+        }
+    }
+
+    /**
+     * An HDR frame tone-mapped into SDR frames of one size after another, as a player's picture is resized: the gamut
+     * map, sampled from swscale for the first size, serves every other, where swscale's own would be remade at each.
+     * Whether the first size makes the map depends on what ran before in the process, so only the later sizes count.
+     */
+    @Test
+    fun anHdrFrameToneMapsIntoEachNewSizeWithoutANewGamutMap() = runBlocking {
+        val sizes = listOf(FrameSize(160, 96), FrameSize(240, 144), FrameSize(320, 192), FrameSize(200, 120))
+        decoder("hlg-large.mp4").use { source ->
+            val targets = sizes.map { decoder("hlg-large.mp4", VideoOutput.Memory(FrameFormat.Rgba8, it)) }
+            try {
+                source.frameAt(Duration.ZERO).use { decoded ->
+                    val frames = targets.map { it.frameAt(Duration.ZERO) }
+                    try {
+                        decoded.convertInto(frames.first())
+                        val before = nativeFrameStatistics().gamutMaps
+                        repeat(2) { frames.forEach { target -> decoded.convertInto(target) } }
+                        assertEquals(0, nativeFrameStatistics().gamutMaps - before, "gamut maps made for ${sizes.size - 1} more sizes")
+                    } finally {
+                        frames.forEach { it.close() }
+                    }
+                }
+            } finally {
+                targets.forEach { it.close() }
+            }
+        }
+    }
+
+    /**
+     * More colour pairs than the converter once kept gamut maps for (eight): HDR in each primaries, tone-mapped into
+     * the other primaries with either SDR curve. Each converts, and a second round makes no map.
+     */
+    @Test
+    fun hdrFramesToneMapIntoManyColourPairs() = runBlocking {
+        val primaries = ColorPrimaries.entries
+        val curves = listOf(ColorTransfer.SRGB, ColorTransfer.BT709)
+        decoder("hlg.mp4").use { decoder ->
+            decoder.frameAt(Duration.ZERO).use { decoded ->
+                val sources = primaries.associateWith {
+                    decoded.convert(FrameFormat(PixelLayout.P010, FrameColor(it, ColorTransfer.HLG, ColorMatrix.BT2020_NCL, ColorRange.LIMITED)))
+                }
+                try {
+                    val pairs = sources.flatMap { (from, source) ->
+                        primaries.filter { it != from }.flatMap { to -> curves.map { Triple(from, source, FrameColor(to, it, ColorMatrix.RGB, ColorRange.FULL)) } }
+                    }
+                    assertTrue(pairs.size > 8, "${pairs.size} pairs")
+                    repeat(2) { round ->
+                        val before = nativeFrameStatistics().gamutMaps
+                        pairs.forEach { (_, source, to) ->
+                            source.convert(FrameFormat(PixelLayout.RGBA8, to)).use { converted ->
+                                assertEquals(to, converted.format?.color)
+                            }
+                        }
+                        val made = nativeFrameStatistics().gamutMaps - before
+                        if (round == 0) assertTrue(made <= pairs.size, "$made gamut maps for ${pairs.size} pairs") else assertEquals(0, made, "maps remade")
+                    }
+                } finally {
+                    sources.values.forEach { it.close() }
+                }
             }
         }
     }

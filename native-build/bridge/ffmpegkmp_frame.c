@@ -3,13 +3,19 @@
 #include "ffplaykmp_core.h"
 
 #include <errno.h>
+#include <math.h>
 #include <pthread.h>
+#include <stdio.h>
 #include <stdatomic.h>
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
 
+#include <libavfilter/avfilter.h>
+#include <libavfilter/buffersink.h>
+#include <libavfilter/buffersrc.h>
 #include <libavutil/buffer.h>
+#include <libavutil/display.h>
 #include <libavutil/hwcontext.h>
 #include <libavutil/imgutils.h>
 #include <libavutil/mem.h>
@@ -29,6 +35,9 @@
 
 static _Atomic uint64_t ffmpegkmp_allocated_buffers;
 static _Atomic uint64_t ffmpegkmp_allocated_bytes;
+/* Ring buffers allocated and not yet freed. */
+static _Atomic uint64_t ffmpegkmp_ring_buffers;
+static _Atomic uint64_t ffmpegkmp_ring_bytes;
 
 void ffmpegkmp_frame_count_allocation(size_t bytes) {
     atomic_fetch_add(&ffmpegkmp_allocated_buffers, 1);
@@ -40,6 +49,9 @@ void ffmpegkmp_frame_get_statistics(ffmpegkmp_frame_statistics *statistics) {
         return;
     statistics->buffers = atomic_load(&ffmpegkmp_allocated_buffers);
     statistics->bytes = atomic_load(&ffmpegkmp_allocated_bytes);
+    statistics->ring_buffers = atomic_load(&ffmpegkmp_ring_buffers);
+    statistics->ring_bytes = atomic_load(&ffmpegkmp_ring_bytes);
+    statistics->gamut_maps = ffmpegkmp_gamut_maps_made();
 }
 
 void ffmpegkmp_frame_format_init(ffmpegkmp_frame_format *format) {
@@ -265,8 +277,10 @@ ffmpegkmp_frame *ffmpegkmp_frame_from_av(const AVFrame *source) {
 
 ffmpegkmp_frame *ffmpegkmp_frame_ref(const ffmpegkmp_frame *frame) {
     ffmpegkmp_frame *copy = frame ? ffmpegkmp_frame_from_av(frame->frame) : NULL;
-    if (copy)
+    if (copy) {
         ffmpegkmp_frame_set_download_pool(copy, frame->download_pool);
+        copy->converter_threads = frame->converter_threads;
+    }
     return copy;
 }
 
@@ -285,6 +299,18 @@ void ffmpegkmp_frame_unref(ffmpegkmp_frame *frame) {
     free(frame);
 }
 
+int32_t ffmpegkmp_frame_gamut_map(int32_t from, int32_t to, int32_t transfer, float *points, int32_t count) {
+    const size_t floats = (size_t)FFMPEGKMP_GAMUT_MAP_POINTS * FFMPEGKMP_GAMUT_MAP_POINTS * FFMPEGKMP_GAMUT_MAP_POINTS * 3;
+    const float *map;
+    int error = 0;
+    if (!points || count < 0 || (size_t)count < floats)
+        return FFPLAYKMP_ERROR_INVALID_ARGUMENT;
+    if (!(map = ffmpegkmp_gamut_map_points(from, to, transfer, &error)))
+        return error < 0 ? error : AVERROR(ENOMEM);
+    memcpy(points, map, floats * sizeof(*points));
+    return 0;
+}
+
 int ffmpegkmp_frame_get_info(const ffmpegkmp_frame *frame, ffmpegkmp_frame_info *info) {
     enum AVPixelFormat format;
     if (!frame || !info || info->size < sizeof(*info))
@@ -295,8 +321,13 @@ int ffmpegkmp_frame_get_info(const ffmpegkmp_frame *frame, ffmpegkmp_frame_info 
     info->height = frame->frame->height;
     info->format.layout = ffmpegkmp_pixel_format_layout(format);
     ffmpegkmp_describe_colour(frame->frame, format, &info->format);
-    /* MediaCodec's Surface frames never become handles; every other frame maps. */
-    info->mappable = format != AV_PIX_FMT_NONE;
+    /*
+     * Every frame maps but a MediaCodec frame rendered to a Surface, which has no
+     * memory behind it: a player's output that prepares hardware frames takes
+     * those (FFPLAYKMP_OUTPUT_PREPARE_HARDWARE_FRAMES).
+     */
+    info->mappable = format != AV_PIX_FMT_NONE && format != AV_PIX_FMT_MEDIACODEC &&
+            frame->frame->format != AV_PIX_FMT_MEDIACODEC;
 #if defined(__APPLE__)
     if (frame->frame->format == AV_PIX_FMT_VIDEOTOOLBOX)
         info->pixel_buffer = frame->frame->data[3];
@@ -555,6 +586,34 @@ static ffmpegkmp_frame_pool ffmpegkmp_shared_pool = { PTHREAD_MUTEX_INITIALIZER,
 static pthread_mutex_t ffmpegkmp_rings_lock = PTHREAD_MUTEX_INITIALIZER;
 static ffmpegkmp_frame_pool *ffmpegkmp_rings;
 
+/*
+ * A ring buffer of `size` bytes. It keeps its size in a header before the
+ * pixels, aligned as they are, so whichever path frees it, its entry's or the
+ * frame's after the entry has gone, counts it out.
+ */
+static uint8_t *ffmpegkmp_ring_buffer_alloc(size_t size) {
+    uint8_t *base = av_malloc(size + FFMPEGKMP_FRAME_ALIGN);
+    if (!base)
+        return NULL;
+    memcpy(base, &size, sizeof(size));
+    ffmpegkmp_frame_count_allocation(size);
+    atomic_fetch_add(&ffmpegkmp_ring_buffers, 1);
+    atomic_fetch_add(&ffmpegkmp_ring_bytes, (uint64_t)size);
+    return base + FFMPEGKMP_FRAME_ALIGN;
+}
+
+static void ffmpegkmp_ring_buffer_free(uint8_t *data) {
+    uint8_t *base;
+    size_t size;
+    if (!data)
+        return;
+    base = data - FFMPEGKMP_FRAME_ALIGN;
+    memcpy(&size, base, sizeof(size));
+    atomic_fetch_sub(&ffmpegkmp_ring_buffers, 1);
+    atomic_fetch_sub(&ffmpegkmp_ring_bytes, (uint64_t)size);
+    av_free(base);
+}
+
 static AVBufferRef *ffmpegkmp_pool_buffer_alloc(void *opaque, size_t size) {
     AVBufferRef *buffer = av_buffer_alloc(size);
     (void)opaque;
@@ -599,7 +658,7 @@ static void ffmpegkmp_pool_returned(ffmpegkmp_frame_pool *pool, uint8_t *data) {
     }
     /* Its entry was recycled or its pool freed: the buffer goes with it. */
     if (!found)
-        av_free(data);
+        ffmpegkmp_ring_buffer_free(data);
     pthread_cond_broadcast(&pool->returned);
     last = --pool->references == 0;
     pthread_mutex_unlock(&pool->lock);
@@ -635,7 +694,7 @@ static void ffmpegkmp_pool_entry_free(ffmpegkmp_pool_entry *entry) {
     /* Ring buffers that are out are freed as they come back. */
     for (slot = 0; slot < entry->made; slot++) {
         if (!(entry->out & (1u << slot)))
-            av_free(entry->ring[slot]);
+            ffmpegkmp_ring_buffer_free(entry->ring[slot]);
     }
 #if defined(FFMPEGKMP_PIXEL_BUFFER)
     CVPixelBufferPoolRelease(entry->pixel_buffers);
@@ -837,9 +896,8 @@ static int ffmpegkmp_pool_take(ffmpegkmp_frame_pool *pool, ffmpegkmp_pool_entry 
         if (slot == entry->made) {
             if (slot == pool->capacity)
                 return AVERROR(EAGAIN);
-            if (!(entry->ring[slot] = av_malloc(entry->size)))
+            if (!(entry->ring[slot] = ffmpegkmp_ring_buffer_alloc(entry->size)))
                 return AVERROR(ENOMEM);
-            ffmpegkmp_frame_count_allocation(entry->size);
             entry->made++;
         }
         if (!(frame->buf[0] = av_buffer_create(entry->ring[slot], entry->size, ffmpegkmp_release_ring_buffer, pool, 0)))
@@ -973,15 +1031,28 @@ int ffmpegkmp_frame_is_ringed(const AVFrame *frame) {
     return pool != NULL;
 }
 
-void ffmpegkmp_frame_pool_free(ffmpegkmp_frame_pool *pool) {
+/* Frees every entry; frames out keep their buffers, freed as they come back. Called with the pool locked. */
+static void ffmpegkmp_pool_free_entries(ffmpegkmp_frame_pool *pool) {
     int index;
+    for (index = 0; index < pool->count; index++)
+        ffmpegkmp_pool_entry_free(&pool->entries[index]);
+    pool->count = 0;
+}
+
+void ffmpegkmp_frame_pool_trim(ffmpegkmp_frame_pool *pool) {
+    if (!pool || pool == &ffmpegkmp_shared_pool)
+        return;
+    pthread_mutex_lock(&pool->lock);
+    ffmpegkmp_pool_free_entries(pool);
+    pthread_mutex_unlock(&pool->lock);
+}
+
+void ffmpegkmp_frame_pool_free(ffmpegkmp_frame_pool *pool) {
     int last;
     if (!pool || pool == &ffmpegkmp_shared_pool)
         return;
     pthread_mutex_lock(&pool->lock);
-    for (index = 0; index < pool->count; index++)
-        ffmpegkmp_pool_entry_free(&pool->entries[index]);
-    pool->count = 0;
+    ffmpegkmp_pool_free_entries(pool);
     pool->closed = 1;
     last = --pool->references == 0;
     pthread_mutex_unlock(&pool->lock);
@@ -1139,13 +1210,29 @@ static pthread_mutex_t ffmpegkmp_converters_lock = PTHREAD_MUTEX_INITIALIZER;
 static ffmpegkmp_converter *ffmpegkmp_idle_converters[FFMPEGKMP_IDLE_CONVERTERS];
 static int ffmpegkmp_idle_converter_count;
 
-static ffmpegkmp_converter *ffmpegkmp_take_converter(void) {
+void ffmpegkmp_frame_set_converter_threads(ffmpegkmp_frame *frame, int threads) {
+#if defined(__EMSCRIPTEN__)
+    /* The worker's converters keep their share of its fixed pthread pool. */
+    threads = 0;
+#endif
+    if (frame)
+        frame->converter_threads = threads > 0 ? threads : 0;
+}
+
+/* An idle converter of `threads`, the latest returned first, or a new one. */
+static ffmpegkmp_converter *ffmpegkmp_take_converter(int threads) {
     ffmpegkmp_converter *converter = NULL;
+    int index;
     pthread_mutex_lock(&ffmpegkmp_converters_lock);
-    if (ffmpegkmp_idle_converter_count > 0)
-        converter = ffmpegkmp_idle_converters[--ffmpegkmp_idle_converter_count];
+    for (index = ffmpegkmp_idle_converter_count - 1; index >= 0; index--) {
+        if (ffmpegkmp_converter_threads(ffmpegkmp_idle_converters[index]) != threads)
+            continue;
+        converter = ffmpegkmp_idle_converters[index];
+        ffmpegkmp_idle_converters[index] = ffmpegkmp_idle_converters[--ffmpegkmp_idle_converter_count];
+        break;
+    }
     pthread_mutex_unlock(&ffmpegkmp_converters_lock);
-    return converter ? converter : ffmpegkmp_converter_alloc(0);
+    return converter ? converter : ffmpegkmp_converter_alloc(threads);
 }
 
 static void ffmpegkmp_return_converter(ffmpegkmp_converter *converter) {
@@ -1165,7 +1252,7 @@ int ffmpegkmp_frame_convert_into(ffmpegkmp_frame *destination, const ffmpegkmp_f
     int result;
     if (!destination || !source || destination == source)
         return FFPLAYKMP_ERROR_INVALID_ARGUMENT;
-    if (!(converter = ffmpegkmp_take_converter()))
+    if (!(converter = ffmpegkmp_take_converter(handle->converter_threads)))
         return AVERROR(ENOMEM);
     /* A hardware source is downloaded once per handle, as its maps are. */
     pthread_mutex_lock(&handle->lock);
@@ -1199,6 +1286,165 @@ int ffmpegkmp_frame_convert_to(
         ffmpegkmp_frame_unref(*destination);
         *destination = NULL;
     }
+    return result;
+}
+
+/* Upright frames */
+
+/* Runs one frame through the filter chain `description`, from a buffer source to a buffer sink, on one thread. */
+static int ffmpegkmp_filter_once(const char *description, const AVFrame *input, AVFrame *output) {
+    const AVFilter *buffer = avfilter_get_by_name("buffer");
+    const AVFilter *buffersink = avfilter_get_by_name("buffersink");
+    AVFilterGraph *graph = NULL;
+    AVFilterContext *source = NULL;
+    AVFilterContext *sink = NULL;
+    AVBufferSrcParameters *parameters = NULL;
+    AVFilterInOut *outputs = NULL;
+    AVFilterInOut *inputs = NULL;
+    int result;
+    if (!buffer || !buffersink)
+        return AVERROR_FILTER_NOT_FOUND;
+    if (!(graph = avfilter_graph_alloc()) || !(parameters = av_buffersrc_parameters_alloc()) ||
+            !(outputs = avfilter_inout_alloc()) || !(inputs = avfilter_inout_alloc())) {
+        result = AVERROR(ENOMEM);
+        goto end;
+    }
+    /* A thumbnail is a few kilobytes: slice threads would cost more to start than they save. */
+    graph->nb_threads = 1;
+    if (!(source = avfilter_graph_alloc_filter(graph, buffer, "in")) ||
+            !(sink = avfilter_graph_alloc_filter(graph, buffersink, "out"))) {
+        result = AVERROR(ENOMEM);
+        goto end;
+    }
+    parameters->format = input->format;
+    parameters->width = input->width;
+    parameters->height = input->height;
+    parameters->time_base = (AVRational){1, 1};
+    parameters->sample_aspect_ratio = input->sample_aspect_ratio;
+    parameters->color_space = input->colorspace;
+    parameters->color_range = input->color_range;
+    parameters->alpha_mode = input->alpha_mode;
+    if ((result = av_buffersrc_parameters_set(source, parameters)) < 0 ||
+            (result = avfilter_init_dict(source, NULL)) < 0 ||
+            (result = avfilter_init_dict(sink, NULL)) < 0)
+        goto end;
+    outputs->name = av_strdup("in");
+    outputs->filter_ctx = source;
+    inputs->name = av_strdup("out");
+    inputs->filter_ctx = sink;
+    if (!outputs->name || !inputs->name) {
+        result = AVERROR(ENOMEM);
+        goto end;
+    }
+    if ((result = avfilter_graph_parse_ptr(graph, description, &inputs, &outputs, NULL)) < 0 ||
+            (result = avfilter_graph_config(graph, NULL)) < 0)
+        goto end;
+    /* The graph references the input; the caller keeps its own reference. */
+    if ((result = av_buffersrc_add_frame_flags(source, (AVFrame *)input, AV_BUFFERSRC_FLAG_KEEP_REF)) < 0 ||
+            (result = av_buffersrc_close(source, AV_NOPTS_VALUE, 0)) < 0)
+        goto end;
+    result = av_buffersink_get_frame(sink, output);
+end:
+    avfilter_inout_free(&inputs);
+    avfilter_inout_free(&outputs);
+    av_free(parameters);
+    avfilter_graph_free(&graph);
+    return result;
+}
+
+/* The plain clockwise quarter turns: none, transpose=clock, a half turn and transpose=cclock. */
+static const char *ffmpegkmp_turn_filters(int clockwise_quarter_turns) {
+    static const char *const turns[] = {"", "transpose=clock", "vflip,hflip", "transpose=cclock"};
+    return turns[clockwise_quarter_turns & 3];
+}
+
+/*
+ * The filters that show `frame` upright, chosen from its display matrix as FFmpeg's own autorotate
+ * chooses them (fftools/ffmpeg_filter.c, with cmdutils.c's get_rotation), mirrors included. vflip
+ * goes before hflip, so the pair writes rows in their usual order. Without a matrix, or with an
+ * angle between quarter turns, the plain turn the caller gives.
+ */
+static const char *ffmpegkmp_upright_filters(const AVFrame *frame, int fallback_turns) {
+    const AVFrameSideData *side_data = av_frame_get_side_data(frame, AV_FRAME_DATA_DISPLAYMATRIX);
+    const int32_t *matrix;
+    double theta;
+    if (!side_data || side_data->size < 9 * sizeof(int32_t))
+        return ffmpegkmp_turn_filters(fallback_turns);
+    matrix = (const int32_t *)side_data->data;
+    theta = -round(av_display_rotation_get(matrix));
+    if (!isfinite(theta))
+        return ffmpegkmp_turn_filters(fallback_turns);
+    theta -= 360 * floor(theta / 360 + 0.9 / 360);
+    if (fabs(theta - 90) < 1.0)
+        return matrix[3] > 0 ? "transpose=cclock_flip" : "transpose=clock";
+    if (fabs(theta - 180) < 1.0) {
+        if (matrix[0] < 0 && matrix[4] < 0)
+            return "vflip,hflip";
+        return matrix[0] < 0 ? "hflip" : matrix[4] < 0 ? "vflip" : "";
+    }
+    if (fabs(theta - 270) < 1.0)
+        return matrix[3] < 0 ? "transpose=clock_flip" : "transpose=cclock";
+    if (fabs(theta) < 1.0)
+        return matrix[4] < 0 ? "vflip" : "";
+    return ffmpegkmp_turn_filters(fallback_turns);
+}
+
+int ffmpegkmp_frame_upright(
+        const ffmpegkmp_frame *source,
+        int32_t fallback_clockwise_quarter_turns,
+        int32_t crop_x,
+        int32_t crop_y,
+        int32_t crop_width,
+        int32_t crop_height,
+        ffmpegkmp_frame **destination) {
+    ffmpegkmp_frame *handle = (ffmpegkmp_frame *)source;
+    AVFrame *input = NULL;
+    AVFrame *output = NULL;
+    const char *turn;
+    char description[160];
+    size_t length;
+    int result;
+    if (!destination)
+        return FFPLAYKMP_ERROR_INVALID_ARGUMENT;
+    *destination = NULL;
+    if (!source || fallback_clockwise_quarter_turns < 0 || fallback_clockwise_quarter_turns > 3 ||
+            crop_x < 0 || crop_y < 0 || crop_width < 0 || crop_height < 0 || (crop_width > 0) != (crop_height > 0))
+        return FFPLAYKMP_ERROR_INVALID_ARGUMENT;
+    if (!(input = av_frame_alloc()) || !(output = av_frame_alloc())) {
+        result = AVERROR(ENOMEM);
+        goto end;
+    }
+    pthread_mutex_lock(&handle->lock);
+    /* Packed 8-bit RGB only: the layouts every filter here takes as they are, with no conversion inserted. */
+    result = handle->frame->format == AV_PIX_FMT_RGBA || handle->frame->format == AV_PIX_FMT_BGRA
+            ? av_frame_ref(input, handle->frame)
+            : FFPLAYKMP_ERROR_UNSUPPORTED;
+    pthread_mutex_unlock(&handle->lock);
+    if (result < 0)
+        goto end;
+    turn = ffmpegkmp_upright_filters(input, fallback_clockwise_quarter_turns);
+    length = (size_t)snprintf(description, sizeof(description), "%s", turn);
+    if (crop_width > 0) {
+        /* The cut is in upright pixels, so after the turn; it only moves pointers. */
+        length += (size_t)snprintf(description + length, sizeof(description) - length,
+                "%scrop=w=%d:h=%d:x=%d:y=%d:exact=1", length ? "," : "", crop_width, crop_height, crop_x, crop_y);
+    }
+    /* A copy last when the frame would otherwise share the input's memory, keep a cut's whole frame, or have
+     * rows upwards (vflip alone): the result is exactly its own pixels, rows in their usual order. */
+    if (crop_width > 0 || length == 0 || strcmp(turn, "vflip") == 0)
+        length += (size_t)snprintf(description + length, sizeof(description) - length, "%scopy", length ? "," : "");
+    if (length >= sizeof(description)) {
+        result = FFPLAYKMP_ERROR_INVALID_ARGUMENT;
+        goto end;
+    }
+    if ((result = ffmpegkmp_filter_once(description, input, output)) < 0)
+        goto end;
+    av_frame_remove_side_data(output, AV_FRAME_DATA_DISPLAYMATRIX);
+    if (!(*destination = ffmpegkmp_frame_from_av(output)))
+        result = AVERROR(ENOMEM);
+end:
+    av_frame_free(&output);
+    av_frame_free(&input);
     return result;
 }
 

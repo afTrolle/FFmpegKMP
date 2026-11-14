@@ -1,0 +1,11 @@
+// Klib ABI Dump
+// Targets: [iosArm64, iosSimulatorArm64, js, macosArm64, tvosArm64, tvosSimulatorArm64, wasmJs, watchosArm64, watchosDeviceArm64, watchosSimulatorArm64]
+// Rendering settings:
+// - Signature version: 2
+// - Show manifest properties: true
+// - Show declarations: true
+
+// Library unique name: <io.github.aftrolle.ffmpegkmp:bindings>
+open annotation class io.github.aftrolle.ffmpegkmp.bindings/InternalFFmpegKmpApi : kotlin/Annotation { // io.github.aftrolle.ffmpegkmp.bindings/InternalFFmpegKmpApi|null[0]
+    constructor <init>() // io.github.aftrolle.ffmpegkmp.bindings/InternalFFmpegKmpApi.<init>|<init>(){}[0]
+}

@@ -34,17 +34,17 @@ internal actual fun PlatformFFplaySurface(
     modifier: Modifier,
     contentScale: ContentScale,
     backgroundColor: Color,
-    resolution: IntSize?,
+    targetSize: IntSize?,
 ) {
     // Drawn on the Compose canvas, a video stacks, clips and blends with the composables around it; the HTML canvas
     // below sits above all of them.
     if (player.configuration.outputPreference == FFplayOutputPreference.COMPOSE_CANVAS) {
-        ComposeCanvasFFplaySurface(player, modifier, contentScale, backgroundColor, resolution)
+        ComposeCanvasFFplaySurface(player, modifier, contentScale, backgroundColor, targetSize)
         return
     }
     val output = remember(player) { WebCanvasOutput() }
     output.contentScale = contentScale
-    output.resolution = resolution
+    output.targetSize = targetSize
     output.scaleMode = contentScale.webScaleMode()
     output.background = backgroundColor.cssColor()
     DisposableEffect(player, output) {
@@ -80,7 +80,7 @@ private class WebCanvasOutput : FFplayVideoOutput {
     var contentScale: ContentScale = ContentScale.Fit
 
     /** The size the picture is rendered at, which the worker converts frames to; null for the canvas's size. */
-    var resolution: IntSize? = null
+    var targetSize: IntSize? = null
     var scaleMode: String = "fit"
     var background: String = "rgba(0,0,0,1)"
 
@@ -110,7 +110,7 @@ private class WebCanvasOutput : FFplayVideoOutput {
             }
         } != null
         val area = Size(canvasPixels(canvas, width = true).toFloat(), canvasPixels(canvas, width = false).toFloat())
-        frameSize.drawnIn(videoSize, it.rotationDegrees, display, area, contentScale, resolution)
+        frameSize.drawnIn(videoSize, it.rotationDegrees, display, area, contentScale, targetSize)
         drawn
     }
 

@@ -3,9 +3,6 @@
 
 package io.github.aftrolle.ffmpegkmp.bindings
 
-import android.graphics.ImageFormat
-import android.hardware.HardwareBuffer
-import android.media.ImageReader
 import android.media.MediaCodecInfo
 import android.media.MediaCodecList
 import android.os.Build
@@ -59,7 +56,7 @@ private val SOFTWARE_CODEC_PREFIXES = listOf("OMX.google.", "OMX.ffmpeg.", "c2.a
 public actual fun createPlatformPlayerBridge(
     configuration: NativePlayerConfiguration,
     update: (NativePlayerSnapshot) -> Unit,
-    frame: (NativeVideoFrame) -> Unit,
+    frame: NativeVideoFrameSink,
     platformFrame: (NativePlatformVideoFrame) -> Boolean,
 ): NativePlayerBridge = createJavaCppPlayerBridge(
     configuration = configuration,
@@ -86,15 +83,22 @@ public actual fun createPlatformVideoDecoder(
     decoderPreference: NativePlayerDecoderPreference,
     decoderThreads: Int,
     timeoutMicros: Long,
+    decoderThreadType: Int,
+    frameRing: Int,
+    decoderName: String?,
+    decoderOptions: Map<String, String>,
 ): NativeVideoDecoder {
     if (output == NativeVideoDecoderOutput.GPU_BUFFERS) {
         require(Build.VERSION.SDK_INT >= 34) {
             "GPU buffer output needs Android 14 (API 34) or later; this is API ${Build.VERSION.SDK_INT}"
         }
-        return createGpuBufferVideoDecoder(source, decoderPreference, decoderThreads, timeoutMicros)
+        return createGpuBufferVideoDecoder(
+            source, decoderPreference, decoderThreads, timeoutMicros, decoderThreadType, frameRing, decoderName, decoderOptions,
+        )
     }
     return createJavaCppVideoDecoder(
         source, output, memoryFormat, memoryWidth, memoryHeight, decoderPreference, decoderThreads, timeoutMicros,
+        decoderThreadType, frameRing, decoderName, decoderOptions,
     ) { 0 }
 }
 
@@ -104,40 +108,39 @@ public actual suspend fun createPlatformMediaWriter(
     container: NativeContainer,
     fastStart: Boolean,
     timeoutMicros: Long,
-): NativeMediaWriter = createJavaCppMediaWriter(output, container, fastStart, timeoutMicros, openSurfaceVideoEncoder)
+): NativeMediaWriter = createJavaCppMediaWriter(output, container, fastStart, timeoutMicros, openSurfaceVideoEncoder, describeMediaCodecTrack)
 
 /**
- * A decoder rendering into an `ImageReader` of GPU-sampled private buffers, as [GPU_BUFFER_RING]
- * images. The reader is made before the stream's size is known: MediaCodec sets the buffers' size
- * itself, so a nominal one does. Android 14 (API 34) and later.
+ * A decoder rendering into [GpuBufferImages] of `frameRing` images. The reader is made before
+ * the stream's size is known: MediaCodec sets the buffers' size itself. Android 14 (API 34) and later.
  */
 private fun createGpuBufferVideoDecoder(
     source: NativePlayerSource,
     decoderPreference: NativePlayerDecoderPreference,
     decoderThreads: Int,
     timeoutMicros: Long,
+    decoderThreadType: Int,
+    frameRing: Int,
+    decoderName: String?,
+    decoderOptions: Map<String, String>,
 ): NativeVideoDecoder {
-    val reader = ImageReader.newInstance(
-        NOMINAL_READER_SIZE, NOMINAL_READER_SIZE, ImageFormat.PRIVATE, GPU_BUFFER_RING, HardwareBuffer.USAGE_GPU_SAMPLED_IMAGE,
-    )
+    val images = GpuBufferImages(frameRing)
     val decoder = try {
         createJavaCppVideoDecoder(
             source, NativeVideoDecoderOutput.GPU_BUFFERS, null, 0, 0, decoderPreference, decoderThreads, timeoutMicros,
-        ) { decoder -> attachDecoderSurface(reader.surface, decoder) }
+            decoderThreadType, frameRing, decoderName, decoderOptions,
+        ) { decoder -> attachDecoderSurface(images.surface, decoder) }
     } catch (failure: Throwable) {
-        reader.close()
+        images.close()
         throw failure
     }
-    return GpuBufferVideoDecoder(decoder, reader, timeoutMicros)
+    return GpuBufferVideoDecoder(decoder, images, timeoutMicros)
 }
 
 private fun attachDecoderSurface(surface: Surface, decoder: ffmpegkmp_video_decoder): Int {
     androidSurfaceNatives.value
     return AndroidPlayerSurface.setDecoderSurface(surface, decoder)
 }
-
-/** The size a GPU buffer decoder's reader is made with; the buffers MediaCodec renders take the stream's. */
-private const val NOMINAL_READER_SIZE = 128
 
 // Decoders open on threads of their own, so two can reach the Surface natives at once; a bare Loader.load lets the second
 // call a native before the first has finished binding it (UnsatisfiedLinkError), as JavaCppBridgeLoader guards the bridge.

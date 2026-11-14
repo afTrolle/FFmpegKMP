@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 package io.github.aftrolle.ffmpegkmp.core
 
+/** Splits a command line as `execute(command: String)` does. The library's own, not for applications. */
+@InternalFFmpegKmpApi
 public object CommandLineTokenizer {
     public fun tokenize(command: String, executableName: String? = null): List<String> {
         val result = mutableListOf<String>()

@@ -31,7 +31,7 @@ class BrowserPlayerIntegrationTest {
         val bridge = createPlatformPlayerBridge(
             configuration = NativePlayerConfiguration(NativePlayerDecoderPreference.AUTO),
             update = snapshots::add,
-            frame = { frame ->
+            frame = presentingFrames { frame ->
                 softwareFrames += frame
                 firstFrame.complete(Unit)
             },
@@ -104,7 +104,7 @@ class BrowserPlayerIntegrationTest {
         val bridge = createPlatformPlayerBridge(
             configuration = NativePlayerConfiguration(NativePlayerDecoderPreference.AUTO),
             update = {},
-            frame = { frame ->
+            frame = presentingFrames { frame ->
                 shown.complete(frame.presentationTimeUs)
                 frame.frame.close()
             },
@@ -158,7 +158,7 @@ class BrowserPlayerIntegrationTest {
         val bridge = createPlatformPlayerBridge(
             configuration = NativePlayerConfiguration(NativePlayerDecoderPreference.SOFTWARE, decoderThreads = 4),
             update = snapshots::add,
-            frame = { frame -> firstFrame.complete(frame) },
+            frame = presentingFrames { frame -> firstFrame.complete(frame) },
         )
         try {
             assertEquals(0, bridge.setOutput(NativePlayerOutputCapabilities(softwareFrameUpload = true)))
@@ -193,7 +193,7 @@ class BrowserPlayerIntegrationTest {
         val bridge = createBrowserPlayerBridge(
             configuration = NativePlayerConfiguration(),
             update = {},
-            frame = {},
+            frame = presentingFrames {},
             platformFrame = { false },
             workerFactory = { _, listener ->
                 FakeBrowserPlayerWorker(listener).also(workers::add)
@@ -231,7 +231,7 @@ class BrowserPlayerIntegrationTest {
         val bridge = createPlatformPlayerBridge(
             configuration = NativePlayerConfiguration(),
             update = {},
-            frame = frames::add,
+            frame = presentingFrames(frames::add),
             platformFrame = { false },
         )
 

@@ -24,7 +24,7 @@ class BrowserPlayerAudioTest {
         val bridge = createPlatformPlayerBridge(
             configuration = NativePlayerConfiguration(),
             update = {},
-            frame = {},
+            frame = presentingFrames {},
             platformFrame = { false },
         )
         try {

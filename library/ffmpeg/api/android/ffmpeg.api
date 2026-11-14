@@ -1,0 +1,60 @@
+public final class io/github/aftrolle/ffmpegkmp/ffmpeg/FFmpegClient : io/github/aftrolle/ffmpegkmp/core/CommandClient {
+	public fun <init> ()V
+	public fun <init> (Lio/github/aftrolle/ffmpegkmp/core/CommandRuntimeLimits;)V
+	public synthetic fun <init> (Lio/github/aftrolle/ffmpegkmp/core/CommandRuntimeLimits;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public final fun enqueue (Lio/github/aftrolle/ffmpegkmp/ffmpeg/FFmpegCommand;Lio/github/aftrolle/ffmpegkmp/core/CommandIo;)Lio/github/aftrolle/ffmpegkmp/core/ExecutionSession;
+	public static synthetic fun enqueue$default (Lio/github/aftrolle/ffmpegkmp/ffmpeg/FFmpegClient;Lio/github/aftrolle/ffmpegkmp/ffmpeg/FFmpegCommand;Lio/github/aftrolle/ffmpegkmp/core/CommandIo;ILjava/lang/Object;)Lio/github/aftrolle/ffmpegkmp/core/ExecutionSession;
+	public final fun execute (Lio/github/aftrolle/ffmpegkmp/ffmpeg/FFmpegCommand;Lio/github/aftrolle/ffmpegkmp/core/CommandIo;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
+	public static synthetic fun execute$default (Lio/github/aftrolle/ffmpegkmp/ffmpeg/FFmpegClient;Lio/github/aftrolle/ffmpegkmp/ffmpeg/FFmpegCommand;Lio/github/aftrolle/ffmpegkmp/core/CommandIo;Lkotlin/coroutines/Continuation;ILjava/lang/Object;)Ljava/lang/Object;
+}
+
+public final class io/github/aftrolle/ffmpegkmp/ffmpeg/FFmpegCommand {
+	public static final field Companion Lio/github/aftrolle/ffmpegkmp/ffmpeg/FFmpegCommand$Companion;
+	public final fun getArguments ()Ljava/util/List;
+}
+
+public final class io/github/aftrolle/ffmpegkmp/ffmpeg/FFmpegCommand$Builder {
+	public fun <init> ()V
+	public final fun argument (Ljava/lang/String;)V
+	public final fun arguments ([Ljava/lang/String;)V
+	public final fun audioBitrate (Ljava/lang/String;Ljava/lang/Integer;)V
+	public static synthetic fun audioBitrate$default (Lio/github/aftrolle/ffmpegkmp/ffmpeg/FFmpegCommand$Builder;Ljava/lang/String;Ljava/lang/Integer;ILjava/lang/Object;)V
+	public final fun audioChannels (ILjava/lang/Integer;)V
+	public static synthetic fun audioChannels$default (Lio/github/aftrolle/ffmpegkmp/ffmpeg/FFmpegCommand$Builder;ILjava/lang/Integer;ILjava/lang/Object;)V
+	public final fun audioCodec (Ljava/lang/String;Ljava/lang/String;)V
+	public static synthetic fun audioCodec$default (Lio/github/aftrolle/ffmpegkmp/ffmpeg/FFmpegCommand$Builder;Ljava/lang/String;Ljava/lang/String;ILjava/lang/Object;)V
+	public final fun audioFilter (Ljava/lang/String;)V
+	public final fun audioLevel (Lio/github/aftrolle/ffmpegkmp/core/AudioLevel;Ljava/lang/Integer;)V
+	public static synthetic fun audioLevel$default (Lio/github/aftrolle/ffmpegkmp/ffmpeg/FFmpegCommand$Builder;Lio/github/aftrolle/ffmpegkmp/core/AudioLevel;Ljava/lang/Integer;ILjava/lang/Object;)V
+	public final fun audioSampleRate (ILjava/lang/Integer;)V
+	public static synthetic fun audioSampleRate$default (Lio/github/aftrolle/ffmpegkmp/ffmpeg/FFmpegCommand$Builder;ILjava/lang/Integer;ILjava/lang/Object;)V
+	public final fun codec (Ljava/lang/String;Ljava/lang/String;)V
+	public static synthetic fun codec$default (Lio/github/aftrolle/ffmpegkmp/ffmpeg/FFmpegCommand$Builder;Ljava/lang/String;Ljava/lang/String;ILjava/lang/Object;)V
+	public final fun complexFilter (Ljava/lang/String;)V
+	public final fun disableAudio ()V
+	public final fun flag (Ljava/lang/String;)V
+	public final fun input (Ljava/lang/String;Ljava/lang/String;)V
+	public static synthetic fun input$default (Lio/github/aftrolle/ffmpegkmp/ffmpeg/FFmpegCommand$Builder;Ljava/lang/String;Ljava/lang/String;ILjava/lang/Object;)V
+	public final fun map (Ljava/lang/String;)V
+	public final fun mapAudio (ILjava/lang/Integer;Z)V
+	public static synthetic fun mapAudio$default (Lio/github/aftrolle/ffmpegkmp/ffmpeg/FFmpegCommand$Builder;ILjava/lang/Integer;ZILjava/lang/Object;)V
+	public final fun metadata (Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;)V
+	public static synthetic fun metadata$default (Lio/github/aftrolle/ffmpegkmp/ffmpeg/FFmpegCommand$Builder;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;ILjava/lang/Object;)V
+	public final fun option (Ljava/lang/String;Ljava/lang/String;)V
+	public final fun output (Ljava/lang/String;Ljava/lang/String;)V
+	public static synthetic fun output$default (Lio/github/aftrolle/ffmpegkmp/ffmpeg/FFmpegCommand$Builder;Ljava/lang/String;Ljava/lang/String;ILjava/lang/Object;)V
+	public final fun overwrite (Z)V
+	public static synthetic fun overwrite$default (Lio/github/aftrolle/ffmpegkmp/ffmpeg/FFmpegCommand$Builder;ZILjava/lang/Object;)V
+	public final fun videoCodec (Ljava/lang/String;Ljava/lang/String;)V
+	public static synthetic fun videoCodec$default (Lio/github/aftrolle/ffmpegkmp/ffmpeg/FFmpegCommand$Builder;Ljava/lang/String;Ljava/lang/String;ILjava/lang/Object;)V
+	public final fun videoFilter (Ljava/lang/String;)V
+}
+
+public final class io/github/aftrolle/ffmpegkmp/ffmpeg/FFmpegCommand$Companion {
+	public final fun invoke (Lkotlin/jvm/functions/Function1;)Lio/github/aftrolle/ffmpegkmp/ffmpeg/FFmpegCommand;
+}
+
+public final class io/github/aftrolle/ffmpegkmp/ffmpeg/FFmpegCommandKt {
+	public static final fun toFilter (Lio/github/aftrolle/ffmpegkmp/core/AudioLevel;)Ljava/lang/String;
+}
+

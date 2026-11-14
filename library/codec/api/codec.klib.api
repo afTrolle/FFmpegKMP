@@ -1,0 +1,750 @@
+// Klib ABI Dump
+// Targets: [iosArm64, iosSimulatorArm64, js, macosArm64, tvosArm64, tvosSimulatorArm64, wasmJs, watchosArm64, watchosDeviceArm64, watchosSimulatorArm64]
+// Alias: apple => [iosArm64, iosSimulatorArm64, macosArm64, tvosArm64, tvosSimulatorArm64, watchosArm64, watchosDeviceArm64, watchosSimulatorArm64]
+// Rendering settings:
+// - Signature version: 2
+// - Show manifest properties: true
+// - Show declarations: true
+
+// Library unique name: <io.github.aftrolle.ffmpegkmp:codec>
+final enum class io.github.aftrolle.ffmpegkmp.codec/CodecPreference : io.github.aftrolle.ffmpegkmp.codec/CodecSelection, kotlin/Enum<io.github.aftrolle.ffmpegkmp.codec/CodecPreference> { // io.github.aftrolle.ffmpegkmp.codec/CodecPreference|null[0]
+    enum entry AUTO // io.github.aftrolle.ffmpegkmp.codec/CodecPreference.AUTO|null[0]
+    enum entry REQUIRE_HARDWARE // io.github.aftrolle.ffmpegkmp.codec/CodecPreference.REQUIRE_HARDWARE|null[0]
+    enum entry SOFTWARE // io.github.aftrolle.ffmpegkmp.codec/CodecPreference.SOFTWARE|null[0]
+
+    final val entries // io.github.aftrolle.ffmpegkmp.codec/CodecPreference.entries|#static{}entries[0]
+        final fun <get-entries>(): kotlin.enums/EnumEntries<io.github.aftrolle.ffmpegkmp.codec/CodecPreference> // io.github.aftrolle.ffmpegkmp.codec/CodecPreference.entries.<get-entries>|<get-entries>#static(){}[0]
+
+    final fun valueOf(kotlin/String): io.github.aftrolle.ffmpegkmp.codec/CodecPreference // io.github.aftrolle.ffmpegkmp.codec/CodecPreference.valueOf|valueOf#static(kotlin.String){}[0]
+    final fun values(): kotlin/Array<io.github.aftrolle.ffmpegkmp.codec/CodecPreference> // io.github.aftrolle.ffmpegkmp.codec/CodecPreference.values|values#static(){}[0]
+}
+
+final enum class io.github.aftrolle.ffmpegkmp.codec/ColorMatrix : kotlin/Enum<io.github.aftrolle.ffmpegkmp.codec/ColorMatrix> { // io.github.aftrolle.ffmpegkmp.codec/ColorMatrix|null[0]
+    enum entry BT2020_NCL // io.github.aftrolle.ffmpegkmp.codec/ColorMatrix.BT2020_NCL|null[0]
+    enum entry BT601 // io.github.aftrolle.ffmpegkmp.codec/ColorMatrix.BT601|null[0]
+    enum entry BT709 // io.github.aftrolle.ffmpegkmp.codec/ColorMatrix.BT709|null[0]
+    enum entry RGB // io.github.aftrolle.ffmpegkmp.codec/ColorMatrix.RGB|null[0]
+
+    final val entries // io.github.aftrolle.ffmpegkmp.codec/ColorMatrix.entries|#static{}entries[0]
+        final fun <get-entries>(): kotlin.enums/EnumEntries<io.github.aftrolle.ffmpegkmp.codec/ColorMatrix> // io.github.aftrolle.ffmpegkmp.codec/ColorMatrix.entries.<get-entries>|<get-entries>#static(){}[0]
+
+    final fun valueOf(kotlin/String): io.github.aftrolle.ffmpegkmp.codec/ColorMatrix // io.github.aftrolle.ffmpegkmp.codec/ColorMatrix.valueOf|valueOf#static(kotlin.String){}[0]
+    final fun values(): kotlin/Array<io.github.aftrolle.ffmpegkmp.codec/ColorMatrix> // io.github.aftrolle.ffmpegkmp.codec/ColorMatrix.values|values#static(){}[0]
+}
+
+final enum class io.github.aftrolle.ffmpegkmp.codec/ColorPrimaries : kotlin/Enum<io.github.aftrolle.ffmpegkmp.codec/ColorPrimaries> { // io.github.aftrolle.ffmpegkmp.codec/ColorPrimaries|null[0]
+    enum entry BT2020 // io.github.aftrolle.ffmpegkmp.codec/ColorPrimaries.BT2020|null[0]
+    enum entry BT709 // io.github.aftrolle.ffmpegkmp.codec/ColorPrimaries.BT709|null[0]
+    enum entry DISPLAY_P3 // io.github.aftrolle.ffmpegkmp.codec/ColorPrimaries.DISPLAY_P3|null[0]
+
+    final val entries // io.github.aftrolle.ffmpegkmp.codec/ColorPrimaries.entries|#static{}entries[0]
+        final fun <get-entries>(): kotlin.enums/EnumEntries<io.github.aftrolle.ffmpegkmp.codec/ColorPrimaries> // io.github.aftrolle.ffmpegkmp.codec/ColorPrimaries.entries.<get-entries>|<get-entries>#static(){}[0]
+
+    final fun valueOf(kotlin/String): io.github.aftrolle.ffmpegkmp.codec/ColorPrimaries // io.github.aftrolle.ffmpegkmp.codec/ColorPrimaries.valueOf|valueOf#static(kotlin.String){}[0]
+    final fun values(): kotlin/Array<io.github.aftrolle.ffmpegkmp.codec/ColorPrimaries> // io.github.aftrolle.ffmpegkmp.codec/ColorPrimaries.values|values#static(){}[0]
+}
+
+final enum class io.github.aftrolle.ffmpegkmp.codec/ColorRange : kotlin/Enum<io.github.aftrolle.ffmpegkmp.codec/ColorRange> { // io.github.aftrolle.ffmpegkmp.codec/ColorRange|null[0]
+    enum entry FULL // io.github.aftrolle.ffmpegkmp.codec/ColorRange.FULL|null[0]
+    enum entry LIMITED // io.github.aftrolle.ffmpegkmp.codec/ColorRange.LIMITED|null[0]
+
+    final val entries // io.github.aftrolle.ffmpegkmp.codec/ColorRange.entries|#static{}entries[0]
+        final fun <get-entries>(): kotlin.enums/EnumEntries<io.github.aftrolle.ffmpegkmp.codec/ColorRange> // io.github.aftrolle.ffmpegkmp.codec/ColorRange.entries.<get-entries>|<get-entries>#static(){}[0]
+
+    final fun valueOf(kotlin/String): io.github.aftrolle.ffmpegkmp.codec/ColorRange // io.github.aftrolle.ffmpegkmp.codec/ColorRange.valueOf|valueOf#static(kotlin.String){}[0]
+    final fun values(): kotlin/Array<io.github.aftrolle.ffmpegkmp.codec/ColorRange> // io.github.aftrolle.ffmpegkmp.codec/ColorRange.values|values#static(){}[0]
+}
+
+final enum class io.github.aftrolle.ffmpegkmp.codec/ColorTransfer : kotlin/Enum<io.github.aftrolle.ffmpegkmp.codec/ColorTransfer> { // io.github.aftrolle.ffmpegkmp.codec/ColorTransfer|null[0]
+    enum entry BT709 // io.github.aftrolle.ffmpegkmp.codec/ColorTransfer.BT709|null[0]
+    enum entry HLG // io.github.aftrolle.ffmpegkmp.codec/ColorTransfer.HLG|null[0]
+    enum entry LINEAR // io.github.aftrolle.ffmpegkmp.codec/ColorTransfer.LINEAR|null[0]
+    enum entry PQ // io.github.aftrolle.ffmpegkmp.codec/ColorTransfer.PQ|null[0]
+    enum entry SRGB // io.github.aftrolle.ffmpegkmp.codec/ColorTransfer.SRGB|null[0]
+
+    final val entries // io.github.aftrolle.ffmpegkmp.codec/ColorTransfer.entries|#static{}entries[0]
+        final fun <get-entries>(): kotlin.enums/EnumEntries<io.github.aftrolle.ffmpegkmp.codec/ColorTransfer> // io.github.aftrolle.ffmpegkmp.codec/ColorTransfer.entries.<get-entries>|<get-entries>#static(){}[0]
+
+    final fun valueOf(kotlin/String): io.github.aftrolle.ffmpegkmp.codec/ColorTransfer // io.github.aftrolle.ffmpegkmp.codec/ColorTransfer.valueOf|valueOf#static(kotlin.String){}[0]
+    final fun values(): kotlin/Array<io.github.aftrolle.ffmpegkmp.codec/ColorTransfer> // io.github.aftrolle.ffmpegkmp.codec/ColorTransfer.values|values#static(){}[0]
+}
+
+final enum class io.github.aftrolle.ffmpegkmp.codec/DecoderFallbackReason : kotlin/Enum<io.github.aftrolle.ffmpegkmp.codec/DecoderFallbackReason> { // io.github.aftrolle.ffmpegkmp.codec/DecoderFallbackReason|null[0]
+    enum entry BUDGET // io.github.aftrolle.ffmpegkmp.codec/DecoderFallbackReason.BUDGET|null[0]
+    enum entry FAILED // io.github.aftrolle.ffmpegkmp.codec/DecoderFallbackReason.FAILED|null[0]
+    enum entry UNSUPPORTED // io.github.aftrolle.ffmpegkmp.codec/DecoderFallbackReason.UNSUPPORTED|null[0]
+
+    final val entries // io.github.aftrolle.ffmpegkmp.codec/DecoderFallbackReason.entries|#static{}entries[0]
+        final fun <get-entries>(): kotlin.enums/EnumEntries<io.github.aftrolle.ffmpegkmp.codec/DecoderFallbackReason> // io.github.aftrolle.ffmpegkmp.codec/DecoderFallbackReason.entries.<get-entries>|<get-entries>#static(){}[0]
+
+    final fun valueOf(kotlin/String): io.github.aftrolle.ffmpegkmp.codec/DecoderFallbackReason // io.github.aftrolle.ffmpegkmp.codec/DecoderFallbackReason.valueOf|valueOf#static(kotlin.String){}[0]
+    final fun values(): kotlin/Array<io.github.aftrolle.ffmpegkmp.codec/DecoderFallbackReason> // io.github.aftrolle.ffmpegkmp.codec/DecoderFallbackReason.values|values#static(){}[0]
+}
+
+final enum class io.github.aftrolle.ffmpegkmp.codec/DecoderKind : kotlin/Enum<io.github.aftrolle.ffmpegkmp.codec/DecoderKind> { // io.github.aftrolle.ffmpegkmp.codec/DecoderKind|null[0]
+    enum entry HARDWARE // io.github.aftrolle.ffmpegkmp.codec/DecoderKind.HARDWARE|null[0]
+    enum entry SOFTWARE // io.github.aftrolle.ffmpegkmp.codec/DecoderKind.SOFTWARE|null[0]
+    enum entry UNKNOWN // io.github.aftrolle.ffmpegkmp.codec/DecoderKind.UNKNOWN|null[0]
+
+    final val entries // io.github.aftrolle.ffmpegkmp.codec/DecoderKind.entries|#static{}entries[0]
+        final fun <get-entries>(): kotlin.enums/EnumEntries<io.github.aftrolle.ffmpegkmp.codec/DecoderKind> // io.github.aftrolle.ffmpegkmp.codec/DecoderKind.entries.<get-entries>|<get-entries>#static(){}[0]
+
+    final fun valueOf(kotlin/String): io.github.aftrolle.ffmpegkmp.codec/DecoderKind // io.github.aftrolle.ffmpegkmp.codec/DecoderKind.valueOf|valueOf#static(kotlin.String){}[0]
+    final fun values(): kotlin/Array<io.github.aftrolle.ffmpegkmp.codec/DecoderKind> // io.github.aftrolle.ffmpegkmp.codec/DecoderKind.values|values#static(){}[0]
+}
+
+final enum class io.github.aftrolle.ffmpegkmp.codec/DecoderThreadType : kotlin/Enum<io.github.aftrolle.ffmpegkmp.codec/DecoderThreadType> { // io.github.aftrolle.ffmpegkmp.codec/DecoderThreadType|null[0]
+    enum entry FRAME // io.github.aftrolle.ffmpegkmp.codec/DecoderThreadType.FRAME|null[0]
+    enum entry SLICE // io.github.aftrolle.ffmpegkmp.codec/DecoderThreadType.SLICE|null[0]
+
+    final val entries // io.github.aftrolle.ffmpegkmp.codec/DecoderThreadType.entries|#static{}entries[0]
+        final fun <get-entries>(): kotlin.enums/EnumEntries<io.github.aftrolle.ffmpegkmp.codec/DecoderThreadType> // io.github.aftrolle.ffmpegkmp.codec/DecoderThreadType.entries.<get-entries>|<get-entries>#static(){}[0]
+
+    final fun valueOf(kotlin/String): io.github.aftrolle.ffmpegkmp.codec/DecoderThreadType // io.github.aftrolle.ffmpegkmp.codec/DecoderThreadType.valueOf|valueOf#static(kotlin.String){}[0]
+    final fun values(): kotlin/Array<io.github.aftrolle.ffmpegkmp.codec/DecoderThreadType> // io.github.aftrolle.ffmpegkmp.codec/DecoderThreadType.values|values#static(){}[0]
+}
+
+final enum class io.github.aftrolle.ffmpegkmp.codec/DynamicRange : kotlin/Enum<io.github.aftrolle.ffmpegkmp.codec/DynamicRange> { // io.github.aftrolle.ffmpegkmp.codec/DynamicRange|null[0]
+    enum entry HDR10 // io.github.aftrolle.ffmpegkmp.codec/DynamicRange.HDR10|null[0]
+    enum entry HLG // io.github.aftrolle.ffmpegkmp.codec/DynamicRange.HLG|null[0]
+    enum entry SDR // io.github.aftrolle.ffmpegkmp.codec/DynamicRange.SDR|null[0]
+
+    final val entries // io.github.aftrolle.ffmpegkmp.codec/DynamicRange.entries|#static{}entries[0]
+        final fun <get-entries>(): kotlin.enums/EnumEntries<io.github.aftrolle.ffmpegkmp.codec/DynamicRange> // io.github.aftrolle.ffmpegkmp.codec/DynamicRange.entries.<get-entries>|<get-entries>#static(){}[0]
+
+    final fun valueOf(kotlin/String): io.github.aftrolle.ffmpegkmp.codec/DynamicRange // io.github.aftrolle.ffmpegkmp.codec/DynamicRange.valueOf|valueOf#static(kotlin.String){}[0]
+    final fun values(): kotlin/Array<io.github.aftrolle.ffmpegkmp.codec/DynamicRange> // io.github.aftrolle.ffmpegkmp.codec/DynamicRange.values|values#static(){}[0]
+
+    final object Companion { // io.github.aftrolle.ffmpegkmp.codec/DynamicRange.Companion|null[0]
+        final fun of(io.github.aftrolle.ffmpegkmp.codec/VideoInfo): io.github.aftrolle.ffmpegkmp.codec/DynamicRange // io.github.aftrolle.ffmpegkmp.codec/DynamicRange.Companion.of|of(io.github.aftrolle.ffmpegkmp.codec.VideoInfo){}[0]
+    }
+}
+
+final enum class io.github.aftrolle.ffmpegkmp.codec/FrameScale : kotlin/Enum<io.github.aftrolle.ffmpegkmp.codec/FrameScale> { // io.github.aftrolle.ffmpegkmp.codec/FrameScale|null[0]
+    enum entry CROP // io.github.aftrolle.ffmpegkmp.codec/FrameScale.CROP|null[0]
+    enum entry FIT // io.github.aftrolle.ffmpegkmp.codec/FrameScale.FIT|null[0]
+
+    final val entries // io.github.aftrolle.ffmpegkmp.codec/FrameScale.entries|#static{}entries[0]
+        final fun <get-entries>(): kotlin.enums/EnumEntries<io.github.aftrolle.ffmpegkmp.codec/FrameScale> // io.github.aftrolle.ffmpegkmp.codec/FrameScale.entries.<get-entries>|<get-entries>#static(){}[0]
+
+    final fun valueOf(kotlin/String): io.github.aftrolle.ffmpegkmp.codec/FrameScale // io.github.aftrolle.ffmpegkmp.codec/FrameScale.valueOf|valueOf#static(kotlin.String){}[0]
+    final fun values(): kotlin/Array<io.github.aftrolle.ffmpegkmp.codec/FrameScale> // io.github.aftrolle.ffmpegkmp.codec/FrameScale.values|values#static(){}[0]
+}
+
+final enum class io.github.aftrolle.ffmpegkmp.codec/PixelLayout : kotlin/Enum<io.github.aftrolle.ffmpegkmp.codec/PixelLayout> { // io.github.aftrolle.ffmpegkmp.codec/PixelLayout|null[0]
+    enum entry BGRA8 // io.github.aftrolle.ffmpegkmp.codec/PixelLayout.BGRA8|null[0]
+    enum entry NV12 // io.github.aftrolle.ffmpegkmp.codec/PixelLayout.NV12|null[0]
+    enum entry P010 // io.github.aftrolle.ffmpegkmp.codec/PixelLayout.P010|null[0]
+    enum entry RGBA8 // io.github.aftrolle.ffmpegkmp.codec/PixelLayout.RGBA8|null[0]
+    enum entry RGBA_1010102 // io.github.aftrolle.ffmpegkmp.codec/PixelLayout.RGBA_1010102|null[0]
+    enum entry RGBA_F16 // io.github.aftrolle.ffmpegkmp.codec/PixelLayout.RGBA_F16|null[0]
+    enum entry YUV420P // io.github.aftrolle.ffmpegkmp.codec/PixelLayout.YUV420P|null[0]
+    enum entry YUV420P10 // io.github.aftrolle.ffmpegkmp.codec/PixelLayout.YUV420P10|null[0]
+
+    final val entries // io.github.aftrolle.ffmpegkmp.codec/PixelLayout.entries|#static{}entries[0]
+        final fun <get-entries>(): kotlin.enums/EnumEntries<io.github.aftrolle.ffmpegkmp.codec/PixelLayout> // io.github.aftrolle.ffmpegkmp.codec/PixelLayout.entries.<get-entries>|<get-entries>#static(){}[0]
+
+    final fun valueOf(kotlin/String): io.github.aftrolle.ffmpegkmp.codec/PixelLayout // io.github.aftrolle.ffmpegkmp.codec/PixelLayout.valueOf|valueOf#static(kotlin.String){}[0]
+    final fun values(): kotlin/Array<io.github.aftrolle.ffmpegkmp.codec/PixelLayout> // io.github.aftrolle.ffmpegkmp.codec/PixelLayout.values|values#static(){}[0]
+}
+
+final enum class io.github.aftrolle.ffmpegkmp.codec/VideoCodec : kotlin/Enum<io.github.aftrolle.ffmpegkmp.codec/VideoCodec> { // io.github.aftrolle.ffmpegkmp.codec/VideoCodec|null[0]
+    enum entry AV1 // io.github.aftrolle.ffmpegkmp.codec/VideoCodec.AV1|null[0]
+    enum entry H264 // io.github.aftrolle.ffmpegkmp.codec/VideoCodec.H264|null[0]
+    enum entry HEVC // io.github.aftrolle.ffmpegkmp.codec/VideoCodec.HEVC|null[0]
+
+    final val entries // io.github.aftrolle.ffmpegkmp.codec/VideoCodec.entries|#static{}entries[0]
+        final fun <get-entries>(): kotlin.enums/EnumEntries<io.github.aftrolle.ffmpegkmp.codec/VideoCodec> // io.github.aftrolle.ffmpegkmp.codec/VideoCodec.entries.<get-entries>|<get-entries>#static(){}[0]
+
+    final fun valueOf(kotlin/String): io.github.aftrolle.ffmpegkmp.codec/VideoCodec // io.github.aftrolle.ffmpegkmp.codec/VideoCodec.valueOf|valueOf#static(kotlin.String){}[0]
+    final fun values(): kotlin/Array<io.github.aftrolle.ffmpegkmp.codec/VideoCodec> // io.github.aftrolle.ffmpegkmp.codec/VideoCodec.values|values#static(){}[0]
+}
+
+sealed interface io.github.aftrolle.ffmpegkmp.codec/CodecSelection // io.github.aftrolle.ffmpegkmp.codec/CodecSelection|null[0]
+
+sealed interface io.github.aftrolle.ffmpegkmp.codec/DecoderThreads { // io.github.aftrolle.ffmpegkmp.codec/DecoderThreads|null[0]
+    final class Fixed : io.github.aftrolle.ffmpegkmp.codec/DecoderThreads { // io.github.aftrolle.ffmpegkmp.codec/DecoderThreads.Fixed|null[0]
+        constructor <init>(kotlin/Int, kotlin.collections/Set<io.github.aftrolle.ffmpegkmp.codec/DecoderThreadType> = ...) // io.github.aftrolle.ffmpegkmp.codec/DecoderThreads.Fixed.<init>|<init>(kotlin.Int;kotlin.collections.Set<io.github.aftrolle.ffmpegkmp.codec.DecoderThreadType>){}[0]
+
+        final val count // io.github.aftrolle.ffmpegkmp.codec/DecoderThreads.Fixed.count|{}count[0]
+            final fun <get-count>(): kotlin/Int // io.github.aftrolle.ffmpegkmp.codec/DecoderThreads.Fixed.count.<get-count>|<get-count>(){}[0]
+        final val types // io.github.aftrolle.ffmpegkmp.codec/DecoderThreads.Fixed.types|{}types[0]
+            final fun <get-types>(): kotlin.collections/Set<io.github.aftrolle.ffmpegkmp.codec/DecoderThreadType> // io.github.aftrolle.ffmpegkmp.codec/DecoderThreads.Fixed.types.<get-types>|<get-types>(){}[0]
+
+        final fun component1(): kotlin/Int // io.github.aftrolle.ffmpegkmp.codec/DecoderThreads.Fixed.component1|component1(){}[0]
+        final fun component2(): kotlin.collections/Set<io.github.aftrolle.ffmpegkmp.codec/DecoderThreadType> // io.github.aftrolle.ffmpegkmp.codec/DecoderThreads.Fixed.component2|component2(){}[0]
+        final fun copy(kotlin/Int = ..., kotlin.collections/Set<io.github.aftrolle.ffmpegkmp.codec/DecoderThreadType> = ...): io.github.aftrolle.ffmpegkmp.codec/DecoderThreads.Fixed // io.github.aftrolle.ffmpegkmp.codec/DecoderThreads.Fixed.copy|copy(kotlin.Int;kotlin.collections.Set<io.github.aftrolle.ffmpegkmp.codec.DecoderThreadType>){}[0]
+        final fun equals(kotlin/Any?): kotlin/Boolean // io.github.aftrolle.ffmpegkmp.codec/DecoderThreads.Fixed.equals|equals(kotlin.Any?){}[0]
+        final fun hashCode(): kotlin/Int // io.github.aftrolle.ffmpegkmp.codec/DecoderThreads.Fixed.hashCode|hashCode(){}[0]
+        final fun toString(): kotlin/String // io.github.aftrolle.ffmpegkmp.codec/DecoderThreads.Fixed.toString|toString(){}[0]
+    }
+
+    final object Auto : io.github.aftrolle.ffmpegkmp.codec/DecoderThreads { // io.github.aftrolle.ffmpegkmp.codec/DecoderThreads.Auto|null[0]
+        final fun equals(kotlin/Any?): kotlin/Boolean // io.github.aftrolle.ffmpegkmp.codec/DecoderThreads.Auto.equals|equals(kotlin.Any?){}[0]
+        final fun hashCode(): kotlin/Int // io.github.aftrolle.ffmpegkmp.codec/DecoderThreads.Auto.hashCode|hashCode(){}[0]
+        final fun toString(): kotlin/String // io.github.aftrolle.ffmpegkmp.codec/DecoderThreads.Auto.toString|toString(){}[0]
+    }
+}
+
+sealed interface io.github.aftrolle.ffmpegkmp.codec/FrameStep { // io.github.aftrolle.ffmpegkmp.codec/FrameStep|null[0]
+    final class Rate : io.github.aftrolle.ffmpegkmp.codec/FrameStep { // io.github.aftrolle.ffmpegkmp.codec/FrameStep.Rate|null[0]
+        constructor <init>(io.github.aftrolle.ffmpegkmp.codec/FrameRate) // io.github.aftrolle.ffmpegkmp.codec/FrameStep.Rate.<init>|<init>(io.github.aftrolle.ffmpegkmp.codec.FrameRate){}[0]
+
+        final val rate // io.github.aftrolle.ffmpegkmp.codec/FrameStep.Rate.rate|{}rate[0]
+            final fun <get-rate>(): io.github.aftrolle.ffmpegkmp.codec/FrameRate // io.github.aftrolle.ffmpegkmp.codec/FrameStep.Rate.rate.<get-rate>|<get-rate>(){}[0]
+
+        final fun component1(): io.github.aftrolle.ffmpegkmp.codec/FrameRate // io.github.aftrolle.ffmpegkmp.codec/FrameStep.Rate.component1|component1(){}[0]
+        final fun copy(io.github.aftrolle.ffmpegkmp.codec/FrameRate = ...): io.github.aftrolle.ffmpegkmp.codec/FrameStep.Rate // io.github.aftrolle.ffmpegkmp.codec/FrameStep.Rate.copy|copy(io.github.aftrolle.ffmpegkmp.codec.FrameRate){}[0]
+        final fun equals(kotlin/Any?): kotlin/Boolean // io.github.aftrolle.ffmpegkmp.codec/FrameStep.Rate.equals|equals(kotlin.Any?){}[0]
+        final fun hashCode(): kotlin/Int // io.github.aftrolle.ffmpegkmp.codec/FrameStep.Rate.hashCode|hashCode(){}[0]
+        final fun toString(): kotlin/String // io.github.aftrolle.ffmpegkmp.codec/FrameStep.Rate.toString|toString(){}[0]
+    }
+
+    final object Decoded : io.github.aftrolle.ffmpegkmp.codec/FrameStep { // io.github.aftrolle.ffmpegkmp.codec/FrameStep.Decoded|null[0]
+        final fun equals(kotlin/Any?): kotlin/Boolean // io.github.aftrolle.ffmpegkmp.codec/FrameStep.Decoded.equals|equals(kotlin.Any?){}[0]
+        final fun hashCode(): kotlin/Int // io.github.aftrolle.ffmpegkmp.codec/FrameStep.Decoded.hashCode|hashCode(){}[0]
+        final fun toString(): kotlin/String // io.github.aftrolle.ffmpegkmp.codec/FrameStep.Decoded.toString|toString(){}[0]
+    }
+}
+
+sealed interface io.github.aftrolle.ffmpegkmp.codec/MediaOutput { // io.github.aftrolle.ffmpegkmp.codec/MediaOutput|null[0]
+    final class File : io.github.aftrolle.ffmpegkmp.codec/MediaOutput { // io.github.aftrolle.ffmpegkmp.codec/MediaOutput.File|null[0]
+        constructor <init>(kotlin/String) // io.github.aftrolle.ffmpegkmp.codec/MediaOutput.File.<init>|<init>(kotlin.String){}[0]
+
+        final val path // io.github.aftrolle.ffmpegkmp.codec/MediaOutput.File.path|{}path[0]
+            final fun <get-path>(): kotlin/String // io.github.aftrolle.ffmpegkmp.codec/MediaOutput.File.path.<get-path>|<get-path>(){}[0]
+
+        final fun component1(): kotlin/String // io.github.aftrolle.ffmpegkmp.codec/MediaOutput.File.component1|component1(){}[0]
+        final fun copy(kotlin/String = ...): io.github.aftrolle.ffmpegkmp.codec/MediaOutput.File // io.github.aftrolle.ffmpegkmp.codec/MediaOutput.File.copy|copy(kotlin.String){}[0]
+        final fun equals(kotlin/Any?): kotlin/Boolean // io.github.aftrolle.ffmpegkmp.codec/MediaOutput.File.equals|equals(kotlin.Any?){}[0]
+        final fun hashCode(): kotlin/Int // io.github.aftrolle.ffmpegkmp.codec/MediaOutput.File.hashCode|hashCode(){}[0]
+        final fun toString(): kotlin/String // io.github.aftrolle.ffmpegkmp.codec/MediaOutput.File.toString|toString(){}[0]
+    }
+
+    final class Handle : io.github.aftrolle.ffmpegkmp.codec/MediaOutput { // io.github.aftrolle.ffmpegkmp.codec/MediaOutput.Handle|null[0]
+        constructor <init>(okio/FileHandle) // io.github.aftrolle.ffmpegkmp.codec/MediaOutput.Handle.<init>|<init>(okio.FileHandle){}[0]
+
+        final val fileHandle // io.github.aftrolle.ffmpegkmp.codec/MediaOutput.Handle.fileHandle|{}fileHandle[0]
+            final fun <get-fileHandle>(): okio/FileHandle // io.github.aftrolle.ffmpegkmp.codec/MediaOutput.Handle.fileHandle.<get-fileHandle>|<get-fileHandle>(){}[0]
+
+        final fun component1(): okio/FileHandle // io.github.aftrolle.ffmpegkmp.codec/MediaOutput.Handle.component1|component1(){}[0]
+        final fun copy(okio/FileHandle = ...): io.github.aftrolle.ffmpegkmp.codec/MediaOutput.Handle // io.github.aftrolle.ffmpegkmp.codec/MediaOutput.Handle.copy|copy(okio.FileHandle){}[0]
+        final fun equals(kotlin/Any?): kotlin/Boolean // io.github.aftrolle.ffmpegkmp.codec/MediaOutput.Handle.equals|equals(kotlin.Any?){}[0]
+        final fun hashCode(): kotlin/Int // io.github.aftrolle.ffmpegkmp.codec/MediaOutput.Handle.hashCode|hashCode(){}[0]
+        final fun toString(): kotlin/String // io.github.aftrolle.ffmpegkmp.codec/MediaOutput.Handle.toString|toString(){}[0]
+    }
+}
+
+sealed interface io.github.aftrolle.ffmpegkmp.codec/VideoOutput { // io.github.aftrolle.ffmpegkmp.codec/VideoOutput|null[0]
+    final class Memory : io.github.aftrolle.ffmpegkmp.codec/VideoOutput { // io.github.aftrolle.ffmpegkmp.codec/VideoOutput.Memory|null[0]
+        constructor <init>(io.github.aftrolle.ffmpegkmp.codec/FrameFormat? = ..., io.github.aftrolle.ffmpegkmp.codec/FrameSize? = ...) // io.github.aftrolle.ffmpegkmp.codec/VideoOutput.Memory.<init>|<init>(io.github.aftrolle.ffmpegkmp.codec.FrameFormat?;io.github.aftrolle.ffmpegkmp.codec.FrameSize?){}[0]
+
+        final val format // io.github.aftrolle.ffmpegkmp.codec/VideoOutput.Memory.format|{}format[0]
+            final fun <get-format>(): io.github.aftrolle.ffmpegkmp.codec/FrameFormat? // io.github.aftrolle.ffmpegkmp.codec/VideoOutput.Memory.format.<get-format>|<get-format>(){}[0]
+        final val size // io.github.aftrolle.ffmpegkmp.codec/VideoOutput.Memory.size|{}size[0]
+            final fun <get-size>(): io.github.aftrolle.ffmpegkmp.codec/FrameSize? // io.github.aftrolle.ffmpegkmp.codec/VideoOutput.Memory.size.<get-size>|<get-size>(){}[0]
+
+        final fun component1(): io.github.aftrolle.ffmpegkmp.codec/FrameFormat? // io.github.aftrolle.ffmpegkmp.codec/VideoOutput.Memory.component1|component1(){}[0]
+        final fun component2(): io.github.aftrolle.ffmpegkmp.codec/FrameSize? // io.github.aftrolle.ffmpegkmp.codec/VideoOutput.Memory.component2|component2(){}[0]
+        final fun copy(io.github.aftrolle.ffmpegkmp.codec/FrameFormat? = ..., io.github.aftrolle.ffmpegkmp.codec/FrameSize? = ...): io.github.aftrolle.ffmpegkmp.codec/VideoOutput.Memory // io.github.aftrolle.ffmpegkmp.codec/VideoOutput.Memory.copy|copy(io.github.aftrolle.ffmpegkmp.codec.FrameFormat?;io.github.aftrolle.ffmpegkmp.codec.FrameSize?){}[0]
+        final fun equals(kotlin/Any?): kotlin/Boolean // io.github.aftrolle.ffmpegkmp.codec/VideoOutput.Memory.equals|equals(kotlin.Any?){}[0]
+        final fun hashCode(): kotlin/Int // io.github.aftrolle.ffmpegkmp.codec/VideoOutput.Memory.hashCode|hashCode(){}[0]
+        final fun toString(): kotlin/String // io.github.aftrolle.ffmpegkmp.codec/VideoOutput.Memory.toString|toString(){}[0]
+    }
+
+    final object GpuBuffers : io.github.aftrolle.ffmpegkmp.codec/VideoOutput { // io.github.aftrolle.ffmpegkmp.codec/VideoOutput.GpuBuffers|null[0]
+        final fun equals(kotlin/Any?): kotlin/Boolean // io.github.aftrolle.ffmpegkmp.codec/VideoOutput.GpuBuffers.equals|equals(kotlin.Any?){}[0]
+        final fun hashCode(): kotlin/Int // io.github.aftrolle.ffmpegkmp.codec/VideoOutput.GpuBuffers.hashCode|hashCode(){}[0]
+        final fun toString(): kotlin/String // io.github.aftrolle.ffmpegkmp.codec/VideoOutput.GpuBuffers.toString|toString(){}[0]
+    }
+}
+
+final class io.github.aftrolle.ffmpegkmp.codec/AudioEncoderConfig { // io.github.aftrolle.ffmpegkmp.codec/AudioEncoderConfig|null[0]
+    constructor <init>(kotlin/Int = ..., kotlin/Int = ..., kotlin/Long? = ...) // io.github.aftrolle.ffmpegkmp.codec/AudioEncoderConfig.<init>|<init>(kotlin.Int;kotlin.Int;kotlin.Long?){}[0]
+
+    final val bitRate // io.github.aftrolle.ffmpegkmp.codec/AudioEncoderConfig.bitRate|{}bitRate[0]
+        final fun <get-bitRate>(): kotlin/Long? // io.github.aftrolle.ffmpegkmp.codec/AudioEncoderConfig.bitRate.<get-bitRate>|<get-bitRate>(){}[0]
+    final val channels // io.github.aftrolle.ffmpegkmp.codec/AudioEncoderConfig.channels|{}channels[0]
+        final fun <get-channels>(): kotlin/Int // io.github.aftrolle.ffmpegkmp.codec/AudioEncoderConfig.channels.<get-channels>|<get-channels>(){}[0]
+    final val sampleRate // io.github.aftrolle.ffmpegkmp.codec/AudioEncoderConfig.sampleRate|{}sampleRate[0]
+        final fun <get-sampleRate>(): kotlin/Int // io.github.aftrolle.ffmpegkmp.codec/AudioEncoderConfig.sampleRate.<get-sampleRate>|<get-sampleRate>(){}[0]
+
+    final fun component1(): kotlin/Int // io.github.aftrolle.ffmpegkmp.codec/AudioEncoderConfig.component1|component1(){}[0]
+    final fun component2(): kotlin/Int // io.github.aftrolle.ffmpegkmp.codec/AudioEncoderConfig.component2|component2(){}[0]
+    final fun component3(): kotlin/Long? // io.github.aftrolle.ffmpegkmp.codec/AudioEncoderConfig.component3|component3(){}[0]
+    final fun copy(kotlin/Int = ..., kotlin/Int = ..., kotlin/Long? = ...): io.github.aftrolle.ffmpegkmp.codec/AudioEncoderConfig // io.github.aftrolle.ffmpegkmp.codec/AudioEncoderConfig.copy|copy(kotlin.Int;kotlin.Int;kotlin.Long?){}[0]
+    final fun equals(kotlin/Any?): kotlin/Boolean // io.github.aftrolle.ffmpegkmp.codec/AudioEncoderConfig.equals|equals(kotlin.Any?){}[0]
+    final fun hashCode(): kotlin/Int // io.github.aftrolle.ffmpegkmp.codec/AudioEncoderConfig.hashCode|hashCode(){}[0]
+    final fun toString(): kotlin/String // io.github.aftrolle.ffmpegkmp.codec/AudioEncoderConfig.toString|toString(){}[0]
+}
+
+final class io.github.aftrolle.ffmpegkmp.codec/AudioTrack : io.github.aftrolle.ffmpegkmp.codec/WriterTrack { // io.github.aftrolle.ffmpegkmp.codec/AudioTrack|null[0]
+    final val config // io.github.aftrolle.ffmpegkmp.codec/AudioTrack.config|{}config[0]
+        final fun <get-config>(): io.github.aftrolle.ffmpegkmp.codec/AudioEncoderConfig // io.github.aftrolle.ffmpegkmp.codec/AudioTrack.config.<get-config>|<get-config>(){}[0]
+
+    final suspend fun write(kotlin/FloatArray, kotlin/Int = ...) // io.github.aftrolle.ffmpegkmp.codec/AudioTrack.write|write(kotlin.FloatArray;kotlin.Int){}[0]
+}
+
+final class io.github.aftrolle.ffmpegkmp.codec/Chromaticity { // io.github.aftrolle.ffmpegkmp.codec/Chromaticity|null[0]
+    constructor <init>(kotlin/Double, kotlin/Double) // io.github.aftrolle.ffmpegkmp.codec/Chromaticity.<init>|<init>(kotlin.Double;kotlin.Double){}[0]
+
+    final val x // io.github.aftrolle.ffmpegkmp.codec/Chromaticity.x|{}x[0]
+        final fun <get-x>(): kotlin/Double // io.github.aftrolle.ffmpegkmp.codec/Chromaticity.x.<get-x>|<get-x>(){}[0]
+    final val y // io.github.aftrolle.ffmpegkmp.codec/Chromaticity.y|{}y[0]
+        final fun <get-y>(): kotlin/Double // io.github.aftrolle.ffmpegkmp.codec/Chromaticity.y.<get-y>|<get-y>(){}[0]
+
+    final fun component1(): kotlin/Double // io.github.aftrolle.ffmpegkmp.codec/Chromaticity.component1|component1(){}[0]
+    final fun component2(): kotlin/Double // io.github.aftrolle.ffmpegkmp.codec/Chromaticity.component2|component2(){}[0]
+    final fun copy(kotlin/Double = ..., kotlin/Double = ...): io.github.aftrolle.ffmpegkmp.codec/Chromaticity // io.github.aftrolle.ffmpegkmp.codec/Chromaticity.copy|copy(kotlin.Double;kotlin.Double){}[0]
+    final fun equals(kotlin/Any?): kotlin/Boolean // io.github.aftrolle.ffmpegkmp.codec/Chromaticity.equals|equals(kotlin.Any?){}[0]
+    final fun hashCode(): kotlin/Int // io.github.aftrolle.ffmpegkmp.codec/Chromaticity.hashCode|hashCode(){}[0]
+    final fun toString(): kotlin/String // io.github.aftrolle.ffmpegkmp.codec/Chromaticity.toString|toString(){}[0]
+}
+
+final class io.github.aftrolle.ffmpegkmp.codec/ContentLightMetadata { // io.github.aftrolle.ffmpegkmp.codec/ContentLightMetadata|null[0]
+    constructor <init>(kotlin/Int? = ..., kotlin/Int? = ...) // io.github.aftrolle.ffmpegkmp.codec/ContentLightMetadata.<init>|<init>(kotlin.Int?;kotlin.Int?){}[0]
+
+    final val maxContentLightLevel // io.github.aftrolle.ffmpegkmp.codec/ContentLightMetadata.maxContentLightLevel|{}maxContentLightLevel[0]
+        final fun <get-maxContentLightLevel>(): kotlin/Int? // io.github.aftrolle.ffmpegkmp.codec/ContentLightMetadata.maxContentLightLevel.<get-maxContentLightLevel>|<get-maxContentLightLevel>(){}[0]
+    final val maxFrameAverageLightLevel // io.github.aftrolle.ffmpegkmp.codec/ContentLightMetadata.maxFrameAverageLightLevel|{}maxFrameAverageLightLevel[0]
+        final fun <get-maxFrameAverageLightLevel>(): kotlin/Int? // io.github.aftrolle.ffmpegkmp.codec/ContentLightMetadata.maxFrameAverageLightLevel.<get-maxFrameAverageLightLevel>|<get-maxFrameAverageLightLevel>(){}[0]
+
+    final fun component1(): kotlin/Int? // io.github.aftrolle.ffmpegkmp.codec/ContentLightMetadata.component1|component1(){}[0]
+    final fun component2(): kotlin/Int? // io.github.aftrolle.ffmpegkmp.codec/ContentLightMetadata.component2|component2(){}[0]
+    final fun copy(kotlin/Int? = ..., kotlin/Int? = ...): io.github.aftrolle.ffmpegkmp.codec/ContentLightMetadata // io.github.aftrolle.ffmpegkmp.codec/ContentLightMetadata.copy|copy(kotlin.Int?;kotlin.Int?){}[0]
+    final fun equals(kotlin/Any?): kotlin/Boolean // io.github.aftrolle.ffmpegkmp.codec/ContentLightMetadata.equals|equals(kotlin.Any?){}[0]
+    final fun hashCode(): kotlin/Int // io.github.aftrolle.ffmpegkmp.codec/ContentLightMetadata.hashCode|hashCode(){}[0]
+    final fun toString(): kotlin/String // io.github.aftrolle.ffmpegkmp.codec/ContentLightMetadata.toString|toString(){}[0]
+}
+
+final class io.github.aftrolle.ffmpegkmp.codec/FrameBytes { // io.github.aftrolle.ffmpegkmp.codec/FrameBytes|null[0]
+    final val size // io.github.aftrolle.ffmpegkmp.codec/FrameBytes.size|{}size[0]
+        final fun <get-size>(): kotlin/Int // io.github.aftrolle.ffmpegkmp.codec/FrameBytes.size.<get-size>|<get-size>(){}[0]
+
+    final fun copyInto(kotlin/ByteArray, kotlin/Int = ...) // io.github.aftrolle.ffmpegkmp.codec/FrameBytes.copyInto|copyInto(kotlin.ByteArray;kotlin.Int){}[0]
+    final fun get(kotlin/Int): kotlin/Byte // io.github.aftrolle.ffmpegkmp.codec/FrameBytes.get|get(kotlin.Int){}[0]
+
+    // Targets: [apple]
+    final val pointer // io.github.aftrolle.ffmpegkmp.codec/FrameBytes.pointer|{}pointer[0]
+        final fun <get-pointer>(): kotlinx.cinterop/CPointer<kotlinx.cinterop/ByteVarOf<kotlin/Byte>> // io.github.aftrolle.ffmpegkmp.codec/FrameBytes.pointer.<get-pointer>|<get-pointer>(){}[0]
+}
+
+final class io.github.aftrolle.ffmpegkmp.codec/FrameColor { // io.github.aftrolle.ffmpegkmp.codec/FrameColor|null[0]
+    constructor <init>(io.github.aftrolle.ffmpegkmp.codec/ColorPrimaries, io.github.aftrolle.ffmpegkmp.codec/ColorTransfer, io.github.aftrolle.ffmpegkmp.codec/ColorMatrix, io.github.aftrolle.ffmpegkmp.codec/ColorRange) // io.github.aftrolle.ffmpegkmp.codec/FrameColor.<init>|<init>(io.github.aftrolle.ffmpegkmp.codec.ColorPrimaries;io.github.aftrolle.ffmpegkmp.codec.ColorTransfer;io.github.aftrolle.ffmpegkmp.codec.ColorMatrix;io.github.aftrolle.ffmpegkmp.codec.ColorRange){}[0]
+
+    final val isHdr // io.github.aftrolle.ffmpegkmp.codec/FrameColor.isHdr|{}isHdr[0]
+        final fun <get-isHdr>(): kotlin/Boolean // io.github.aftrolle.ffmpegkmp.codec/FrameColor.isHdr.<get-isHdr>|<get-isHdr>(){}[0]
+    final val matrix // io.github.aftrolle.ffmpegkmp.codec/FrameColor.matrix|{}matrix[0]
+        final fun <get-matrix>(): io.github.aftrolle.ffmpegkmp.codec/ColorMatrix // io.github.aftrolle.ffmpegkmp.codec/FrameColor.matrix.<get-matrix>|<get-matrix>(){}[0]
+    final val primaries // io.github.aftrolle.ffmpegkmp.codec/FrameColor.primaries|{}primaries[0]
+        final fun <get-primaries>(): io.github.aftrolle.ffmpegkmp.codec/ColorPrimaries // io.github.aftrolle.ffmpegkmp.codec/FrameColor.primaries.<get-primaries>|<get-primaries>(){}[0]
+    final val range // io.github.aftrolle.ffmpegkmp.codec/FrameColor.range|{}range[0]
+        final fun <get-range>(): io.github.aftrolle.ffmpegkmp.codec/ColorRange // io.github.aftrolle.ffmpegkmp.codec/FrameColor.range.<get-range>|<get-range>(){}[0]
+    final val transfer // io.github.aftrolle.ffmpegkmp.codec/FrameColor.transfer|{}transfer[0]
+        final fun <get-transfer>(): io.github.aftrolle.ffmpegkmp.codec/ColorTransfer // io.github.aftrolle.ffmpegkmp.codec/FrameColor.transfer.<get-transfer>|<get-transfer>(){}[0]
+
+    final fun component1(): io.github.aftrolle.ffmpegkmp.codec/ColorPrimaries // io.github.aftrolle.ffmpegkmp.codec/FrameColor.component1|component1(){}[0]
+    final fun component2(): io.github.aftrolle.ffmpegkmp.codec/ColorTransfer // io.github.aftrolle.ffmpegkmp.codec/FrameColor.component2|component2(){}[0]
+    final fun component3(): io.github.aftrolle.ffmpegkmp.codec/ColorMatrix // io.github.aftrolle.ffmpegkmp.codec/FrameColor.component3|component3(){}[0]
+    final fun component4(): io.github.aftrolle.ffmpegkmp.codec/ColorRange // io.github.aftrolle.ffmpegkmp.codec/FrameColor.component4|component4(){}[0]
+    final fun copy(io.github.aftrolle.ffmpegkmp.codec/ColorPrimaries = ..., io.github.aftrolle.ffmpegkmp.codec/ColorTransfer = ..., io.github.aftrolle.ffmpegkmp.codec/ColorMatrix = ..., io.github.aftrolle.ffmpegkmp.codec/ColorRange = ...): io.github.aftrolle.ffmpegkmp.codec/FrameColor // io.github.aftrolle.ffmpegkmp.codec/FrameColor.copy|copy(io.github.aftrolle.ffmpegkmp.codec.ColorPrimaries;io.github.aftrolle.ffmpegkmp.codec.ColorTransfer;io.github.aftrolle.ffmpegkmp.codec.ColorMatrix;io.github.aftrolle.ffmpegkmp.codec.ColorRange){}[0]
+    final fun equals(kotlin/Any?): kotlin/Boolean // io.github.aftrolle.ffmpegkmp.codec/FrameColor.equals|equals(kotlin.Any?){}[0]
+    final fun hashCode(): kotlin/Int // io.github.aftrolle.ffmpegkmp.codec/FrameColor.hashCode|hashCode(){}[0]
+    final fun toString(): kotlin/String // io.github.aftrolle.ffmpegkmp.codec/FrameColor.toString|toString(){}[0]
+
+    final object Companion { // io.github.aftrolle.ffmpegkmp.codec/FrameColor.Companion|null[0]
+        final val Bt2020Hlg // io.github.aftrolle.ffmpegkmp.codec/FrameColor.Companion.Bt2020Hlg|{}Bt2020Hlg[0]
+            final fun <get-Bt2020Hlg>(): io.github.aftrolle.ffmpegkmp.codec/FrameColor // io.github.aftrolle.ffmpegkmp.codec/FrameColor.Companion.Bt2020Hlg.<get-Bt2020Hlg>|<get-Bt2020Hlg>(){}[0]
+        final val Bt2020Pq // io.github.aftrolle.ffmpegkmp.codec/FrameColor.Companion.Bt2020Pq|{}Bt2020Pq[0]
+            final fun <get-Bt2020Pq>(): io.github.aftrolle.ffmpegkmp.codec/FrameColor // io.github.aftrolle.ffmpegkmp.codec/FrameColor.Companion.Bt2020Pq.<get-Bt2020Pq>|<get-Bt2020Pq>(){}[0]
+        final val Bt709 // io.github.aftrolle.ffmpegkmp.codec/FrameColor.Companion.Bt709|{}Bt709[0]
+            final fun <get-Bt709>(): io.github.aftrolle.ffmpegkmp.codec/FrameColor // io.github.aftrolle.ffmpegkmp.codec/FrameColor.Companion.Bt709.<get-Bt709>|<get-Bt709>(){}[0]
+        final val DisplayP3 // io.github.aftrolle.ffmpegkmp.codec/FrameColor.Companion.DisplayP3|{}DisplayP3[0]
+            final fun <get-DisplayP3>(): io.github.aftrolle.ffmpegkmp.codec/FrameColor // io.github.aftrolle.ffmpegkmp.codec/FrameColor.Companion.DisplayP3.<get-DisplayP3>|<get-DisplayP3>(){}[0]
+        final val LinearExtendedSrgb // io.github.aftrolle.ffmpegkmp.codec/FrameColor.Companion.LinearExtendedSrgb|{}LinearExtendedSrgb[0]
+            final fun <get-LinearExtendedSrgb>(): io.github.aftrolle.ffmpegkmp.codec/FrameColor // io.github.aftrolle.ffmpegkmp.codec/FrameColor.Companion.LinearExtendedSrgb.<get-LinearExtendedSrgb>|<get-LinearExtendedSrgb>(){}[0]
+        final val Srgb // io.github.aftrolle.ffmpegkmp.codec/FrameColor.Companion.Srgb|{}Srgb[0]
+            final fun <get-Srgb>(): io.github.aftrolle.ffmpegkmp.codec/FrameColor // io.github.aftrolle.ffmpegkmp.codec/FrameColor.Companion.Srgb.<get-Srgb>|<get-Srgb>(){}[0]
+    }
+}
+
+final class io.github.aftrolle.ffmpegkmp.codec/FrameFormat { // io.github.aftrolle.ffmpegkmp.codec/FrameFormat|null[0]
+    constructor <init>(io.github.aftrolle.ffmpegkmp.codec/PixelLayout, io.github.aftrolle.ffmpegkmp.codec/FrameColor) // io.github.aftrolle.ffmpegkmp.codec/FrameFormat.<init>|<init>(io.github.aftrolle.ffmpegkmp.codec.PixelLayout;io.github.aftrolle.ffmpegkmp.codec.FrameColor){}[0]
+
+    final val color // io.github.aftrolle.ffmpegkmp.codec/FrameFormat.color|{}color[0]
+        final fun <get-color>(): io.github.aftrolle.ffmpegkmp.codec/FrameColor // io.github.aftrolle.ffmpegkmp.codec/FrameFormat.color.<get-color>|<get-color>(){}[0]
+    final val layout // io.github.aftrolle.ffmpegkmp.codec/FrameFormat.layout|{}layout[0]
+        final fun <get-layout>(): io.github.aftrolle.ffmpegkmp.codec/PixelLayout // io.github.aftrolle.ffmpegkmp.codec/FrameFormat.layout.<get-layout>|<get-layout>(){}[0]
+
+    final fun component1(): io.github.aftrolle.ffmpegkmp.codec/PixelLayout // io.github.aftrolle.ffmpegkmp.codec/FrameFormat.component1|component1(){}[0]
+    final fun component2(): io.github.aftrolle.ffmpegkmp.codec/FrameColor // io.github.aftrolle.ffmpegkmp.codec/FrameFormat.component2|component2(){}[0]
+    final fun copy(io.github.aftrolle.ffmpegkmp.codec/PixelLayout = ..., io.github.aftrolle.ffmpegkmp.codec/FrameColor = ...): io.github.aftrolle.ffmpegkmp.codec/FrameFormat // io.github.aftrolle.ffmpegkmp.codec/FrameFormat.copy|copy(io.github.aftrolle.ffmpegkmp.codec.PixelLayout;io.github.aftrolle.ffmpegkmp.codec.FrameColor){}[0]
+    final fun equals(kotlin/Any?): kotlin/Boolean // io.github.aftrolle.ffmpegkmp.codec/FrameFormat.equals|equals(kotlin.Any?){}[0]
+    final fun hashCode(): kotlin/Int // io.github.aftrolle.ffmpegkmp.codec/FrameFormat.hashCode|hashCode(){}[0]
+    final fun toString(): kotlin/String // io.github.aftrolle.ffmpegkmp.codec/FrameFormat.toString|toString(){}[0]
+
+    final object Companion { // io.github.aftrolle.ffmpegkmp.codec/FrameFormat.Companion|null[0]
+        final val Nv12 // io.github.aftrolle.ffmpegkmp.codec/FrameFormat.Companion.Nv12|{}Nv12[0]
+            final fun <get-Nv12>(): io.github.aftrolle.ffmpegkmp.codec/FrameFormat // io.github.aftrolle.ffmpegkmp.codec/FrameFormat.Companion.Nv12.<get-Nv12>|<get-Nv12>(){}[0]
+        final val P010Hdr10 // io.github.aftrolle.ffmpegkmp.codec/FrameFormat.Companion.P010Hdr10|{}P010Hdr10[0]
+            final fun <get-P010Hdr10>(): io.github.aftrolle.ffmpegkmp.codec/FrameFormat // io.github.aftrolle.ffmpegkmp.codec/FrameFormat.Companion.P010Hdr10.<get-P010Hdr10>|<get-P010Hdr10>(){}[0]
+        final val P010Hlg // io.github.aftrolle.ffmpegkmp.codec/FrameFormat.Companion.P010Hlg|{}P010Hlg[0]
+            final fun <get-P010Hlg>(): io.github.aftrolle.ffmpegkmp.codec/FrameFormat // io.github.aftrolle.ffmpegkmp.codec/FrameFormat.Companion.P010Hlg.<get-P010Hlg>|<get-P010Hlg>(){}[0]
+        final val Rgba8 // io.github.aftrolle.ffmpegkmp.codec/FrameFormat.Companion.Rgba8|{}Rgba8[0]
+            final fun <get-Rgba8>(): io.github.aftrolle.ffmpegkmp.codec/FrameFormat // io.github.aftrolle.ffmpegkmp.codec/FrameFormat.Companion.Rgba8.<get-Rgba8>|<get-Rgba8>(){}[0]
+        final val RgbaF16 // io.github.aftrolle.ffmpegkmp.codec/FrameFormat.Companion.RgbaF16|{}RgbaF16[0]
+            final fun <get-RgbaF16>(): io.github.aftrolle.ffmpegkmp.codec/FrameFormat // io.github.aftrolle.ffmpegkmp.codec/FrameFormat.Companion.RgbaF16.<get-RgbaF16>|<get-RgbaF16>(){}[0]
+    }
+}
+
+final class io.github.aftrolle.ffmpegkmp.codec/FramePlane { // io.github.aftrolle.ffmpegkmp.codec/FramePlane|null[0]
+    constructor <init>(io.github.aftrolle.ffmpegkmp.codec/FrameBytes, kotlin/Int, kotlin/Int) // io.github.aftrolle.ffmpegkmp.codec/FramePlane.<init>|<init>(io.github.aftrolle.ffmpegkmp.codec.FrameBytes;kotlin.Int;kotlin.Int){}[0]
+
+    final val bytes // io.github.aftrolle.ffmpegkmp.codec/FramePlane.bytes|{}bytes[0]
+        final fun <get-bytes>(): io.github.aftrolle.ffmpegkmp.codec/FrameBytes // io.github.aftrolle.ffmpegkmp.codec/FramePlane.bytes.<get-bytes>|<get-bytes>(){}[0]
+    final val rowBytes // io.github.aftrolle.ffmpegkmp.codec/FramePlane.rowBytes|{}rowBytes[0]
+        final fun <get-rowBytes>(): kotlin/Int // io.github.aftrolle.ffmpegkmp.codec/FramePlane.rowBytes.<get-rowBytes>|<get-rowBytes>(){}[0]
+    final val rows // io.github.aftrolle.ffmpegkmp.codec/FramePlane.rows|{}rows[0]
+        final fun <get-rows>(): kotlin/Int // io.github.aftrolle.ffmpegkmp.codec/FramePlane.rows.<get-rows>|<get-rows>(){}[0]
+}
+
+final class io.github.aftrolle.ffmpegkmp.codec/FrameRate { // io.github.aftrolle.ffmpegkmp.codec/FrameRate|null[0]
+    constructor <init>(kotlin/Int, kotlin/Int = ...) // io.github.aftrolle.ffmpegkmp.codec/FrameRate.<init>|<init>(kotlin.Int;kotlin.Int){}[0]
+
+    final val denominator // io.github.aftrolle.ffmpegkmp.codec/FrameRate.denominator|{}denominator[0]
+        final fun <get-denominator>(): kotlin/Int // io.github.aftrolle.ffmpegkmp.codec/FrameRate.denominator.<get-denominator>|<get-denominator>(){}[0]
+    final val numerator // io.github.aftrolle.ffmpegkmp.codec/FrameRate.numerator|{}numerator[0]
+        final fun <get-numerator>(): kotlin/Int // io.github.aftrolle.ffmpegkmp.codec/FrameRate.numerator.<get-numerator>|<get-numerator>(){}[0]
+
+    final fun component1(): kotlin/Int // io.github.aftrolle.ffmpegkmp.codec/FrameRate.component1|component1(){}[0]
+    final fun component2(): kotlin/Int // io.github.aftrolle.ffmpegkmp.codec/FrameRate.component2|component2(){}[0]
+    final fun copy(kotlin/Int = ..., kotlin/Int = ...): io.github.aftrolle.ffmpegkmp.codec/FrameRate // io.github.aftrolle.ffmpegkmp.codec/FrameRate.copy|copy(kotlin.Int;kotlin.Int){}[0]
+    final fun equals(kotlin/Any?): kotlin/Boolean // io.github.aftrolle.ffmpegkmp.codec/FrameRate.equals|equals(kotlin.Any?){}[0]
+    final fun hashCode(): kotlin/Int // io.github.aftrolle.ffmpegkmp.codec/FrameRate.hashCode|hashCode(){}[0]
+    final fun timeOf(kotlin/Long): kotlin.time/Duration // io.github.aftrolle.ffmpegkmp.codec/FrameRate.timeOf|timeOf(kotlin.Long){}[0]
+    final fun toString(): kotlin/String // io.github.aftrolle.ffmpegkmp.codec/FrameRate.toString|toString(){}[0]
+}
+
+final class io.github.aftrolle.ffmpegkmp.codec/FrameSize { // io.github.aftrolle.ffmpegkmp.codec/FrameSize|null[0]
+    constructor <init>(kotlin/Int, kotlin/Int) // io.github.aftrolle.ffmpegkmp.codec/FrameSize.<init>|<init>(kotlin.Int;kotlin.Int){}[0]
+
+    final val height // io.github.aftrolle.ffmpegkmp.codec/FrameSize.height|{}height[0]
+        final fun <get-height>(): kotlin/Int // io.github.aftrolle.ffmpegkmp.codec/FrameSize.height.<get-height>|<get-height>(){}[0]
+    final val width // io.github.aftrolle.ffmpegkmp.codec/FrameSize.width|{}width[0]
+        final fun <get-width>(): kotlin/Int // io.github.aftrolle.ffmpegkmp.codec/FrameSize.width.<get-width>|<get-width>(){}[0]
+
+    final fun component1(): kotlin/Int // io.github.aftrolle.ffmpegkmp.codec/FrameSize.component1|component1(){}[0]
+    final fun component2(): kotlin/Int // io.github.aftrolle.ffmpegkmp.codec/FrameSize.component2|component2(){}[0]
+    final fun copy(kotlin/Int = ..., kotlin/Int = ...): io.github.aftrolle.ffmpegkmp.codec/FrameSize // io.github.aftrolle.ffmpegkmp.codec/FrameSize.copy|copy(kotlin.Int;kotlin.Int){}[0]
+    final fun equals(kotlin/Any?): kotlin/Boolean // io.github.aftrolle.ffmpegkmp.codec/FrameSize.equals|equals(kotlin.Any?){}[0]
+    final fun hashCode(): kotlin/Int // io.github.aftrolle.ffmpegkmp.codec/FrameSize.hashCode|hashCode(){}[0]
+    final fun toString(): kotlin/String // io.github.aftrolle.ffmpegkmp.codec/FrameSize.toString|toString(){}[0]
+}
+
+final class io.github.aftrolle.ffmpegkmp.codec/HardwareDecoderSupport { // io.github.aftrolle.ffmpegkmp.codec/HardwareDecoderSupport|null[0]
+    constructor <init>(kotlin/Boolean?, kotlin/Int?) // io.github.aftrolle.ffmpegkmp.codec/HardwareDecoderSupport.<init>|<init>(kotlin.Boolean?;kotlin.Int?){}[0]
+
+    final val available // io.github.aftrolle.ffmpegkmp.codec/HardwareDecoderSupport.available|{}available[0]
+        final fun <get-available>(): kotlin/Boolean? // io.github.aftrolle.ffmpegkmp.codec/HardwareDecoderSupport.available.<get-available>|<get-available>(){}[0]
+    final val maxInstances // io.github.aftrolle.ffmpegkmp.codec/HardwareDecoderSupport.maxInstances|{}maxInstances[0]
+        final fun <get-maxInstances>(): kotlin/Int? // io.github.aftrolle.ffmpegkmp.codec/HardwareDecoderSupport.maxInstances.<get-maxInstances>|<get-maxInstances>(){}[0]
+
+    final fun component1(): kotlin/Boolean? // io.github.aftrolle.ffmpegkmp.codec/HardwareDecoderSupport.component1|component1(){}[0]
+    final fun component2(): kotlin/Int? // io.github.aftrolle.ffmpegkmp.codec/HardwareDecoderSupport.component2|component2(){}[0]
+    final fun copy(kotlin/Boolean? = ..., kotlin/Int? = ...): io.github.aftrolle.ffmpegkmp.codec/HardwareDecoderSupport // io.github.aftrolle.ffmpegkmp.codec/HardwareDecoderSupport.copy|copy(kotlin.Boolean?;kotlin.Int?){}[0]
+    final fun equals(kotlin/Any?): kotlin/Boolean // io.github.aftrolle.ffmpegkmp.codec/HardwareDecoderSupport.equals|equals(kotlin.Any?){}[0]
+    final fun hashCode(): kotlin/Int // io.github.aftrolle.ffmpegkmp.codec/HardwareDecoderSupport.hashCode|hashCode(){}[0]
+    final fun toString(): kotlin/String // io.github.aftrolle.ffmpegkmp.codec/HardwareDecoderSupport.toString|toString(){}[0]
+}
+
+final class io.github.aftrolle.ffmpegkmp.codec/HdrMetadata { // io.github.aftrolle.ffmpegkmp.codec/HdrMetadata|null[0]
+    constructor <init>(io.github.aftrolle.ffmpegkmp.codec/MasteringDisplay? = ..., io.github.aftrolle.ffmpegkmp.codec/ContentLightMetadata? = ..., kotlin/Boolean = ..., kotlin/Boolean = ...) // io.github.aftrolle.ffmpegkmp.codec/HdrMetadata.<init>|<init>(io.github.aftrolle.ffmpegkmp.codec.MasteringDisplay?;io.github.aftrolle.ffmpegkmp.codec.ContentLightMetadata?;kotlin.Boolean;kotlin.Boolean){}[0]
+
+    final val contentLight // io.github.aftrolle.ffmpegkmp.codec/HdrMetadata.contentLight|{}contentLight[0]
+        final fun <get-contentLight>(): io.github.aftrolle.ffmpegkmp.codec/ContentLightMetadata? // io.github.aftrolle.ffmpegkmp.codec/HdrMetadata.contentLight.<get-contentLight>|<get-contentLight>(){}[0]
+    final val dolbyVision // io.github.aftrolle.ffmpegkmp.codec/HdrMetadata.dolbyVision|{}dolbyVision[0]
+        final fun <get-dolbyVision>(): kotlin/Boolean // io.github.aftrolle.ffmpegkmp.codec/HdrMetadata.dolbyVision.<get-dolbyVision>|<get-dolbyVision>(){}[0]
+    final val hdr10Plus // io.github.aftrolle.ffmpegkmp.codec/HdrMetadata.hdr10Plus|{}hdr10Plus[0]
+        final fun <get-hdr10Plus>(): kotlin/Boolean // io.github.aftrolle.ffmpegkmp.codec/HdrMetadata.hdr10Plus.<get-hdr10Plus>|<get-hdr10Plus>(){}[0]
+    final val masteringDisplay // io.github.aftrolle.ffmpegkmp.codec/HdrMetadata.masteringDisplay|{}masteringDisplay[0]
+        final fun <get-masteringDisplay>(): io.github.aftrolle.ffmpegkmp.codec/MasteringDisplay? // io.github.aftrolle.ffmpegkmp.codec/HdrMetadata.masteringDisplay.<get-masteringDisplay>|<get-masteringDisplay>(){}[0]
+
+    final fun component1(): io.github.aftrolle.ffmpegkmp.codec/MasteringDisplay? // io.github.aftrolle.ffmpegkmp.codec/HdrMetadata.component1|component1(){}[0]
+    final fun component2(): io.github.aftrolle.ffmpegkmp.codec/ContentLightMetadata? // io.github.aftrolle.ffmpegkmp.codec/HdrMetadata.component2|component2(){}[0]
+    final fun component3(): kotlin/Boolean // io.github.aftrolle.ffmpegkmp.codec/HdrMetadata.component3|component3(){}[0]
+    final fun component4(): kotlin/Boolean // io.github.aftrolle.ffmpegkmp.codec/HdrMetadata.component4|component4(){}[0]
+    final fun copy(io.github.aftrolle.ffmpegkmp.codec/MasteringDisplay? = ..., io.github.aftrolle.ffmpegkmp.codec/ContentLightMetadata? = ..., kotlin/Boolean = ..., kotlin/Boolean = ...): io.github.aftrolle.ffmpegkmp.codec/HdrMetadata // io.github.aftrolle.ffmpegkmp.codec/HdrMetadata.copy|copy(io.github.aftrolle.ffmpegkmp.codec.MasteringDisplay?;io.github.aftrolle.ffmpegkmp.codec.ContentLightMetadata?;kotlin.Boolean;kotlin.Boolean){}[0]
+    final fun equals(kotlin/Any?): kotlin/Boolean // io.github.aftrolle.ffmpegkmp.codec/HdrMetadata.equals|equals(kotlin.Any?){}[0]
+    final fun hashCode(): kotlin/Int // io.github.aftrolle.ffmpegkmp.codec/HdrMetadata.hashCode|hashCode(){}[0]
+    final fun toString(): kotlin/String // io.github.aftrolle.ffmpegkmp.codec/HdrMetadata.toString|toString(){}[0]
+
+    final object Companion { // io.github.aftrolle.ffmpegkmp.codec/HdrMetadata.Companion|null[0]
+        final fun combine(io.github.aftrolle.ffmpegkmp.codec/HdrMetadata?, kotlin/Array<out io.github.aftrolle.ffmpegkmp.codec/HdrMetadata?>...): io.github.aftrolle.ffmpegkmp.codec/HdrMetadata? // io.github.aftrolle.ffmpegkmp.codec/HdrMetadata.Companion.combine|combine(io.github.aftrolle.ffmpegkmp.codec.HdrMetadata?;kotlin.Array<out|io.github.aftrolle.ffmpegkmp.codec.HdrMetadata?>...){}[0]
+    }
+}
+
+final class io.github.aftrolle.ffmpegkmp.codec/MasteringDisplay { // io.github.aftrolle.ffmpegkmp.codec/MasteringDisplay|null[0]
+    constructor <init>(io.github.aftrolle.ffmpegkmp.codec/Chromaticity, io.github.aftrolle.ffmpegkmp.codec/Chromaticity, io.github.aftrolle.ffmpegkmp.codec/Chromaticity, io.github.aftrolle.ffmpegkmp.codec/Chromaticity, kotlin/Double, kotlin/Double) // io.github.aftrolle.ffmpegkmp.codec/MasteringDisplay.<init>|<init>(io.github.aftrolle.ffmpegkmp.codec.Chromaticity;io.github.aftrolle.ffmpegkmp.codec.Chromaticity;io.github.aftrolle.ffmpegkmp.codec.Chromaticity;io.github.aftrolle.ffmpegkmp.codec.Chromaticity;kotlin.Double;kotlin.Double){}[0]
+
+    final val blue // io.github.aftrolle.ffmpegkmp.codec/MasteringDisplay.blue|{}blue[0]
+        final fun <get-blue>(): io.github.aftrolle.ffmpegkmp.codec/Chromaticity // io.github.aftrolle.ffmpegkmp.codec/MasteringDisplay.blue.<get-blue>|<get-blue>(){}[0]
+    final val green // io.github.aftrolle.ffmpegkmp.codec/MasteringDisplay.green|{}green[0]
+        final fun <get-green>(): io.github.aftrolle.ffmpegkmp.codec/Chromaticity // io.github.aftrolle.ffmpegkmp.codec/MasteringDisplay.green.<get-green>|<get-green>(){}[0]
+    final val maxLuminance // io.github.aftrolle.ffmpegkmp.codec/MasteringDisplay.maxLuminance|{}maxLuminance[0]
+        final fun <get-maxLuminance>(): kotlin/Double // io.github.aftrolle.ffmpegkmp.codec/MasteringDisplay.maxLuminance.<get-maxLuminance>|<get-maxLuminance>(){}[0]
+    final val minLuminance // io.github.aftrolle.ffmpegkmp.codec/MasteringDisplay.minLuminance|{}minLuminance[0]
+        final fun <get-minLuminance>(): kotlin/Double // io.github.aftrolle.ffmpegkmp.codec/MasteringDisplay.minLuminance.<get-minLuminance>|<get-minLuminance>(){}[0]
+    final val red // io.github.aftrolle.ffmpegkmp.codec/MasteringDisplay.red|{}red[0]
+        final fun <get-red>(): io.github.aftrolle.ffmpegkmp.codec/Chromaticity // io.github.aftrolle.ffmpegkmp.codec/MasteringDisplay.red.<get-red>|<get-red>(){}[0]
+    final val whitePoint // io.github.aftrolle.ffmpegkmp.codec/MasteringDisplay.whitePoint|{}whitePoint[0]
+        final fun <get-whitePoint>(): io.github.aftrolle.ffmpegkmp.codec/Chromaticity // io.github.aftrolle.ffmpegkmp.codec/MasteringDisplay.whitePoint.<get-whitePoint>|<get-whitePoint>(){}[0]
+
+    final fun component1(): io.github.aftrolle.ffmpegkmp.codec/Chromaticity // io.github.aftrolle.ffmpegkmp.codec/MasteringDisplay.component1|component1(){}[0]
+    final fun component2(): io.github.aftrolle.ffmpegkmp.codec/Chromaticity // io.github.aftrolle.ffmpegkmp.codec/MasteringDisplay.component2|component2(){}[0]
+    final fun component3(): io.github.aftrolle.ffmpegkmp.codec/Chromaticity // io.github.aftrolle.ffmpegkmp.codec/MasteringDisplay.component3|component3(){}[0]
+    final fun component4(): io.github.aftrolle.ffmpegkmp.codec/Chromaticity // io.github.aftrolle.ffmpegkmp.codec/MasteringDisplay.component4|component4(){}[0]
+    final fun component5(): kotlin/Double // io.github.aftrolle.ffmpegkmp.codec/MasteringDisplay.component5|component5(){}[0]
+    final fun component6(): kotlin/Double // io.github.aftrolle.ffmpegkmp.codec/MasteringDisplay.component6|component6(){}[0]
+    final fun copy(io.github.aftrolle.ffmpegkmp.codec/Chromaticity = ..., io.github.aftrolle.ffmpegkmp.codec/Chromaticity = ..., io.github.aftrolle.ffmpegkmp.codec/Chromaticity = ..., io.github.aftrolle.ffmpegkmp.codec/Chromaticity = ..., kotlin/Double = ..., kotlin/Double = ...): io.github.aftrolle.ffmpegkmp.codec/MasteringDisplay // io.github.aftrolle.ffmpegkmp.codec/MasteringDisplay.copy|copy(io.github.aftrolle.ffmpegkmp.codec.Chromaticity;io.github.aftrolle.ffmpegkmp.codec.Chromaticity;io.github.aftrolle.ffmpegkmp.codec.Chromaticity;io.github.aftrolle.ffmpegkmp.codec.Chromaticity;kotlin.Double;kotlin.Double){}[0]
+    final fun equals(kotlin/Any?): kotlin/Boolean // io.github.aftrolle.ffmpegkmp.codec/MasteringDisplay.equals|equals(kotlin.Any?){}[0]
+    final fun hashCode(): kotlin/Int // io.github.aftrolle.ffmpegkmp.codec/MasteringDisplay.hashCode|hashCode(){}[0]
+    final fun toString(): kotlin/String // io.github.aftrolle.ffmpegkmp.codec/MasteringDisplay.toString|toString(){}[0]
+
+    final object Companion { // io.github.aftrolle.ffmpegkmp.codec/MasteringDisplay.Companion|null[0]
+        final val DisplayP3At1000Nits // io.github.aftrolle.ffmpegkmp.codec/MasteringDisplay.Companion.DisplayP3At1000Nits|{}DisplayP3At1000Nits[0]
+            final fun <get-DisplayP3At1000Nits>(): io.github.aftrolle.ffmpegkmp.codec/MasteringDisplay // io.github.aftrolle.ffmpegkmp.codec/MasteringDisplay.Companion.DisplayP3At1000Nits.<get-DisplayP3At1000Nits>|<get-DisplayP3At1000Nits>(){}[0]
+    }
+}
+
+final class io.github.aftrolle.ffmpegkmp.codec/MediaWriter : kotlin/AutoCloseable { // io.github.aftrolle.ffmpegkmp.codec/MediaWriter|null[0]
+    final val progress // io.github.aftrolle.ffmpegkmp.codec/MediaWriter.progress|{}progress[0]
+        final fun <get-progress>(): kotlinx.coroutines.flow/StateFlow<io.github.aftrolle.ffmpegkmp.codec/WriterProgress> // io.github.aftrolle.ffmpegkmp.codec/MediaWriter.progress.<get-progress>|<get-progress>(){}[0]
+
+    final fun close() // io.github.aftrolle.ffmpegkmp.codec/MediaWriter.close|close(){}[0]
+    final suspend fun addAudioTrack(io.github.aftrolle.ffmpegkmp.codec/AudioEncoderConfig = ...): io.github.aftrolle.ffmpegkmp.codec/AudioTrack // io.github.aftrolle.ffmpegkmp.codec/MediaWriter.addAudioTrack|addAudioTrack(io.github.aftrolle.ffmpegkmp.codec.AudioEncoderConfig){}[0]
+    final suspend fun addVideoTrack(io.github.aftrolle.ffmpegkmp.codec/VideoEncoderConfig): io.github.aftrolle.ffmpegkmp.codec/VideoTrack // io.github.aftrolle.ffmpegkmp.codec/MediaWriter.addVideoTrack|addVideoTrack(io.github.aftrolle.ffmpegkmp.codec.VideoEncoderConfig){}[0]
+    final suspend fun finish(): io.github.aftrolle.ffmpegkmp.codec/WriterResult // io.github.aftrolle.ffmpegkmp.codec/MediaWriter.finish|finish(){}[0]
+
+    final object Companion { // io.github.aftrolle.ffmpegkmp.codec/MediaWriter.Companion|null[0]
+        final suspend fun canEncode(io.github.aftrolle.ffmpegkmp.codec/VideoEncoderConfig): kotlin/Boolean // io.github.aftrolle.ffmpegkmp.codec/MediaWriter.Companion.canEncode|canEncode(io.github.aftrolle.ffmpegkmp.codec.VideoEncoderConfig){}[0]
+        final suspend fun open(io.github.aftrolle.ffmpegkmp.codec/MediaOutput, kotlin/Boolean = ..., kotlin.time/Duration = ...): io.github.aftrolle.ffmpegkmp.codec/MediaWriter // io.github.aftrolle.ffmpegkmp.codec/MediaWriter.Companion.open|open(io.github.aftrolle.ffmpegkmp.codec.MediaOutput;kotlin.Boolean;kotlin.time.Duration){}[0]
+    }
+}
+
+final class io.github.aftrolle.ffmpegkmp.codec/MediaWritingException : io.github.aftrolle.ffmpegkmp.core/FFmpegKmpException { // io.github.aftrolle.ffmpegkmp.codec/MediaWritingException|null[0]
+    constructor <init>(kotlin/String, kotlin/Throwable? = ...) // io.github.aftrolle.ffmpegkmp.codec/MediaWritingException.<init>|<init>(kotlin.String;kotlin.Throwable?){}[0]
+}
+
+final class io.github.aftrolle.ffmpegkmp.codec/NamedCodec : io.github.aftrolle.ffmpegkmp.codec/CodecSelection { // io.github.aftrolle.ffmpegkmp.codec/NamedCodec|null[0]
+    constructor <init>(kotlin/String, kotlin.collections/Map<kotlin/String, kotlin/String> = ...) // io.github.aftrolle.ffmpegkmp.codec/NamedCodec.<init>|<init>(kotlin.String;kotlin.collections.Map<kotlin.String,kotlin.String>){}[0]
+
+    final val name // io.github.aftrolle.ffmpegkmp.codec/NamedCodec.name|{}name[0]
+        final fun <get-name>(): kotlin/String // io.github.aftrolle.ffmpegkmp.codec/NamedCodec.name.<get-name>|<get-name>(){}[0]
+    final val options // io.github.aftrolle.ffmpegkmp.codec/NamedCodec.options|{}options[0]
+        final fun <get-options>(): kotlin.collections/Map<kotlin/String, kotlin/String> // io.github.aftrolle.ffmpegkmp.codec/NamedCodec.options.<get-options>|<get-options>(){}[0]
+
+    final fun equals(kotlin/Any?): kotlin/Boolean // io.github.aftrolle.ffmpegkmp.codec/NamedCodec.equals|equals(kotlin.Any?){}[0]
+    final fun hashCode(): kotlin/Int // io.github.aftrolle.ffmpegkmp.codec/NamedCodec.hashCode|hashCode(){}[0]
+    final fun toString(): kotlin/String // io.github.aftrolle.ffmpegkmp.codec/NamedCodec.toString|toString(){}[0]
+}
+
+final class io.github.aftrolle.ffmpegkmp.codec/VideoDecoder : kotlin/AutoCloseable { // io.github.aftrolle.ffmpegkmp.codec/VideoDecoder|null[0]
+    final val decoderFallback // io.github.aftrolle.ffmpegkmp.codec/VideoDecoder.decoderFallback|{}decoderFallback[0]
+        final fun <get-decoderFallback>(): io.github.aftrolle.ffmpegkmp.codec/DecoderFallbackReason? // io.github.aftrolle.ffmpegkmp.codec/VideoDecoder.decoderFallback.<get-decoderFallback>|<get-decoderFallback>(){}[0]
+    final val decoderKind // io.github.aftrolle.ffmpegkmp.codec/VideoDecoder.decoderKind|{}decoderKind[0]
+        final fun <get-decoderKind>(): io.github.aftrolle.ffmpegkmp.codec/DecoderKind // io.github.aftrolle.ffmpegkmp.codec/VideoDecoder.decoderKind.<get-decoderKind>|<get-decoderKind>(){}[0]
+    final val duration // io.github.aftrolle.ffmpegkmp.codec/VideoDecoder.duration|{}duration[0]
+        final fun <get-duration>(): kotlin.time/Duration? // io.github.aftrolle.ffmpegkmp.codec/VideoDecoder.duration.<get-duration>|<get-duration>(){}[0]
+    final val info // io.github.aftrolle.ffmpegkmp.codec/VideoDecoder.info|{}info[0]
+        final fun <get-info>(): io.github.aftrolle.ffmpegkmp.codec/VideoInfo // io.github.aftrolle.ffmpegkmp.codec/VideoDecoder.info.<get-info>|<get-info>(){}[0]
+
+    final fun close() // io.github.aftrolle.ffmpegkmp.codec/VideoDecoder.close|close(){}[0]
+    final fun frames(kotlin.time/Duration = ..., kotlin.time/Duration = ..., io.github.aftrolle.ffmpegkmp.codec/FrameStep = ...): kotlinx.coroutines.flow/Flow<io.github.aftrolle.ffmpegkmp.codec/VideoFrame> // io.github.aftrolle.ffmpegkmp.codec/VideoDecoder.frames|frames(kotlin.time.Duration;kotlin.time.Duration;io.github.aftrolle.ffmpegkmp.codec.FrameStep){}[0]
+    final suspend fun frameAt(kotlin.time/Duration): io.github.aftrolle.ffmpegkmp.codec/VideoFrame // io.github.aftrolle.ffmpegkmp.codec/VideoDecoder.frameAt|frameAt(kotlin.time.Duration){}[0]
+    final suspend fun resize(io.github.aftrolle.ffmpegkmp.codec/FrameSize?) // io.github.aftrolle.ffmpegkmp.codec/VideoDecoder.resize|resize(io.github.aftrolle.ffmpegkmp.codec.FrameSize?){}[0]
+    final suspend fun seekTo(kotlin.time/Duration) // io.github.aftrolle.ffmpegkmp.codec/VideoDecoder.seekTo|seekTo(kotlin.time.Duration){}[0]
+
+    final object Companion { // io.github.aftrolle.ffmpegkmp.codec/VideoDecoder.Companion|null[0]
+        final suspend fun extractFrame(io.github.aftrolle.ffmpegkmp.core/MediaSource, kotlin.time/Duration = ..., io.github.aftrolle.ffmpegkmp.codec/FrameSize? = ..., io.github.aftrolle.ffmpegkmp.codec/FrameScale = ..., io.github.aftrolle.ffmpegkmp.codec/CodecSelection = ..., kotlin.time/Duration = ...): io.github.aftrolle.ffmpegkmp.codec/VideoFrame // io.github.aftrolle.ffmpegkmp.codec/VideoDecoder.Companion.extractFrame|extractFrame(io.github.aftrolle.ffmpegkmp.core.MediaSource;kotlin.time.Duration;io.github.aftrolle.ffmpegkmp.codec.FrameSize?;io.github.aftrolle.ffmpegkmp.codec.FrameScale;io.github.aftrolle.ffmpegkmp.codec.CodecSelection;kotlin.time.Duration){}[0]
+        final suspend fun open(io.github.aftrolle.ffmpegkmp.core/MediaSource, io.github.aftrolle.ffmpegkmp.codec/VideoOutput = ..., io.github.aftrolle.ffmpegkmp.codec/CodecSelection = ..., kotlin.time/Duration = ..., io.github.aftrolle.ffmpegkmp.codec/DecoderThreads = ..., kotlin/Int = ...): io.github.aftrolle.ffmpegkmp.codec/VideoDecoder // io.github.aftrolle.ffmpegkmp.codec/VideoDecoder.Companion.open|open(io.github.aftrolle.ffmpegkmp.core.MediaSource;io.github.aftrolle.ffmpegkmp.codec.VideoOutput;io.github.aftrolle.ffmpegkmp.codec.CodecSelection;kotlin.time.Duration;io.github.aftrolle.ffmpegkmp.codec.DecoderThreads;kotlin.Int){}[0]
+    }
+}
+
+final class io.github.aftrolle.ffmpegkmp.codec/VideoDecodingException : io.github.aftrolle.ffmpegkmp.core/FFmpegKmpException { // io.github.aftrolle.ffmpegkmp.codec/VideoDecodingException|null[0]
+    constructor <init>(kotlin/String, kotlin/Throwable? = ...) // io.github.aftrolle.ffmpegkmp.codec/VideoDecodingException.<init>|<init>(kotlin.String;kotlin.Throwable?){}[0]
+}
+
+final class io.github.aftrolle.ffmpegkmp.codec/VideoEncoderConfig { // io.github.aftrolle.ffmpegkmp.codec/VideoEncoderConfig|null[0]
+    constructor <init>(kotlin/Int, kotlin/Int, io.github.aftrolle.ffmpegkmp.codec/FrameRate?, io.github.aftrolle.ffmpegkmp.codec/VideoCodec = ..., io.github.aftrolle.ffmpegkmp.codec/DynamicRange = ..., kotlin/Int? = ..., io.github.aftrolle.ffmpegkmp.codec/HdrMetadata? = ..., kotlin/Long? = ..., kotlin.time/Duration = ..., io.github.aftrolle.ffmpegkmp.codec/CodecSelection = ...) // io.github.aftrolle.ffmpegkmp.codec/VideoEncoderConfig.<init>|<init>(kotlin.Int;kotlin.Int;io.github.aftrolle.ffmpegkmp.codec.FrameRate?;io.github.aftrolle.ffmpegkmp.codec.VideoCodec;io.github.aftrolle.ffmpegkmp.codec.DynamicRange;kotlin.Int?;io.github.aftrolle.ffmpegkmp.codec.HdrMetadata?;kotlin.Long?;kotlin.time.Duration;io.github.aftrolle.ffmpegkmp.codec.CodecSelection){}[0]
+
+    final val bitDepth // io.github.aftrolle.ffmpegkmp.codec/VideoEncoderConfig.bitDepth|{}bitDepth[0]
+        final fun <get-bitDepth>(): kotlin/Int? // io.github.aftrolle.ffmpegkmp.codec/VideoEncoderConfig.bitDepth.<get-bitDepth>|<get-bitDepth>(){}[0]
+    final val bitRate // io.github.aftrolle.ffmpegkmp.codec/VideoEncoderConfig.bitRate|{}bitRate[0]
+        final fun <get-bitRate>(): kotlin/Long? // io.github.aftrolle.ffmpegkmp.codec/VideoEncoderConfig.bitRate.<get-bitRate>|<get-bitRate>(){}[0]
+    final val canvasFormat // io.github.aftrolle.ffmpegkmp.codec/VideoEncoderConfig.canvasFormat|{}canvasFormat[0]
+        final fun <get-canvasFormat>(): io.github.aftrolle.ffmpegkmp.codec/FrameFormat // io.github.aftrolle.ffmpegkmp.codec/VideoEncoderConfig.canvasFormat.<get-canvasFormat>|<get-canvasFormat>(){}[0]
+    final val codec // io.github.aftrolle.ffmpegkmp.codec/VideoEncoderConfig.codec|{}codec[0]
+        final fun <get-codec>(): io.github.aftrolle.ffmpegkmp.codec/VideoCodec // io.github.aftrolle.ffmpegkmp.codec/VideoEncoderConfig.codec.<get-codec>|<get-codec>(){}[0]
+    final val dynamicRange // io.github.aftrolle.ffmpegkmp.codec/VideoEncoderConfig.dynamicRange|{}dynamicRange[0]
+        final fun <get-dynamicRange>(): io.github.aftrolle.ffmpegkmp.codec/DynamicRange // io.github.aftrolle.ffmpegkmp.codec/VideoEncoderConfig.dynamicRange.<get-dynamicRange>|<get-dynamicRange>(){}[0]
+    final val encoder // io.github.aftrolle.ffmpegkmp.codec/VideoEncoderConfig.encoder|{}encoder[0]
+        final fun <get-encoder>(): io.github.aftrolle.ffmpegkmp.codec/CodecSelection // io.github.aftrolle.ffmpegkmp.codec/VideoEncoderConfig.encoder.<get-encoder>|<get-encoder>(){}[0]
+    final val frameRate // io.github.aftrolle.ffmpegkmp.codec/VideoEncoderConfig.frameRate|{}frameRate[0]
+        final fun <get-frameRate>(): io.github.aftrolle.ffmpegkmp.codec/FrameRate? // io.github.aftrolle.ffmpegkmp.codec/VideoEncoderConfig.frameRate.<get-frameRate>|<get-frameRate>(){}[0]
+    final val hdrMetadata // io.github.aftrolle.ffmpegkmp.codec/VideoEncoderConfig.hdrMetadata|{}hdrMetadata[0]
+        final fun <get-hdrMetadata>(): io.github.aftrolle.ffmpegkmp.codec/HdrMetadata? // io.github.aftrolle.ffmpegkmp.codec/VideoEncoderConfig.hdrMetadata.<get-hdrMetadata>|<get-hdrMetadata>(){}[0]
+    final val height // io.github.aftrolle.ffmpegkmp.codec/VideoEncoderConfig.height|{}height[0]
+        final fun <get-height>(): kotlin/Int // io.github.aftrolle.ffmpegkmp.codec/VideoEncoderConfig.height.<get-height>|<get-height>(){}[0]
+    final val keyframeInterval // io.github.aftrolle.ffmpegkmp.codec/VideoEncoderConfig.keyframeInterval|{}keyframeInterval[0]
+        final fun <get-keyframeInterval>(): kotlin.time/Duration // io.github.aftrolle.ffmpegkmp.codec/VideoEncoderConfig.keyframeInterval.<get-keyframeInterval>|<get-keyframeInterval>(){}[0]
+    final val width // io.github.aftrolle.ffmpegkmp.codec/VideoEncoderConfig.width|{}width[0]
+        final fun <get-width>(): kotlin/Int // io.github.aftrolle.ffmpegkmp.codec/VideoEncoderConfig.width.<get-width>|<get-width>(){}[0]
+
+    final fun component1(): kotlin/Int // io.github.aftrolle.ffmpegkmp.codec/VideoEncoderConfig.component1|component1(){}[0]
+    final fun component10(): io.github.aftrolle.ffmpegkmp.codec/CodecSelection // io.github.aftrolle.ffmpegkmp.codec/VideoEncoderConfig.component10|component10(){}[0]
+    final fun component2(): kotlin/Int // io.github.aftrolle.ffmpegkmp.codec/VideoEncoderConfig.component2|component2(){}[0]
+    final fun component3(): io.github.aftrolle.ffmpegkmp.codec/FrameRate? // io.github.aftrolle.ffmpegkmp.codec/VideoEncoderConfig.component3|component3(){}[0]
+    final fun component4(): io.github.aftrolle.ffmpegkmp.codec/VideoCodec // io.github.aftrolle.ffmpegkmp.codec/VideoEncoderConfig.component4|component4(){}[0]
+    final fun component5(): io.github.aftrolle.ffmpegkmp.codec/DynamicRange // io.github.aftrolle.ffmpegkmp.codec/VideoEncoderConfig.component5|component5(){}[0]
+    final fun component6(): kotlin/Int? // io.github.aftrolle.ffmpegkmp.codec/VideoEncoderConfig.component6|component6(){}[0]
+    final fun component7(): io.github.aftrolle.ffmpegkmp.codec/HdrMetadata? // io.github.aftrolle.ffmpegkmp.codec/VideoEncoderConfig.component7|component7(){}[0]
+    final fun component8(): kotlin/Long? // io.github.aftrolle.ffmpegkmp.codec/VideoEncoderConfig.component8|component8(){}[0]
+    final fun component9(): kotlin.time/Duration // io.github.aftrolle.ffmpegkmp.codec/VideoEncoderConfig.component9|component9(){}[0]
+    final fun copy(kotlin/Int = ..., kotlin/Int = ..., io.github.aftrolle.ffmpegkmp.codec/FrameRate? = ..., io.github.aftrolle.ffmpegkmp.codec/VideoCodec = ..., io.github.aftrolle.ffmpegkmp.codec/DynamicRange = ..., kotlin/Int? = ..., io.github.aftrolle.ffmpegkmp.codec/HdrMetadata? = ..., kotlin/Long? = ..., kotlin.time/Duration = ..., io.github.aftrolle.ffmpegkmp.codec/CodecSelection = ...): io.github.aftrolle.ffmpegkmp.codec/VideoEncoderConfig // io.github.aftrolle.ffmpegkmp.codec/VideoEncoderConfig.copy|copy(kotlin.Int;kotlin.Int;io.github.aftrolle.ffmpegkmp.codec.FrameRate?;io.github.aftrolle.ffmpegkmp.codec.VideoCodec;io.github.aftrolle.ffmpegkmp.codec.DynamicRange;kotlin.Int?;io.github.aftrolle.ffmpegkmp.codec.HdrMetadata?;kotlin.Long?;kotlin.time.Duration;io.github.aftrolle.ffmpegkmp.codec.CodecSelection){}[0]
+    final fun equals(kotlin/Any?): kotlin/Boolean // io.github.aftrolle.ffmpegkmp.codec/VideoEncoderConfig.equals|equals(kotlin.Any?){}[0]
+    final fun hashCode(): kotlin/Int // io.github.aftrolle.ffmpegkmp.codec/VideoEncoderConfig.hashCode|hashCode(){}[0]
+    final fun toString(): kotlin/String // io.github.aftrolle.ffmpegkmp.codec/VideoEncoderConfig.toString|toString(){}[0]
+}
+
+final class io.github.aftrolle.ffmpegkmp.codec/VideoFrame : kotlin/AutoCloseable { // io.github.aftrolle.ffmpegkmp.codec/VideoFrame|null[0]
+    final val duration // io.github.aftrolle.ffmpegkmp.codec/VideoFrame.duration|{}duration[0]
+        final fun <get-duration>(): kotlin.time/Duration // io.github.aftrolle.ffmpegkmp.codec/VideoFrame.duration.<get-duration>|<get-duration>(){}[0]
+    final val format // io.github.aftrolle.ffmpegkmp.codec/VideoFrame.format|{}format[0]
+        final fun <get-format>(): io.github.aftrolle.ffmpegkmp.codec/FrameFormat? // io.github.aftrolle.ffmpegkmp.codec/VideoFrame.format.<get-format>|<get-format>(){}[0]
+    final val height // io.github.aftrolle.ffmpegkmp.codec/VideoFrame.height|{}height[0]
+        final fun <get-height>(): kotlin/Int // io.github.aftrolle.ffmpegkmp.codec/VideoFrame.height.<get-height>|<get-height>(){}[0]
+    final val pts // io.github.aftrolle.ffmpegkmp.codec/VideoFrame.pts|{}pts[0]
+        final fun <get-pts>(): kotlin.time/Duration // io.github.aftrolle.ffmpegkmp.codec/VideoFrame.pts.<get-pts>|<get-pts>(){}[0]
+    final val rotationDegrees // io.github.aftrolle.ffmpegkmp.codec/VideoFrame.rotationDegrees|{}rotationDegrees[0]
+        final fun <get-rotationDegrees>(): kotlin/Double // io.github.aftrolle.ffmpegkmp.codec/VideoFrame.rotationDegrees.<get-rotationDegrees>|<get-rotationDegrees>(){}[0]
+    final val sampleAspectRatio // io.github.aftrolle.ffmpegkmp.codec/VideoFrame.sampleAspectRatio|{}sampleAspectRatio[0]
+        final fun <get-sampleAspectRatio>(): kotlin/Double // io.github.aftrolle.ffmpegkmp.codec/VideoFrame.sampleAspectRatio.<get-sampleAspectRatio>|<get-sampleAspectRatio>(){}[0]
+    final val width // io.github.aftrolle.ffmpegkmp.codec/VideoFrame.width|{}width[0]
+        final fun <get-width>(): kotlin/Int // io.github.aftrolle.ffmpegkmp.codec/VideoFrame.width.<get-width>|<get-width>(){}[0]
+
+    final fun <#A1: kotlin/Any?> usePlanes(kotlin/Function1<kotlin.collections/List<io.github.aftrolle.ffmpegkmp.codec/FramePlane>, #A1>): #A1? // io.github.aftrolle.ffmpegkmp.codec/VideoFrame.usePlanes|usePlanes(kotlin.Function1<kotlin.collections.List<io.github.aftrolle.ffmpegkmp.codec.FramePlane>,0:0>){0§<kotlin.Any?>}[0]
+    final fun close() // io.github.aftrolle.ffmpegkmp.codec/VideoFrame.close|close(){}[0]
+    final fun convert(io.github.aftrolle.ffmpegkmp.codec/FrameFormat): io.github.aftrolle.ffmpegkmp.codec/VideoFrame // io.github.aftrolle.ffmpegkmp.codec/VideoFrame.convert|convert(io.github.aftrolle.ffmpegkmp.codec.FrameFormat){}[0]
+    final fun convertInto(io.github.aftrolle.ffmpegkmp.codec/VideoFrame) // io.github.aftrolle.ffmpegkmp.codec/VideoFrame.convertInto|convertInto(io.github.aftrolle.ffmpegkmp.codec.VideoFrame){}[0]
+    final fun retain(): io.github.aftrolle.ffmpegkmp.codec/VideoFrame // io.github.aftrolle.ffmpegkmp.codec/VideoFrame.retain|retain(){}[0]
+    final fun toString(): kotlin/String // io.github.aftrolle.ffmpegkmp.codec/VideoFrame.toString|toString(){}[0]
+
+    final object Companion // io.github.aftrolle.ffmpegkmp.codec/VideoFrame.Companion|null[0]
+}
+
+final class io.github.aftrolle.ffmpegkmp.codec/VideoInfo { // io.github.aftrolle.ffmpegkmp.codec/VideoInfo|null[0]
+    constructor <init>(kotlin/Int, kotlin/Int, kotlin/Double = ..., kotlin/Double = ..., kotlin/String? = ..., kotlin/Int? = ..., io.github.aftrolle.ffmpegkmp.codec/FrameColor = ..., io.github.aftrolle.ffmpegkmp.codec/HdrMetadata? = ...) // io.github.aftrolle.ffmpegkmp.codec/VideoInfo.<init>|<init>(kotlin.Int;kotlin.Int;kotlin.Double;kotlin.Double;kotlin.String?;kotlin.Int?;io.github.aftrolle.ffmpegkmp.codec.FrameColor;io.github.aftrolle.ffmpegkmp.codec.HdrMetadata?){}[0]
+
+    final val bitDepth // io.github.aftrolle.ffmpegkmp.codec/VideoInfo.bitDepth|{}bitDepth[0]
+        final fun <get-bitDepth>(): kotlin/Int? // io.github.aftrolle.ffmpegkmp.codec/VideoInfo.bitDepth.<get-bitDepth>|<get-bitDepth>(){}[0]
+    final val color // io.github.aftrolle.ffmpegkmp.codec/VideoInfo.color|{}color[0]
+        final fun <get-color>(): io.github.aftrolle.ffmpegkmp.codec/FrameColor // io.github.aftrolle.ffmpegkmp.codec/VideoInfo.color.<get-color>|<get-color>(){}[0]
+    final val hdrMetadata // io.github.aftrolle.ffmpegkmp.codec/VideoInfo.hdrMetadata|{}hdrMetadata[0]
+        final fun <get-hdrMetadata>(): io.github.aftrolle.ffmpegkmp.codec/HdrMetadata? // io.github.aftrolle.ffmpegkmp.codec/VideoInfo.hdrMetadata.<get-hdrMetadata>|<get-hdrMetadata>(){}[0]
+    final val height // io.github.aftrolle.ffmpegkmp.codec/VideoInfo.height|{}height[0]
+        final fun <get-height>(): kotlin/Int // io.github.aftrolle.ffmpegkmp.codec/VideoInfo.height.<get-height>|<get-height>(){}[0]
+    final val pixelFormat // io.github.aftrolle.ffmpegkmp.codec/VideoInfo.pixelFormat|{}pixelFormat[0]
+        final fun <get-pixelFormat>(): kotlin/String? // io.github.aftrolle.ffmpegkmp.codec/VideoInfo.pixelFormat.<get-pixelFormat>|<get-pixelFormat>(){}[0]
+    final val rotationDegrees // io.github.aftrolle.ffmpegkmp.codec/VideoInfo.rotationDegrees|{}rotationDegrees[0]
+        final fun <get-rotationDegrees>(): kotlin/Double // io.github.aftrolle.ffmpegkmp.codec/VideoInfo.rotationDegrees.<get-rotationDegrees>|<get-rotationDegrees>(){}[0]
+    final val sampleAspectRatio // io.github.aftrolle.ffmpegkmp.codec/VideoInfo.sampleAspectRatio|{}sampleAspectRatio[0]
+        final fun <get-sampleAspectRatio>(): kotlin/Double // io.github.aftrolle.ffmpegkmp.codec/VideoInfo.sampleAspectRatio.<get-sampleAspectRatio>|<get-sampleAspectRatio>(){}[0]
+    final val width // io.github.aftrolle.ffmpegkmp.codec/VideoInfo.width|{}width[0]
+        final fun <get-width>(): kotlin/Int // io.github.aftrolle.ffmpegkmp.codec/VideoInfo.width.<get-width>|<get-width>(){}[0]
+
+    final fun component1(): kotlin/Int // io.github.aftrolle.ffmpegkmp.codec/VideoInfo.component1|component1(){}[0]
+    final fun component2(): kotlin/Int // io.github.aftrolle.ffmpegkmp.codec/VideoInfo.component2|component2(){}[0]
+    final fun component3(): kotlin/Double // io.github.aftrolle.ffmpegkmp.codec/VideoInfo.component3|component3(){}[0]
+    final fun component4(): kotlin/Double // io.github.aftrolle.ffmpegkmp.codec/VideoInfo.component4|component4(){}[0]
+    final fun component5(): kotlin/String? // io.github.aftrolle.ffmpegkmp.codec/VideoInfo.component5|component5(){}[0]
+    final fun component6(): kotlin/Int? // io.github.aftrolle.ffmpegkmp.codec/VideoInfo.component6|component6(){}[0]
+    final fun component7(): io.github.aftrolle.ffmpegkmp.codec/FrameColor // io.github.aftrolle.ffmpegkmp.codec/VideoInfo.component7|component7(){}[0]
+    final fun component8(): io.github.aftrolle.ffmpegkmp.codec/HdrMetadata? // io.github.aftrolle.ffmpegkmp.codec/VideoInfo.component8|component8(){}[0]
+    final fun copy(kotlin/Int = ..., kotlin/Int = ..., kotlin/Double = ..., kotlin/Double = ..., kotlin/String? = ..., kotlin/Int? = ..., io.github.aftrolle.ffmpegkmp.codec/FrameColor = ..., io.github.aftrolle.ffmpegkmp.codec/HdrMetadata? = ...): io.github.aftrolle.ffmpegkmp.codec/VideoInfo // io.github.aftrolle.ffmpegkmp.codec/VideoInfo.copy|copy(kotlin.Int;kotlin.Int;kotlin.Double;kotlin.Double;kotlin.String?;kotlin.Int?;io.github.aftrolle.ffmpegkmp.codec.FrameColor;io.github.aftrolle.ffmpegkmp.codec.HdrMetadata?){}[0]
+    final fun equals(kotlin/Any?): kotlin/Boolean // io.github.aftrolle.ffmpegkmp.codec/VideoInfo.equals|equals(kotlin.Any?){}[0]
+    final fun hashCode(): kotlin/Int // io.github.aftrolle.ffmpegkmp.codec/VideoInfo.hashCode|hashCode(){}[0]
+    final fun toString(): kotlin/String // io.github.aftrolle.ffmpegkmp.codec/VideoInfo.toString|toString(){}[0]
+}
+
+final class io.github.aftrolle.ffmpegkmp.codec/VideoTrack : io.github.aftrolle.ffmpegkmp.codec/WriterTrack { // io.github.aftrolle.ffmpegkmp.codec/VideoTrack|null[0]
+    final val config // io.github.aftrolle.ffmpegkmp.codec/VideoTrack.config|{}config[0]
+        final fun <get-config>(): io.github.aftrolle.ffmpegkmp.codec/VideoEncoderConfig // io.github.aftrolle.ffmpegkmp.codec/VideoTrack.config.<get-config>|<get-config>(){}[0]
+    final val encoderName // io.github.aftrolle.ffmpegkmp.codec/VideoTrack.encoderName|{}encoderName[0]
+        final fun <get-encoderName>(): kotlin/String // io.github.aftrolle.ffmpegkmp.codec/VideoTrack.encoderName.<get-encoderName>|<get-encoderName>(){}[0]
+    final val inputFormat // io.github.aftrolle.ffmpegkmp.codec/VideoTrack.inputFormat|{}inputFormat[0]
+        final fun <get-inputFormat>(): io.github.aftrolle.ffmpegkmp.codec/FrameFormat // io.github.aftrolle.ffmpegkmp.codec/VideoTrack.inputFormat.<get-inputFormat>|<get-inputFormat>(){}[0]
+    final val isHardware // io.github.aftrolle.ffmpegkmp.codec/VideoTrack.isHardware|{}isHardware[0]
+        final fun <get-isHardware>(): kotlin/Boolean // io.github.aftrolle.ffmpegkmp.codec/VideoTrack.isHardware.<get-isHardware>|<get-isHardware>(){}[0]
+    final val zeroCopy // io.github.aftrolle.ffmpegkmp.codec/VideoTrack.zeroCopy|{}zeroCopy[0]
+        final fun <get-zeroCopy>(): kotlin/Boolean // io.github.aftrolle.ffmpegkmp.codec/VideoTrack.zeroCopy.<get-zeroCopy>|<get-zeroCopy>(){}[0]
+
+    final suspend fun write(io.github.aftrolle.ffmpegkmp.codec/VideoFrame, kotlin.time/Duration = ...) // io.github.aftrolle.ffmpegkmp.codec/VideoTrack.write|write(io.github.aftrolle.ffmpegkmp.codec.VideoFrame;kotlin.time.Duration){}[0]
+}
+
+final class io.github.aftrolle.ffmpegkmp.codec/WriterProgress { // io.github.aftrolle.ffmpegkmp.codec/WriterProgress|null[0]
+    constructor <init>(kotlin/Long = ..., kotlin/Long = ..., kotlin.time/Duration = ...) // io.github.aftrolle.ffmpegkmp.codec/WriterProgress.<init>|<init>(kotlin.Long;kotlin.Long;kotlin.time.Duration){}[0]
+
+    final val audioFrames // io.github.aftrolle.ffmpegkmp.codec/WriterProgress.audioFrames|{}audioFrames[0]
+        final fun <get-audioFrames>(): kotlin/Long // io.github.aftrolle.ffmpegkmp.codec/WriterProgress.audioFrames.<get-audioFrames>|<get-audioFrames>(){}[0]
+    final val position // io.github.aftrolle.ffmpegkmp.codec/WriterProgress.position|{}position[0]
+        final fun <get-position>(): kotlin.time/Duration // io.github.aftrolle.ffmpegkmp.codec/WriterProgress.position.<get-position>|<get-position>(){}[0]
+    final val videoFrames // io.github.aftrolle.ffmpegkmp.codec/WriterProgress.videoFrames|{}videoFrames[0]
+        final fun <get-videoFrames>(): kotlin/Long // io.github.aftrolle.ffmpegkmp.codec/WriterProgress.videoFrames.<get-videoFrames>|<get-videoFrames>(){}[0]
+
+    final fun component1(): kotlin/Long // io.github.aftrolle.ffmpegkmp.codec/WriterProgress.component1|component1(){}[0]
+    final fun component2(): kotlin/Long // io.github.aftrolle.ffmpegkmp.codec/WriterProgress.component2|component2(){}[0]
+    final fun component3(): kotlin.time/Duration // io.github.aftrolle.ffmpegkmp.codec/WriterProgress.component3|component3(){}[0]
+    final fun copy(kotlin/Long = ..., kotlin/Long = ..., kotlin.time/Duration = ...): io.github.aftrolle.ffmpegkmp.codec/WriterProgress // io.github.aftrolle.ffmpegkmp.codec/WriterProgress.copy|copy(kotlin.Long;kotlin.Long;kotlin.time.Duration){}[0]
+    final fun equals(kotlin/Any?): kotlin/Boolean // io.github.aftrolle.ffmpegkmp.codec/WriterProgress.equals|equals(kotlin.Any?){}[0]
+    final fun hashCode(): kotlin/Int // io.github.aftrolle.ffmpegkmp.codec/WriterProgress.hashCode|hashCode(){}[0]
+    final fun toString(): kotlin/String // io.github.aftrolle.ffmpegkmp.codec/WriterProgress.toString|toString(){}[0]
+}
+
+final class io.github.aftrolle.ffmpegkmp.codec/WriterResult { // io.github.aftrolle.ffmpegkmp.codec/WriterResult|null[0]
+    constructor <init>(kotlin/Long?, kotlin.time/Duration, kotlin/Long, kotlin/Long) // io.github.aftrolle.ffmpegkmp.codec/WriterResult.<init>|<init>(kotlin.Long?;kotlin.time.Duration;kotlin.Long;kotlin.Long){}[0]
+
+    final val audioFrames // io.github.aftrolle.ffmpegkmp.codec/WriterResult.audioFrames|{}audioFrames[0]
+        final fun <get-audioFrames>(): kotlin/Long // io.github.aftrolle.ffmpegkmp.codec/WriterResult.audioFrames.<get-audioFrames>|<get-audioFrames>(){}[0]
+    final val bytes // io.github.aftrolle.ffmpegkmp.codec/WriterResult.bytes|{}bytes[0]
+        final fun <get-bytes>(): kotlin/Long? // io.github.aftrolle.ffmpegkmp.codec/WriterResult.bytes.<get-bytes>|<get-bytes>(){}[0]
+    final val duration // io.github.aftrolle.ffmpegkmp.codec/WriterResult.duration|{}duration[0]
+        final fun <get-duration>(): kotlin.time/Duration // io.github.aftrolle.ffmpegkmp.codec/WriterResult.duration.<get-duration>|<get-duration>(){}[0]
+    final val videoFrames // io.github.aftrolle.ffmpegkmp.codec/WriterResult.videoFrames|{}videoFrames[0]
+        final fun <get-videoFrames>(): kotlin/Long // io.github.aftrolle.ffmpegkmp.codec/WriterResult.videoFrames.<get-videoFrames>|<get-videoFrames>(){}[0]
+
+    final fun component1(): kotlin/Long? // io.github.aftrolle.ffmpegkmp.codec/WriterResult.component1|component1(){}[0]
+    final fun component2(): kotlin.time/Duration // io.github.aftrolle.ffmpegkmp.codec/WriterResult.component2|component2(){}[0]
+    final fun component3(): kotlin/Long // io.github.aftrolle.ffmpegkmp.codec/WriterResult.component3|component3(){}[0]
+    final fun component4(): kotlin/Long // io.github.aftrolle.ffmpegkmp.codec/WriterResult.component4|component4(){}[0]
+    final fun copy(kotlin/Long? = ..., kotlin.time/Duration = ..., kotlin/Long = ..., kotlin/Long = ...): io.github.aftrolle.ffmpegkmp.codec/WriterResult // io.github.aftrolle.ffmpegkmp.codec/WriterResult.copy|copy(kotlin.Long?;kotlin.time.Duration;kotlin.Long;kotlin.Long){}[0]
+    final fun equals(kotlin/Any?): kotlin/Boolean // io.github.aftrolle.ffmpegkmp.codec/WriterResult.equals|equals(kotlin.Any?){}[0]
+    final fun hashCode(): kotlin/Int // io.github.aftrolle.ffmpegkmp.codec/WriterResult.hashCode|hashCode(){}[0]
+    final fun toString(): kotlin/String // io.github.aftrolle.ffmpegkmp.codec/WriterResult.toString|toString(){}[0]
+}
+
+sealed class io.github.aftrolle.ffmpegkmp.codec/WriterTrack // io.github.aftrolle.ffmpegkmp.codec/WriterTrack|null[0]
+
+final object io.github.aftrolle.ffmpegkmp.codec/DecoderBudget { // io.github.aftrolle.ffmpegkmp.codec/DecoderBudget|null[0]
+    final val hardwareDecodersInUse // io.github.aftrolle.ffmpegkmp.codec/DecoderBudget.hardwareDecodersInUse|{}hardwareDecodersInUse[0]
+        final fun <get-hardwareDecodersInUse>(): kotlin/Int // io.github.aftrolle.ffmpegkmp.codec/DecoderBudget.hardwareDecodersInUse.<get-hardwareDecodersInUse>|<get-hardwareDecodersInUse>(){}[0]
+
+    final var hardwareDecoders // io.github.aftrolle.ffmpegkmp.codec/DecoderBudget.hardwareDecoders|{}hardwareDecoders[0]
+        final fun <get-hardwareDecoders>(): kotlin/Int // io.github.aftrolle.ffmpegkmp.codec/DecoderBudget.hardwareDecoders.<get-hardwareDecoders>|<get-hardwareDecoders>(){}[0]
+        final fun <set-hardwareDecoders>(kotlin/Int) // io.github.aftrolle.ffmpegkmp.codec/DecoderBudget.hardwareDecoders.<set-hardwareDecoders>|<set-hardwareDecoders>(kotlin.Int){}[0]
+
+    final fun hardwareSupport(kotlin/String, kotlin/Int, kotlin/Int): io.github.aftrolle.ffmpegkmp.codec/HardwareDecoderSupport // io.github.aftrolle.ffmpegkmp.codec/DecoderBudget.hardwareSupport|hardwareSupport(kotlin.String;kotlin.Int;kotlin.Int){}[0]
+}
+
+// Targets: [apple]
+final val io.github.aftrolle.ffmpegkmp.codec/cvPixelBuffer // io.github.aftrolle.ffmpegkmp.codec/cvPixelBuffer|@io.github.aftrolle.ffmpegkmp.codec.VideoFrame{}cvPixelBuffer[0]
+    final fun (io.github.aftrolle.ffmpegkmp.codec/VideoFrame).<get-cvPixelBuffer>(): kotlinx.cinterop/CPointer<cnames.structs/__CVBuffer>? // io.github.aftrolle.ffmpegkmp.codec/cvPixelBuffer.<get-cvPixelBuffer>|<get-cvPixelBuffer>@io.github.aftrolle.ffmpegkmp.codec.VideoFrame(){}[0]

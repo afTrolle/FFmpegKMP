@@ -1,16 +1,22 @@
 // SPDX-License-Identifier: Apache-2.0
 package io.github.aftrolle.ffmpegkmp.ffplay
 
+import io.github.aftrolle.ffmpegkmp.core.ExperimentalFFmpegKmpApi
 import io.github.aftrolle.ffmpegkmp.core.MediaSource
 import io.github.aftrolle.ffmpegkmp.player.AudioMixControls
 import kotlin.concurrent.atomics.AtomicBoolean
+import kotlin.concurrent.atomics.AtomicInt
 import kotlin.concurrent.atomics.ExperimentalAtomicApi
+import kotlin.concurrent.atomics.incrementAndFetch
 import kotlin.time.Duration
+import kotlin.time.Duration.Companion.milliseconds
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.async
@@ -20,6 +26,8 @@ import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
@@ -57,6 +65,39 @@ public class FFplayPlayer internal constructor(
 
     /** Guarded by [operationLock]. */
     private var preparing = false
+
+    /** The clock the player follows; guarded by [operationLock]. */
+    private var following: FFplayClock? = null
+
+    /**
+     * Bumped by every [follow] and by close: a sample is applied, and a seek for it made, only under
+     * the generation it was taken in, so one from a refresh still running when the clock changed never
+     * reaches the next clock's follower.
+     */
+    private val followGeneration = AtomicInt(0)
+    private var followJob: Job? = null
+    private var seekJob: Job? = null
+
+    /** The followed clock's latest position, as the refresh hands it over: applied as it comes, older ones skipped. */
+    private val clockSamples = MutableStateFlow<TaggedSample?>(null)
+
+    /** The seek the follower wants next, a newer one replacing it; null when none. */
+    private val followSeeks = MutableStateFlow<FollowSeek?>(null)
+
+    /** Set when the follower asks for a seek and cleared once it is done, so it is asked for once. */
+    private val followSeeking = AtomicBoolean(false)
+
+    /**
+     * Whether the last seek for the followed clock left the run that decodes ahead on. The snapshot
+     * says so too, but a refresh's publish taken before the run started can land after it.
+     */
+    private val followRunOn = AtomicBoolean(false)
+
+    /** Counts the followed clock's samples the follower took, applied or not: tests wait for it. */
+    internal val followSamplesTaken = AtomicInt(0)
+
+    /** How long the audio plays on without a followed clock's sample; tests that pace their samples slowly lengthen it. */
+    internal var followWatchdog: Duration = FOLLOW_AUDIO_WATCHDOG
     private val pending = mutableListOf<PendingCommand>()
     private val mutableSnapshot = MutableStateFlow(FFplaySnapshot())
     private val mutableSecureOutputRequired = MutableStateFlow(false)
@@ -79,7 +120,7 @@ public class FFplayPlayer internal constructor(
         ::emit,
     )
 
-    public val snapshot = mutableSnapshot.asStateFlow()
+    public val snapshot: StateFlow<FFplaySnapshot> = mutableSnapshot.asStateFlow()
     public val events: Flow<FFplayEvent> = mutableEvents.asSharedFlow()
 
     /**
@@ -136,17 +177,68 @@ public class FFplayPlayer internal constructor(
 
     // Audio follows the engine's state transitions (see acceptEngineUpdate), not these calls.
     // While a source is being prepared, these are queued and applied in order once it is.
-    public fun play(): Unit = command(needsSource = true) { engine.play() }
+    /** Plays from the position shown. Rejected while the player [follow]s a clock, which plays it. */
+    public fun play(): Unit = transport("play") { engine.play() }
 
-    public fun pause(): Unit = command(needsSource = true) { engine.pause() }
+    /** Pauses on the frame shown. Rejected while the player [follow]s a clock, which pauses it. */
+    public fun pause(): Unit = transport("pause") { engine.pause() }
 
     /**
      * Seeks to [position]. The frame shown is the one on screen there, as `VideoDecoder.frameAt`
-     * picks it, also while paused, and the audio resumes at the same sample.
+     * picks it, also while paused, and the audio resumes at the same sample. Rejected while the
+     * player [follow]s a clock, which moves it.
      */
     public fun seekTo(position: Duration) {
         require(!position.isNegative()) { "Seek position must not be negative" }
-        command(needsSource = true) { engine.seekTo(position) }
+        transport("seekTo") { engine.seekTo(position) }
+    }
+
+    /**
+     * Follows [clock], a position the app gives each display frame, instead of the player's own
+     * clock. While it follows, each display frame shows the frame `VideoDecoder.frameAt` returns for
+     * the clock's position, and the clock is the player's transport, so [play], [pause] and [seekTo]
+     * throw [IllegalStateException]:
+     * - the player decodes ahead of the frame shown, as far as its frame queue holds, whether the
+     *   clock advances or not: a position that advances takes the frames decoded ahead, one that
+     *   stands still holds its frame, and a decoder that falls behind skips forward to a keyframe;
+     * - a position that goes back, or moves forward well past what the frame time did, seeks
+     *   (a loop that wraps), and so does the first position after [follow];
+     * - the audio plays while the position advances at about real time and is silent otherwise, as
+     *   [FFplayClock] says.
+     *
+     * While it follows the player's state is [FFplayState.PLAYING] once it decodes for the clock,
+     * [FFplayState.ENDED] once the clock passed its last frame, and [FFplayState.PAUSED] on its last
+     * frame while the clock is past the end. Null stops following and pauses on the frame shown.
+     * Throws [UnsupportedOperationException] where the player paces its frames itself (the browser).
+     */
+    @ExperimentalFFmpegKmpApi
+    public fun follow(clock: FFplayClock?): Unit = operationLock.withLock {
+        checkOpen()
+        val generation = followGeneration.incrementAndFetch()
+        clockSamples.value = null
+        followSeeks.value = null
+        followRunOn.store(false)
+        engine.follow(clock) { sample -> clockSamples.value = TaggedSample(generation, sample) }
+        val previous = following
+        following = clock
+        if (clock == null) {
+            followJob?.cancel()
+            seekJob?.cancel()
+            followJob = null
+            seekJob = null
+            followSeeking.store(false)
+            if (previous != null) {
+                if (!preparing && mutableSnapshot.value.state == FFplayState.PLAYING) {
+                    runCatching { engine.pause() }
+                        .onFailure { emit(FFplayEvent.Warning("Unable to pause after following: ${it.message}")) }
+                }
+                audioPlayback.stopFollowing(mutableSnapshot.value)
+            }
+            return@withLock
+        }
+        audioPlayback.startFollowing()
+        if (followJob == null) followJob = audioScope.launch { followSamples() }
+        if (seekJob == null) seekJob = audioScope.launch { followSeeks.collect { seek -> if (seek != null) seekFor(seek) } }
     }
 
     public fun stop(): Unit = command(needsSource = false) {
@@ -197,7 +289,11 @@ public class FFplayPlayer internal constructor(
         // Audio reads the same mounted input; release it before the engine closes that input.
         audioGeneration++
         audioPlayback.close()
+        followGeneration.incrementAndFetch()
         audioScope.cancel()
+        following = null
+        followJob = null
+        seekJob = null
         engine.close()
         pending.clear()
         mutableSecureOutputRequired.value = false
@@ -278,9 +374,114 @@ public class FFplayPlayer internal constructor(
         if (!attached) audio.close()
     }
 
-    /** Filtering and forwarding share the lock with seekTo, so a pre-seek report can't land after it. */
+    /**
+     * Filtering and forwarding share the lock with seekTo, so a pre-seek report can't land after it.
+     * A followed clock is the master clock instead: the audio follows it, not the other way round.
+     */
     private fun reportAudibleClock(position: Duration) = operationLock.withLock {
-        if (!closed.load()) audioPlayback.clockFor(position)?.let(engine::setMasterClock)
+        if (closed.load()) return@withLock
+        val clock = audioPlayback.clockFor(position)
+        if (following == null) clock?.let(engine::setMasterClock)
+    }
+
+    /**
+     * Applies the followed clock's samples as they come, older ones skipped, on one coroutine: seeks
+     * for a jump, starts the run that decodes ahead when there is none, and moves the audio. No
+     * sample for [FOLLOW_AUDIO_WATCHDOG] silences the audio.
+     */
+    private suspend fun followSamples() {
+        var seen: TaggedSample? = null
+        while (true) {
+            val tagged = withTimeoutOrNull(followWatchdog) {
+                clockSamples.first { it != null && it !== seen }
+            }
+            if (tagged == null) {
+                audioPlayback.followLost()
+                continue
+            }
+            seen = tagged
+            try {
+                followSample(tagged)
+            } finally {
+                followSamplesTaken.incrementAndFetch()
+            }
+        }
+    }
+
+    /** Applies one of the followed clock's samples, unless it was taken for an earlier clock. */
+    private fun followSample(tagged: TaggedSample) {
+        if (tagged.generation != followGeneration.load()) return
+        if (tagged.generation != followedGeneration) {
+            // A new clock: nothing known of its motion, and its first position is sought.
+            followedGeneration = tagged.generation
+            previous = null
+            motion.reset()
+        }
+        val sample = tagged.sample
+        val snapshot = mutableSnapshot.value
+        if (snapshot.state !in FOLLOWABLE && snapshot.state != FFplayState.SEEKING) {
+            // Nothing prepared to show: the clock's first position once there is is sought.
+            previous = null
+            motion.reset()
+            audioPlayback.follow(sample, audible = false, jumped = false)
+            return
+        }
+        val jumped = previous?.let { followJumped(it, sample) } ?: true
+        previous = sample
+        motion.add(sample, jumped)
+        val duration = snapshot.duration
+        val inClip = !sample.position.isNegative() && (duration == null || sample.position < duration)
+        // The run that decodes ahead is not on: a seek from the end paused it, or a prepare left the player ready.
+        val runStopped = !followRunOn.load() && (snapshot.state == FFplayState.READY || snapshot.state == FFplayState.PAUSED)
+        if (jumped || (runStopped && !followSeeking.load() && sample.position < (duration ?: Duration.INFINITE))) {
+            requestSeek(tagged.generation, sample.position, duration)
+        }
+        audioPlayback.follow(sample, audible = if (inClip) motion.atRealTime else false, jumped = jumped)
+    }
+
+    /** What the follower knows of the clock it follows, touched only by the coroutine that follows. */
+    private val motion = FollowedMotion()
+    private var followedGeneration = -1
+    private var previous: FFplayClockSample? = null
+
+    /** Asks for a seek to [position], within the clip; a newer one replaces it, and one to where a seek already goes is not asked for again. */
+    private fun requestSeek(generation: Int, position: Duration, duration: Duration?) {
+        val target = position.coerceIn(Duration.ZERO, duration ?: Duration.INFINITE)
+        val pending = followSeeks.value
+        if (pending != null && pending.generation == generation && (pending.target - target).absoluteValue < FOLLOW_SAME_SEEK) return
+        followSeeking.store(true)
+        followSeeks.value = FollowSeek(generation, target)
+    }
+
+    /**
+     * Seeks for the followed clock, off the follower so samples keep coming meanwhile, then starts the
+     * run that decodes ahead unless the position is at the end, where the last frame is held.
+     */
+    private fun seekFor(seek: FollowSeek) = operationLock.withLock {
+        try {
+            if (closed.load() || preparing || seek.generation != followGeneration.load()) return@withLock
+            if (mutableSnapshot.value.state !in FOLLOWABLE) return@withLock
+            followRunOn.store(false)
+            engine.seekTo(seek.target)
+            val now = mutableSnapshot.value
+            val atEnd = now.duration?.let { seek.target >= it } ?: false
+            if (!atEnd && (now.state == FFplayState.READY || now.state == FFplayState.PAUSED)) engine.play()
+            followRunOn.store(!atEnd)
+        } catch (cancellation: CancellationException) {
+            throw cancellation
+        } catch (failure: Throwable) {
+            emit(FFplayEvent.Warning("Unable to follow the clock: ${failure.message ?: failure::class.simpleName}"))
+        } finally {
+            // A newer seek asked for meanwhile is still to come.
+            if (followSeeks.compareAndSet(seek, null)) followSeeking.store(false)
+        }
+    }
+
+    /** A playback command, rejected while a followed clock is the transport. */
+    private fun transport(operation: String, action: () -> Unit): Unit = operationLock.withLock {
+        checkOpen()
+        check(following == null) { "$operation is the followed clock's while the player follows one; call follow(null) first" }
+        if (preparing) pending += PendingCommand(needsSource = true, action) else action()
     }
 
     private fun warnAudio(message: String) = emit(FFplayEvent.Warning(message))
@@ -301,3 +502,15 @@ public class FFplayPlayer internal constructor(
 }
 
 private class PendingCommand(val needsSource: Boolean, val action: () -> Unit)
+
+/** A followed clock's sample, with the [FFplayPlayer.follow] generation it was taken in. */
+private class TaggedSample(val generation: Int, val sample: FFplayClockSample)
+
+/** A seek the follower asked for. */
+private class FollowSeek(val generation: Int, val target: Duration)
+
+/** The states a followed clock moves the player in; in the others it has nothing prepared to show. */
+private val FOLLOWABLE = setOf(FFplayState.READY, FFplayState.PLAYING, FFplayState.PAUSED, FFplayState.ENDED)
+
+/** How close two seek targets are to be the same seek: well within a frame. */
+private val FOLLOW_SAME_SEEK = 1.milliseconds

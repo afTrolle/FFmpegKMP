@@ -63,7 +63,7 @@ class VideoDecoderGpuBuffersDeviceTest {
             val failure = assertFailsWith<IllegalStateException> { decoder.frameAt(3.seconds / 30) }
             val took = asked.elapsedNow()
             println("VideoDecoderGpuBuffersDeviceTest: the fourth frame failed after $took: ${failure.message}")
-            assertTrue(failure.message!!.contains("holds all 3"), failure.message)
+            assertTrue(failure.message!!.contains("holds every frame"), failure.message)
             assertTrue(took < 2.seconds, "failed after $took, well before the 10 s timeout")
             held.first().close()
             decoder.frameAt(3.seconds / 30).use { frame -> assertNotNull(frame.hardwareBuffer) }

@@ -148,7 +148,16 @@ public data class VideoEncoderConfig(
     /** Bits per second; null for one that suits the size and rate. */
     val bitRate: Long? = null,
     val keyframeInterval: Duration = 2.seconds,
-    val encoder: CodecPreference = CodecPreference.AUTO,
+    /**
+     * The encoder: a [CodecPreference] for the library's own choice, hardware first under
+     * [CodecPreference.AUTO], or a [NamedCodec] for exactly one FFmpeg encoder, which must encode
+     * [codec]. A named encoder's options are applied after the fields above, so an option
+     * overrides one: `b` the [bitRate], `g` the [keyframeInterval], `profile` the profile. The
+     * size, the pixel format, the colour the [dynamicRange] calls for and the container's global
+     * header are the writer's, which its frames and muxer rely on: an option that changes one
+     * fails the track. The browser encodes with WebCodecs and takes no [NamedCodec].
+     */
+    val encoder: CodecSelection = CodecPreference.AUTO,
 ) {
     init {
         require(width > 0 && height > 0 && width % 2 == 0 && height % 2 == 0) {
@@ -207,7 +216,9 @@ internal fun VideoEncoderConfig.toNative(): NativeVideoEncoderConfig = NativeVid
         DynamicRange.HDR10 -> NativeDynamicRange.HDR10
         DynamicRange.HLG -> NativeDynamicRange.HLG
     },
-    preference = encoder.toNative(),
+    preference = (encoder as? CodecPreference ?: CodecPreference.AUTO).toNative(),
+    encoderName = (encoder as? NamedCodec)?.name,
+    encoderOptions = (encoder as? NamedCodec)?.options.orEmpty(),
     bitRate = bitRate ?: 0L,
     keyframeIntervalMicros = keyframeInterval.inWholeMicroseconds,
     bitDepth = bitDepth ?: 0,

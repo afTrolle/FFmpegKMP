@@ -73,14 +73,46 @@ public data class NativePlayerVideoInfo(
 @InternalFFmpegKmpApi
 public data class NativePlayerConfiguration(
     val decoderPreference: NativePlayerDecoderPreference = NativePlayerDecoderPreference.AUTO,
-    /** The software decoder's threads, 0 for FFmpeg's automatic count capped at 8. */
+    /**
+     * The software decoder's threads, 0 for FFmpeg's automatic count.
+     */
     val decoderThreads: Int = 0,
     /**
      * How long an idle player keeps its video decoder, in microseconds: 0 releases it as soon as
      * nothing is decoding, a negative value keeps it. `ffplaykmp_configuration.codec_release_delay_us`.
      */
     val codecReleaseDelayUs: Long = 2_000_000,
-)
+    /**
+     * How many decoded frames the player keeps ready ahead of the one on screen, at least 1.
+     * `ffplaykmp_configuration.frame_queue_size`; the browser's player ignores it.
+     */
+    val frameQueueSize: Int = 3,
+    /**
+     * FFmpeg's `thread_type` for [decoderThreads] (1 frame, 2 slice, 3 both), 0 for FFmpeg's
+     * default, both. The browser's player ignores it.
+     */
+    val decoderThreadType: Int = 0,
+    /**
+     * How far behind the clock a decoded frame is, in microseconds, for the player to skip forward
+     * to a keyframe; negative never skips. `ffplaykmp_configuration.catch_up_lag_us`; the browser's
+     * player keeps 500 ms.
+     */
+    val catchUpLagUs: Long = 500_000,
+    /**
+     * An FFmpeg decoder the player opens by name, alone and with [decoderOptions], instead of
+     * choosing one by [decoderPreference]; `null` to choose. The browser's player has none and
+     * fails as unsupported.
+     */
+    val decoderName: String? = null,
+    /** The named decoder's AVOptions. */
+    val decoderOptions: Map<String, String> = emptyMap(),
+) {
+    init {
+        require(frameQueueSize >= 1) { "The frame queue holds at least one frame: $frameQueueSize" }
+        require(decoderThreadType in 0..3) { "Unknown decoder thread type: $decoderThreadType" }
+        require(decoderName == null || decoderName.isNotEmpty()) { "A decoder name is not empty" }
+    }
+}
 
 @InternalFFmpegKmpApi
 public data class NativePlayerSource(
@@ -96,6 +128,18 @@ public data class NativePlayerOutputCapabilities(
     val zeroCopy: Boolean = false,
     val protectedContent: Boolean = false,
     val toneMapHdrToSdr: Boolean = false,
+    /**
+     * Android: MediaCodec frames are rendered into the output's own Surface as they are queued and
+     * reach the [NativeVideoFrameSink] like software frames, which waits at prepare for their buffer
+     * (`FFPLAYKMP_OUTPUT_PREPARE_HARDWARE_FRAMES`).
+     */
+    val prepareHardwareFrames: Boolean = false,
+    /**
+     * With [prepareHardwareFrames], the most hardware frames the player has queued at once, each
+     * holding one of the output's buffers, up to 127; 0 for the frame queue's size
+     * (`FFPLAYKMP_OUTPUT_HARDWARE_FRAMES_SHIFT`).
+     */
+    val hardwareFrameLimit: Int = 0,
 )
 
 @InternalFFmpegKmpApi
@@ -111,12 +155,17 @@ public data class NativePlayerSnapshot(
     val activeDecoder: NativePlayerDecoderKind = NativePlayerDecoderKind.UNKNOWN,
     val videoInfo: NativePlayerVideoInfo? = null,
     val droppedFrames: Long = 0,
+    /** Catch-up skips forward to a keyframe since the source was prepared. */
+    val catchUps: Long = 0,
     val decoderFallback: NativePlayerDecoderFallback = NativePlayerDecoderFallback.NONE,
+    /** Why the last operation failed, in words, when the engine has more to say than [errorCode]. */
+    val errorMessage: String? = null,
 )
 
 /**
  * A CPU-readable frame, as decoded, for a software output: the receiver owns [frame] and closes
- * it. Secure/protected sources must never produce this type.
+ * it. [token] names it from [NativeVideoFrameSink.prepare] to its present or release. Secure/protected
+ * sources must never produce this type.
  */
 @InternalFFmpegKmpApi
 public class NativeVideoFrame(
@@ -125,7 +174,117 @@ public class NativeVideoFrame(
     public val height: Int,
     public val presentationTimeUs: Long,
     public val queueSerial: UInt,
+    public val token: Long = 0,
 )
+
+/**
+ * Where a player's software frames go, mirroring `ffplaykmp_video_frame_event`. The player decodes
+ * ahead: [prepare] gets each frame as it enters the player's frame queue, on the player's session
+ * thread, and returns whether it keeps it; [frame][NativeVideoFrame.frame] is the sink's to close
+ * either way. For a frame it kept, exactly one [present] (when [NativePlayerBridge.refresh] shows
+ * it, on the refreshing thread, or at once for a preview, on the session thread) or [release] (when
+ * it is dropped as late, flushed by a seek, stop or output change, or the player closes) follows,
+ * naming its [token][NativeVideoFrame.token]. None of them may call the bridge's controls.
+ */
+@InternalFFmpegKmpApi
+public interface NativeVideoFrameSink {
+    public fun prepare(frame: NativeVideoFrame): Boolean
+    public fun present(token: Long)
+
+    /**
+     * [present], told when the frame is due on screen: on the clock of the [NativePlayerBridge.refresh]
+     * call that shows it (`ffplaykmp_video_frame.display_time_us`), or -1 for a preview, shown at
+     * once. A sink that schedules its frames overrides this; the default presents at once.
+     */
+    public fun present(token: Long, displayTimeUs: Long): Unit = present(token)
+    public fun release(token: Long)
+
+    public companion object {
+        /** Keeps no frame. */
+        public val Discard: NativeVideoFrameSink = object : NativeVideoFrameSink {
+            override fun prepare(frame: NativeVideoFrame): Boolean {
+                frame.frame.close()
+                return false
+            }
+
+            override fun present(token: Long) = Unit
+            override fun release(token: Long) = Unit
+        }
+    }
+}
+
+/**
+ * A sink that keeps each prepared frame and hands it to [present] as it is shown, which then owns
+ * it; frames released unshown are closed.
+ */
+@InternalFFmpegKmpApi
+public fun presentingFrames(present: (NativeVideoFrame) -> Unit): NativeVideoFrameSink = object : NativeVideoFrameSink {
+    private val lock = IoLock()
+    private val prepared = HashMap<Long, NativeVideoFrame>()
+
+    override fun prepare(frame: NativeVideoFrame): Boolean {
+        lock.withLock { prepared[frame.token] = frame }
+        return true
+    }
+
+    override fun present(token: Long) {
+        lock.withLock { prepared.remove(token) }?.let(present)
+    }
+
+    override fun release(token: Long) {
+        lock.withLock { prepared.remove(token) }?.frame?.close()
+    }
+}
+
+/** `ffplaykmp_video_frame_event` values. */
+internal const val VIDEO_FRAME_PREPARE = 0
+internal const val VIDEO_FRAME_PRESENT = 1
+internal const val VIDEO_FRAME_RELEASE = 2
+
+/**
+ * Dispatches one `ffplaykmp_video_frame_callback` call to [sink]; [retain] gives the prepared frame a
+ * reference of its own, null when there is none. While [open] is false (the bridge closes) frames are
+ * neither taken nor shown, but released ones still are, as destroying the player flushes its queue.
+ * A [NativeVideoFrameSink.prepare] that throws loses nothing: the token is released, the frame
+ * closed and the frame not taken, so the player sends nothing more for that token. The failure goes
+ * no further, as a throw cannot cross into the player's thread: the player goes on without the frame.
+ * Returns the callback's result.
+ */
+internal inline fun dispatchVideoFrame(
+    sink: NativeVideoFrameSink,
+    event: Int,
+    token: Long,
+    open: Boolean,
+    displayTimeUs: Long,
+    retain: () -> NativeVideoFrame?,
+): Int {
+    when (event) {
+        VIDEO_FRAME_PREPARE -> {
+            if (!open) return 0
+            val frame = retain() ?: return 0
+            val taken = try {
+                sink.prepare(frame)
+            } catch (_: Throwable) {
+                // Not taken, so the player sends this token nothing more: whatever the sink kept goes, and the frame.
+                try {
+                    sink.release(token)
+                } catch (_: Throwable) {
+                    // Released as far as the sink got.
+                }
+                frame.frame.close()
+                false
+            }
+            return if (taken) 1 else 0
+        }
+        VIDEO_FRAME_PRESENT -> if (open) sink.present(token, displayTimeUs) else sink.release(token)
+        VIDEO_FRAME_RELEASE -> sink.release(token)
+    }
+    return 0
+}
+
+/** What [NativePlayerBridge.refresh] returns while the player is not playing, `FFPLAYKMP_REFRESH_IDLE`. */
+@InternalFFmpegKmpApi
+public const val NATIVE_PLAYER_REFRESH_IDLE: Long = -1
 
 @InternalFFmpegKmpApi
 public enum class NativePlatformVideoFrameKind { CV_PIXEL_BUFFER, WEB_VIDEO_FRAME }
@@ -240,7 +399,7 @@ public expect fun nativeHardwareDecoderSupport(codec: String, width: Int, height
 @InternalFFmpegKmpApi
 public interface NativePlayerBridge : AutoCloseable {
     /** Joins any cancelled worker and clears the cancellation before the next [prepare]. */
-    public fun resetCancellation() = Unit
+    public fun resetCancellation(): Unit = Unit
     public fun prepare(source: NativePlayerSource): Int
     /** Waits until an asynchronously dispatched preparation has either completed or failed. */
     public suspend fun awaitPreparation(): Int = 0
@@ -283,6 +442,34 @@ public interface NativePlayerBridge : AutoCloseable {
     public fun stop(): Int
     public fun cancel()
     public fun snapshot(): NativePlayerSnapshot
+
+    /**
+     * Shows the queued frame due at [nowUs] + [leadUs], `ffplaykmp_player_refresh`: [nowUs] on the
+     * player's monotonic clock (negative reads it), [leadUs] how long after [nowUs] the frame shown
+     * becomes visible. Returns the microseconds until the next call, or [NATIVE_PLAYER_REFRESH_IDLE]
+     * while not playing; after IDLE nothing becomes due before the next snapshot. Bridges that pace
+     * frames themselves ([refreshes] false) return [NATIVE_PLAYER_REFRESH_IDLE]. After [close] it
+     * does nothing.
+     */
+    public fun refresh(nowUs: Long = -1, leadUs: Long = 0): Long = NATIVE_PLAYER_REFRESH_IDLE
+
+    /**
+     * [refresh] for a player that follows an external clock, `ffplaykmp_player_refresh_at`: shows the
+     * newest queued frame at or before [positionNs], the position in nanoseconds the clock gives the
+     * display frame at [nowUs], compared in the stream's time base as `VideoDecoder.frameAt` compares
+     * it, and holds the one on screen while none has been reached; starting the play run that decodes
+     * ahead, and seeking, remain the caller's. Only bridges that [refreshes]; the others throw
+     * [UnsupportedOperationException].
+     */
+    public fun refreshAt(nowUs: Long, leadUs: Long, positionNs: Long): Long =
+        throw UnsupportedOperationException("This player paces its own frames and cannot follow a clock")
+
+    /** The monotonic clock [refresh] reads, in microseconds (`ffplaykmp_clock_now_us`), where it [refreshes]. */
+    public fun clockNowUs(): Long =
+        throw UnsupportedOperationException("This player paces its own frames and has no refresh clock")
+
+    /** Whether frames are shown only by [refresh]: false where the bridge paces them itself. */
+    public val refreshes: Boolean get() = false
 }
 
 /** Where a bridge's own audio is, as reported by [NativePlayerAudio.setProgressListener]. */
@@ -310,12 +497,12 @@ public interface NativePlayerAudio : NativeAudioMixer, AutoCloseable {
     public fun setProgressListener(listener: (NativeAudioProgress) -> Unit)
 }
 
-/** [frame] owns each frame it receives and closes it. */
+/** [frame] gets the software frames; see [NativeVideoFrameSink]. [platformFrame] is called as a hardware frame is shown. */
 @InternalFFmpegKmpApi
 public expect fun createPlatformPlayerBridge(
     configuration: NativePlayerConfiguration,
     update: (NativePlayerSnapshot) -> Unit,
-    frame: (NativeVideoFrame) -> Unit = { it.frame.close() },
+    frame: NativeVideoFrameSink = NativeVideoFrameSink.Discard,
     platformFrame: (NativePlatformVideoFrame) -> Boolean = { false },
 ): NativePlayerBridge
 
@@ -489,6 +676,9 @@ private const val OUTPUT_SOFTWARE_FRAME_UPLOAD = 2
 private const val OUTPUT_ZERO_COPY = 4
 private const val OUTPUT_PROTECTED_CONTENT = 8
 private const val OUTPUT_TONE_MAP_HDR_TO_SDR = 16
+private const val OUTPUT_PREPARE_HARDWARE_FRAMES = 32
+private const val OUTPUT_HARDWARE_FRAMES_SHIFT = 24
+private const val OUTPUT_HARDWARE_FRAMES_MASK = 0x7f
 
 /** `ffplaykmp_snapshot.hdr_flags` bits. */
 private const val HDR_DOLBY_VISION = 1
@@ -516,6 +706,9 @@ internal interface PlayerEngineCalls {
     fun stop(): Int
     fun cancel()
     fun setMasterClock(mediaTimeUs: Long)
+    fun refresh(nowUs: Long, leadUs: Long): Long
+    fun refreshAt(nowUs: Long, leadUs: Long, positionNs: Long): Long
+    fun clockNowUs(): Long
     fun snapshot(): NativePlayerSnapshot
 
     /** `ffplaykmp_player_get_input_hint`: null while nothing is prepared. */
@@ -557,6 +750,12 @@ internal class GuardedPlayerBridge(
 
     /** Cross-thread calls: after [close] they do nothing. */
     override fun setMasterClock(mediaTimeUs: Long) = guard.use({}) { engine.setMasterClock(mediaTimeUs) }
+    override val refreshes: Boolean get() = true
+    override fun refresh(nowUs: Long, leadUs: Long): Long =
+        guard.use({ NATIVE_PLAYER_REFRESH_IDLE }) { engine.refresh(nowUs, leadUs) }
+    override fun refreshAt(nowUs: Long, leadUs: Long, positionNs: Long): Long =
+        guard.use({ NATIVE_PLAYER_REFRESH_IDLE }) { engine.refreshAt(nowUs, leadUs, positionNs) }
+    override fun clockNowUs(): Long = engine.clockNowUs()
     override fun cancel() = guard.use({}) { engine.cancel() }
     override fun inputHint(): NativeInputHint? = guard.use({ null }) { engine.inputHint() }
 
@@ -576,7 +775,9 @@ internal fun NativePlayerOutputCapabilities.toNativeFlags(): Int =
         (if (softwareFrameUpload) OUTPUT_SOFTWARE_FRAME_UPLOAD else 0) or
         (if (zeroCopy) OUTPUT_ZERO_COPY else 0) or
         (if (protectedContent) OUTPUT_PROTECTED_CONTENT else 0) or
-        (if (toneMapHdrToSdr) OUTPUT_TONE_MAP_HDR_TO_SDR else 0)
+        (if (toneMapHdrToSdr) OUTPUT_TONE_MAP_HDR_TO_SDR else 0) or
+        (if (prepareHardwareFrames) OUTPUT_PREPARE_HARDWARE_FRAMES else 0) or
+        (hardwareFrameLimit.coerceIn(0, OUTPUT_HARDWARE_FRAMES_MASK) shl OUTPUT_HARDWARE_FRAMES_SHIFT)
 
 private fun nativeOutputCapabilities(flags: Int): NativePlayerOutputCapabilities? =
     flags.takeIf { it != 0 }?.let {
@@ -586,6 +787,8 @@ private fun nativeOutputCapabilities(flags: Int): NativePlayerOutputCapabilities
             zeroCopy = it and OUTPUT_ZERO_COPY != 0,
             protectedContent = it and OUTPUT_PROTECTED_CONTENT != 0,
             toneMapHdrToSdr = it and OUTPUT_TONE_MAP_HDR_TO_SDR != 0,
+            prepareHardwareFrames = it and OUTPUT_PREPARE_HARDWARE_FRAMES != 0,
+            hardwareFrameLimit = (it ushr OUTPUT_HARDWARE_FRAMES_SHIFT) and OUTPUT_HARDWARE_FRAMES_MASK,
         )
     }
 
@@ -624,6 +827,8 @@ internal fun nativePlayerSnapshot(
     maxContentLightLevel: Int,
     maxFrameAverageLightLevel: Int,
     decoderFallback: Int = 0,
+    errorMessage: String? = null,
+    catchUps: Long = 0,
 ): NativePlayerSnapshot = NativePlayerSnapshot(
     state = NativePlayerState.entries.getOrElse(state) { NativePlayerState.FAILED },
     positionUs = positionUs,
@@ -635,7 +840,9 @@ internal fun nativePlayerSnapshot(
     videoHeight = videoHeight,
     activeDecoder = NativePlayerDecoderKind.entries.getOrElse(activeDecoder) { NativePlayerDecoderKind.UNKNOWN },
     droppedFrames = droppedFrames,
+    catchUps = catchUps,
     decoderFallback = NativePlayerDecoderFallback.entries.getOrElse(decoderFallback) { NativePlayerDecoderFallback.FAILED },
+    errorMessage = errorMessage?.takeIf(String::isNotEmpty),
     videoInfo = if (videoWidth > 0 && videoHeight > 0) {
         NativePlayerVideoInfo(
             width = videoWidth,

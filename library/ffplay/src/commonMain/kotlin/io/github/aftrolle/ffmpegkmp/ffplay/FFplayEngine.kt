@@ -16,7 +16,9 @@ import io.github.aftrolle.ffmpegkmp.bindings.NativePlatformVideoFrame
 import io.github.aftrolle.ffmpegkmp.bindings.NativePlayerSnapshot
 import io.github.aftrolle.ffmpegkmp.bindings.NativePlayerSource
 import io.github.aftrolle.ffmpegkmp.bindings.NativePlayerState
+import io.github.aftrolle.ffmpegkmp.bindings.NATIVE_PLAYER_REFRESH_IDLE
 import io.github.aftrolle.ffmpegkmp.bindings.NativeVideoFrame
+import io.github.aftrolle.ffmpegkmp.bindings.NativeVideoFrameSink
 import io.github.aftrolle.ffmpegkmp.bindings.createInMemoryPlayerBridge
 import io.github.aftrolle.ffmpegkmp.bindings.createPlatformPlayerBridge
 import io.github.aftrolle.ffmpegkmp.bindings.requireNative
@@ -24,15 +26,29 @@ import io.github.aftrolle.ffmpegkmp.codec.ColorPrimaries
 import io.github.aftrolle.ffmpegkmp.codec.ColorTransfer
 import io.github.aftrolle.ffmpegkmp.codec.CodecPreference
 import io.github.aftrolle.ffmpegkmp.codec.DecoderFallbackReason
+import io.github.aftrolle.ffmpegkmp.codec.DecoderThreads
+import io.github.aftrolle.ffmpegkmp.codec.NamedCodec
 import io.github.aftrolle.ffmpegkmp.codec.VideoFrame
 import io.github.aftrolle.ffmpegkmp.codec.VideoInfo
 import io.github.aftrolle.ffmpegkmp.codec.toNative
+import io.github.aftrolle.ffmpegkmp.codec.toNativeThreadType
 import io.github.aftrolle.ffmpegkmp.codec.toPublic
 import io.github.aftrolle.ffmpegkmp.codec.toPublicVideoInfo
 import io.github.aftrolle.ffmpegkmp.core.MediaSource
 import io.github.aftrolle.ffmpegkmp.core.toNativeMounts
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.microseconds
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
 
 internal interface FFplayVideoOutput {
     val kind: FFplayRendererKind
@@ -42,13 +58,43 @@ internal interface FFplayVideoOutput {
     val securePlatformTarget: Boolean get() = false
 
     /**
-     * Accepts a decoded frame at the renderer boundary and takes its reference, on the player's
-     * native thread. Returns false when it cannot be presented. Canvas outputs convert it into a
-     * [FrameImage], which reuses its bitmaps.
+     * Shows a decoded frame and takes its reference, as the player presents it: on the engine's
+     * refresh thread, or for a preview on the player's native thread. Returns false when it cannot
+     * be presented. Used for outputs that do not [preparesFrames].
      */
     fun submitNative(frame: VideoFrame, video: VideoInfo?): Boolean
 
-    /** Accepts a borrowed platform hardware frame synchronously. */
+    /**
+     * Whether the output makes software frames drawable ahead of their time: the engine then hands
+     * each to [prepareNative] as the player queues it, on the player's session thread, and showing
+     * it is [FFplayPreparedFrame.present], a flip. Otherwise frames wait in the queue as decoded and
+     * go to [submitNative] when shown.
+     */
+    val preparesFrames: Boolean get() = false
+
+    /**
+     * Makes [frame] drawable and takes it, for an output that [preparesFrames]: the Canvas converts it
+     * into a free bitmap of its ring. Returns null when it cannot take it, having closed it.
+     */
+    fun prepareNative(frame: VideoFrame, video: VideoInfo?): FFplayPreparedFrame? {
+        frame.close()
+        return null
+    }
+
+    /**
+     * Whether the output refreshes the player itself, from a frame clock of its own (the Compose
+     * Canvas's, once per display frame), through the driver [bindRefresh] gives it. The engine's
+     * timer refreshes a player whose output does not.
+     */
+    val drivesRefresh: Boolean get() = false
+
+    /**
+     * Gives an output that [drivesRefresh] the player's refresh while it is attached to a player
+     * that is refreshed ([NativePlayerBridge.refreshes]); null once it is detached.
+     */
+    fun bindRefresh(driver: FFplayRefreshDriver?) = Unit
+
+    /** Accepts a borrowed platform hardware frame synchronously, as the player presents it. */
     fun submitPlatform(frame: NativePlatformVideoFrame, video: VideoInfo?): Boolean = false
 
     /** Discards the currently retained frame, for example after a seek or target loss. */
@@ -63,6 +109,33 @@ internal interface FFplayVideoOutput {
     fun bindFrameSize(sink: ((width: Int, height: Int) -> Unit)?) = Unit
 }
 
+/** A frame an output prepared; exactly one of [present] or [release] follows. */
+internal interface FFplayPreparedFrame {
+    /** Shows it, on the refresh's thread or, for a preview, the session thread; false when it cannot be shown. */
+    fun present(): Boolean
+
+    /** Gives it back unshown: dropped as late, or flushed. */
+    fun release()
+}
+
+/** The player's refresh, for an output that drives it from its own frame clock. */
+internal interface FFplayRefreshDriver {
+    /**
+     * Suspends until a refresh can show something: while the player plays, and after a refresh that
+     * answered [NATIVE_PLAYER_REFRESH_IDLE], until the player's next snapshot.
+     */
+    suspend fun awaitFrames()
+
+    /**
+     * [NativePlayerBridge.refresh] at [nowUs] (negative reads the player's clock), the frame shown
+     * becoming visible [leadUs] after it. [frameTime] is the display frame's time on the output's
+     * own frame clock, which a followed [FFplayClock] is asked about, so that every player drawn in
+     * one display frame asks about the same time; null asks about the player's clock now. A refresh
+     * that throws fails the player and answers IDLE, as does one after the output was detached.
+     */
+    fun refresh(nowUs: Long, leadUs: Long, frameTime: Duration? = null): Long
+}
+
 internal data class FFplayOutputCapabilities(
     val hardwareFrameImport: Boolean = false,
     val softwareFrameUpload: Boolean = true,
@@ -74,6 +147,13 @@ internal data class FFplayOutputCapabilities(
     val toneMapHdrToSdr: Boolean = false,
     /** True only for a platform output backed by a secure decoder and protected surface. */
     val protectedContent: Boolean = false,
+    /**
+     * Hardware frames reach [FFplayVideoOutput.prepareNative] like software ones, rendered into the
+     * output's own [FFplayVideoOutput.platformTarget] as they are queued: Android's hardware Canvas.
+     */
+    val prepareHardwareFrames: Boolean = false,
+    /** With [prepareHardwareFrames], the most hardware frames queued at once, each holding one of the output's buffers; 0 for the frame queue's size. */
+    val hardwareFrameLimit: Int = 0,
 )
 
 internal interface FFplayEngine : AutoCloseable {
@@ -88,6 +168,17 @@ internal interface FFplayEngine : AutoCloseable {
 
     /** Makes the audible audio position the video master clock; negative clears it. */
     fun setMasterClock(mediaTimeUs: Long) = Unit
+
+    /**
+     * Shows, at each refresh, the frame for the position [clock] gives the display frame, instead
+     * of the frame the player's own clocks make due, and tells [onSample] each position, on the
+     * refreshing thread; null returns to the player's clocks. Starting the play run that decodes
+     * ahead, and seeking, stay the caller's. Throws [UnsupportedOperationException] where the engine
+     * paces its frames itself.
+     */
+    fun follow(clock: FFplayClock?, onSample: (FFplayClockSample) -> Unit) {
+        if (clock != null) throw UnsupportedOperationException("This player paces its own frames and cannot follow a clock")
+    }
 
     /** The prepared source's audio when the engine plays it itself (the browser), else null. */
     suspend fun openAudio(warn: (String) -> Unit): FFplayAudioOutput? = null
@@ -108,7 +199,7 @@ internal typealias FFplayEngineFactory = (
 internal typealias NativePlayerBridgeFactory = (
     configuration: NativePlayerConfiguration,
     update: (NativePlayerSnapshot) -> Unit,
-    frame: (NativeVideoFrame) -> Unit,
+    frame: NativeVideoFrameSink,
     platformFrame: (NativePlatformVideoFrame) -> Boolean,
 ) -> NativePlayerBridge
 
@@ -150,7 +241,13 @@ private class FFplayBridgeEngine(
     private val emit: (FFplayEvent) -> Unit,
     bridgeFactory: NativePlayerBridgeFactory? = null,
 ) : FFplayEngine {
+    /**
+     * Guarded by [snapshotLock], with the counters it is made from: the player publishes from its
+     * session thread and from the refresh, and outputs drop frames on the refresh, so each change is
+     * made and reported in one step, in the order it was made.
+     */
     private var snapshot = FFplaySnapshot()
+    private val snapshotLock = FFplayOperationLock()
     private var source: MediaSource? = null
     private var protection = FFplayContentProtection.CLEAR_OR_AUTO_DETECT
     private val secureSource: Boolean get() = source != null && protection == FFplayContentProtection.REQUIRE_SECURE_PATH
@@ -159,21 +256,171 @@ private class FFplayBridgeEngine(
     private var negotiated = FFplayOutputCapabilities()
     private var nativeQueueSerial = 0u
     private var nativeDroppedFrames = 0L
+    private var nativeCatchUps = 0L
     private var outputDroppedFrames = 0L
     private var decoderFallbackEmitted = false
     private var rendererFallbackEmitted = false
     private var closed = false
+
+    /**
+     * The frames the player prepared and has not presented or released yet, by token. Guarded by
+     * [preparedLock]: the player prepares on its session thread and presents on the refresh thread.
+     */
+    private val prepared = HashMap<Long, PreparedFrame>()
+    private val preparedLock = FFplayOperationLock()
+    private val frames = object : NativeVideoFrameSink {
+        override fun prepare(frame: NativeVideoFrame): Boolean = prepareNativeFrame(frame)
+        override fun present(token: Long) = presentNativeFrame(token)
+        override fun release(token: Long) {
+            preparedLock.withLock { prepared.remove(token) }?.release()
+        }
+    }
     private val bridge: NativePlayerBridge = bridgeFactory?.invoke(
         configuration.toNative(),
         ::acceptNativeSnapshot,
-        ::acceptNativeFrame,
+        frames,
         ::acceptPlatformFrame,
     ) ?: createPlatformPlayerBridge(
         configuration.toNative(),
         ::acceptNativeSnapshot,
-        ::acceptNativeFrame,
+        frames,
         ::acceptPlatformFrame,
     )
+
+    /**
+     * Drives [NativePlayerBridge.refresh] while the player plays, for a bridge that [refreshes]
+     * (NativePlayerBridge.refreshes): a timer for every output without a frame clock of its own
+     * ([FFplayVideoOutput.drivesRefresh]), which waits as long as the last refresh said and
+     * refreshes again. Frames are shown when it runs, and their visibility is whatever the output's
+     * drawing adds to that. A refresh that answers IDLE waits for the player's next snapshot, which
+     * it publishes when frames start to be shown, and while the player is not playing the loop waits
+     * for it to play. A refresh that throws fails the player.
+     */
+    private val playing = MutableStateFlow(false)
+
+    /** Counts the player's snapshots, for refreshes that answered IDLE to wait for the next one. */
+    private val snapshotCount = MutableStateFlow(0L)
+
+    /** False while the output refreshes the player from its own frame clock. */
+    private val timerRefreshes = MutableStateFlow(true)
+
+    /** The clock the refreshes follow, and who hears its positions; null for the player's own clocks. */
+    private val followed = MutableStateFlow<Followed?>(null)
+
+    /**
+     * Held while a refresh shows the frame for a followed clock's position and reports it, and while
+     * [follow] changes the clock, so neither happens for a clock after [follow] replaced it. Never
+     * held while the clock is asked.
+     */
+    private val followLock = FFplayOperationLock()
+    private val refreshScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+
+    init {
+        if (bridge.refreshes) {
+            refreshScope.launch {
+                try {
+                    var idleAt: Long? = null
+                    while (isActive) {
+                        timerRefreshes.first { it }
+                        awaitFrames(idleAt)
+                        // An output that drives the refresh may have been attached while this waited: a timer
+                        // refresh now would ask a followed clock at a time on another clock than the output's.
+                        if (!timerRefreshes.value) continue
+                        val seen = snapshotCount.value
+                        val following = followed.value != null
+                        val remainingUs = refreshBridge(-1, 0, null)
+                        // A followed clock is asked again whether or not the player plays: it may start it.
+                        idleAt = seen.takeIf { remainingUs == NATIVE_PLAYER_REFRESH_IDLE && !following }
+                        when {
+                            following -> delay(
+                                (
+                                    remainingUs.takeIf { it != NATIVE_PLAYER_REFRESH_IDLE }
+                                        ?.coerceAtMost(FOLLOW_INTERVAL_US) ?: FOLLOW_INTERVAL_US
+                                    ).microseconds,
+                            )
+                            idleAt == null -> delay(remainingUs.microseconds)
+                        }
+                    }
+                } catch (cancelled: CancellationException) {
+                    throw cancelled
+                } catch (failure: Throwable) {
+                    refreshFailed(failure)
+                }
+            }
+        }
+    }
+
+    /**
+     * Suspends while the player is not playing, and after an IDLE refresh at snapshot [idleAt], until
+     * the next; never while it follows a clock, which is asked every display frame.
+     */
+    private suspend fun awaitFrames(idleAt: Long?) {
+        // The common case, once a display frame, without a flow.
+        if (followed.value != null || (playing.value && idleAt == null)) return
+        combine(playing, snapshotCount, followed) { isPlaying, count, clock ->
+            clock != null || (isPlaying && (idleAt == null || count != idleAt))
+        }.first { it }
+    }
+
+    /**
+     * [NativePlayerBridge.refresh], or while a clock is followed, the frame for its position at
+     * [frameTime] (the refresh clock's now when null), telling who follows it. A position before the
+     * start shows the first frame.
+     */
+    private fun refreshBridge(nowUs: Long, leadUs: Long, frameTime: Duration?): Long {
+        val following = followed.value ?: return bridge.refresh(nowUs, leadUs)
+        val asked = frameTime ?: (if (nowUs >= 0) nowUs else bridge.clockNowUs()).microseconds
+        val position = following.clock.positionAt(asked)
+        // Not after follow changed the clock while this one was asked: its position is no longer the player's.
+        return followLock.withLock {
+            if (followed.value !== following) return@withLock FOLLOW_INTERVAL_US
+            bridge.refreshAt(nowUs, leadUs, position.inWholeNanoseconds.coerceAtLeast(0))
+                .also { following.onSample(FFplayClockSample(asked, position)) }
+        }
+    }
+
+    override fun follow(clock: FFplayClock?, onSample: (FFplayClockSample) -> Unit) {
+        checkOpen()
+        if (clock != null && !bridge.refreshes) {
+            throw UnsupportedOperationException("This player paces its own frames and cannot follow a clock")
+        }
+        followLock.withLock { followed.value = clock?.let { Followed(it, onSample) } }
+    }
+
+    private class Followed(val clock: FFplayClock, val onSample: (FFplayClockSample) -> Unit)
+
+    /** [output]'s refresh while it is attached: it calls it from its own frame clock, on one coroutine. */
+    private inner class OutputRefresh(private val output: FFplayVideoOutput) : FFplayRefreshDriver {
+        private var idleAt: Long? = null
+
+        override suspend fun awaitFrames() {
+            awaitFrames(idleAt)
+            idleAt = null
+        }
+
+        override fun refresh(nowUs: Long, leadUs: Long, frameTime: Duration?): Long {
+            if (closed || this@FFplayBridgeEngine.output !== output) return NATIVE_PLAYER_REFRESH_IDLE
+            val seen = snapshotCount.value
+            val remainingUs = try {
+                refreshBridge(nowUs, leadUs, frameTime)
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (failure: Throwable) {
+                refreshFailed(failure)
+                NATIVE_PLAYER_REFRESH_IDLE
+            }
+            idleAt = seen.takeIf { remainingUs == NATIVE_PLAYER_REFRESH_IDLE && followed.value == null }
+            return remainingUs
+        }
+    }
+
+    private fun refreshFailed(cause: Throwable) {
+        if (closed) return
+        val message = "Unable to show the next video frame: " +
+            "${cause::class.simpleName}${cause.message?.let { ": $it" }.orEmpty()}"
+        publish { it.copy(state = FFplayState.FAILED, failure = FFplayFailure(message, cause)) }
+        emit(FFplayEvent.Fatal(message, cause))
+    }
 
     override fun prepare(source: MediaSource, protection: FFplayContentProtection) {
         checkOpen()
@@ -181,9 +428,12 @@ private class FFplayBridgeEngine(
         this.protection = protection
         decoderFallbackEmitted = false
         rendererFallbackEmitted = false
-        nativeDroppedFrames = 0
-        outputDroppedFrames = 0
-        snapshot = FFplaySnapshot(state = FFplayState.PREPARING)
+        snapshotLock.withLock {
+            nativeDroppedFrames = 0
+            nativeCatchUps = 0
+            outputDroppedFrames = 0
+            snapshot = FFplaySnapshot(state = FFplayState.PREPARING)
+        }
         val result = bridge.prepare(
             NativePlayerSource(
                 input = source.input,
@@ -237,11 +487,16 @@ private class FFplayBridgeEngine(
 
     override fun stop() {
         checkOpen()
-        nativeDroppedFrames = 0
-        outputDroppedFrames = 0
+        snapshotLock.withLock {
+            nativeDroppedFrames = 0
+            nativeCatchUps = 0
+            outputDroppedFrames = 0
+        }
         output?.discard()
         requireNativeSuccess("stop", bridge.stop())
         source = null
+        // Stopping released them; a frame can only be left by a bridge that does not release its own.
+        releasePreparedFrames()
     }
 
     override fun attachOutput(output: FFplayVideoOutput) {
@@ -249,6 +504,8 @@ private class FFplayBridgeEngine(
         val previous = this.output
         if (previous !== output) previous?.discard()
         previous?.bindFrameSize(null)
+        previous?.bindRefresh(null)
+        timerRefreshes.value = true
         // Frames at their own size until the new output says what it draws them at.
         bridge.setFrameSize(0, 0)
         // Output replacement is transactional. Remove both the negotiated capabilities and the
@@ -260,8 +517,7 @@ private class FFplayBridgeEngine(
         if (negotiationFailure != null) {
             this.output = null
             val failure = FFplayFailure(negotiationFailure)
-            snapshot = snapshot.copy(state = FFplayState.FAILED, failure = failure, output = null)
-            update(snapshot)
+            publish { it.copy(state = FFplayState.FAILED, failure = failure, output = null) }
             if (secureSource) {
                 emit(FFplayEvent.ProtectionRequired(negotiationFailure))
             } else {
@@ -279,12 +535,7 @@ private class FFplayBridgeEngine(
             this.output = null
             clearBridgeOutput()
             val message = nativeError("attach platform output", targetResult)
-            snapshot = snapshot.copy(
-                state = FFplayState.FAILED,
-                failure = FFplayFailure(message),
-                output = null,
-            )
-            update(snapshot)
+            publish { it.copy(state = FFplayState.FAILED, failure = FFplayFailure(message), output = null) }
             emit(FFplayEvent.Fatal(message))
             return
         }
@@ -295,16 +546,15 @@ private class FFplayBridgeEngine(
             val message = nativeError("attach output", result)
             // The cause carries the native code, BUSY for a full DecoderBudget under REQUIRE_HARDWARE.
             val cause = NativePlayerException(message, result)
-            snapshot = snapshot.copy(
-                state = FFplayState.FAILED,
-                failure = FFplayFailure(message, cause),
-                output = null,
-            )
-            update(snapshot)
+            publish { it.copy(state = FFplayState.FAILED, failure = FFplayFailure(message, cause), output = null) }
             emit(FFplayEvent.Fatal(message, cause))
         } else {
             output.bindFrameSize { width, height ->
                 if (!closed && this.output === output) bridge.setFrameSize(width, height)
+            }
+            if (bridge.refreshes && output.drivesRefresh) {
+                timerRefreshes.value = false
+                output.bindRefresh(OutputRefresh(output))
             }
         }
         if (result >= 0 && !rendererFallbackEmitted &&
@@ -324,6 +574,8 @@ private class FFplayBridgeEngine(
         if (this.output !== output) return
         output.discard()
         output.bindFrameSize(null)
+        output.bindRefresh(null)
+        timerRefreshes.value = true
         bridge.setFrameSize(0, 0)
         this.output = null
         clearBridgeOutput()
@@ -333,22 +585,44 @@ private class FFplayBridgeEngine(
     override fun close() {
         output?.discard()
         output?.bindFrameSize(null)
+        output?.bindRefresh(null)
         closed = true
+        refreshScope.cancel()
         bridge.cancel()
         bridge.setPlatformOutputTarget(null, false)
         bridge.close()
+        releasePreparedFrames()
         source = null
         output = null
     }
 
+    private fun releasePreparedFrames() {
+        val frames = preparedLock.withLock { prepared.values.toList().also { prepared.clear() } }
+        frames.forEach { it.release() }
+    }
+
     private fun clearBridgeOutput() {
+        // The player releases the frames it prepared for the output that goes.
         bridge.clearOutput()
         bridge.setPlatformOutputTarget(null, false)
     }
 
-    private fun acceptNativeSnapshot(native: NativePlayerSnapshot) {
+    /** Changes the snapshot and reports it, under [snapshotLock]. */
+    private fun publish(change: (FFplaySnapshot) -> FFplaySnapshot) = snapshotLock.withLock {
+        snapshot = change(snapshot)
+        update(snapshot)
+    }
+
+    private fun acceptNativeSnapshot(native: NativePlayerSnapshot) = snapshotLock.withLock {
         nativeQueueSerial = native.queueSerial
+        playing.value = native.state == NativePlayerState.PLAYING
+        snapshotCount.value++
         nativeDroppedFrames = native.droppedFrames
+        if (native.catchUps > nativeCatchUps) {
+            val position = native.positionUs.microseconds
+            emit(FFplayEvent.CaughtUp("The decoder fell behind; playback skipped forward to about $position", position))
+        }
+        nativeCatchUps = native.catchUps
         // The native player reports a reason whenever its output wanted a hardware decoder it did not get.
         val fallback = native.decoderFallback.toPublic()
         if (fallback != null && !decoderFallbackEmitted && output != null) {
@@ -384,23 +658,84 @@ private class FFplayBridgeEngine(
             },
             droppedFrames = nativeDroppedFrames + outputDroppedFrames,
             failure = native.errorCode.takeIf { it < 0 }?.let { code ->
-                FFplayFailure(nativeError("player operation", code))
+                FFplayFailure(nativeError("player operation", code, native.errorMessage))
             },
         )
         update(snapshot)
     }
 
+    /** Keeps a frame the player decoded ahead until it is presented or released; on the session thread. */
+    private fun prepareNativeFrame(native: NativeVideoFrame): Boolean {
+        val target = output
+        if (closed || target == null || !negotiated.softwareFrameUpload || secureSource) {
+            native.frame.close()
+            if (secureSource) emit(FFplayEvent.Fatal("A protected source attempted to cross the CPU-readable frame boundary"))
+            return false
+        }
+        val made = if (target.preparesFrames) prepareOnOutput(target, native) ?: return false else null
+        preparedLock.withLock { prepared[native.token] = PreparedFrame(native, target, made) }
+        return true
+    }
+
+    /** [native] made drawable by [target] now, or null, counted as dropped, when it could not be. */
+    private fun prepareOnOutput(target: FFplayVideoOutput, native: NativeVideoFrame): FFplayPreparedFrame? {
+        val video = snapshot.video
+        val frame = native.toVideoFrame(video)
+        val made = try {
+            target.prepareNative(frame, video)
+        } catch (failure: Throwable) {
+            frame.close()
+            emit(
+                FFplayEvent.Warning(
+                    "Unable to prepare the video frame: " +
+                        "${failure::class.simpleName}${failure.message?.let { ": $it" }.orEmpty()}",
+                ),
+            )
+            null
+        }
+        if (made == null) countOutputDrop()
+        return made
+    }
+
+    /** Shows a prepared frame on the output it was prepared for, if it is still attached. */
+    private fun presentNativeFrame(token: Long) {
+        val entry = preparedLock.withLock { prepared.remove(token) } ?: return
+        if (entry.output !== output) return entry.release()
+        val made = entry.made ?: return acceptNativeFrame(entry.native)
+        if (closed || entry.native.queueSerial != nativeQueueSerial || secureSource) return made.release()
+        val accepted = try {
+            made.present()
+        } catch (failure: Throwable) {
+            made.release()
+            emit(
+                FFplayEvent.Warning(
+                    "Unable to show the video frame: " +
+                        "${failure::class.simpleName}${failure.message?.let { ": $it" }.orEmpty()}",
+                ),
+            )
+            false
+        }
+        if (!accepted) countOutputDrop()
+    }
+
+    private fun countOutputDrop() = publish {
+        outputDroppedFrames++
+        it.copy(droppedFrames = nativeDroppedFrames + outputDroppedFrames)
+    }
+
+    private fun NativeVideoFrame.toVideoFrame(video: VideoInfo?): VideoFrame = VideoFrame.of(
+        native = frame,
+        pts = presentationTimeUs.microseconds,
+        duration = Duration.ZERO,
+        width = width,
+        height = height,
+        rotationDegrees = video?.rotationDegrees ?: 0.0,
+        sampleAspectRatio = video.sampleAspectRatioValue(),
+    )
+
     private fun acceptNativeFrame(native: NativeVideoFrame) {
         val video = snapshot.video
-        val frame = VideoFrame.of(
-            native = native.frame,
-            pts = native.presentationTimeUs.microseconds,
-            duration = Duration.ZERO,
-            width = native.width,
-            height = native.height,
-            rotationDegrees = video?.rotationDegrees ?: 0.0,
-            sampleAspectRatio = video.sampleAspectRatioValue(),
-        )
+        val frame = native.toVideoFrame(video)
         if (closed || native.queueSerial != nativeQueueSerial) return frame.close()
         if (secureSource) {
             frame.close()
@@ -423,9 +758,10 @@ private class FFplayBridgeEngine(
             false
         }
         if (!accepted) {
-            outputDroppedFrames++
-            snapshot = snapshot.copy(droppedFrames = nativeDroppedFrames + outputDroppedFrames)
-            update(snapshot)
+            publish {
+                outputDroppedFrames++
+                it.copy(droppedFrames = nativeDroppedFrames + outputDroppedFrames)
+            }
         }
     }
 
@@ -445,9 +781,10 @@ private class FFplayBridgeEngine(
             false
         }
         if (!accepted) {
-            outputDroppedFrames++
-            snapshot = snapshot.copy(droppedFrames = nativeDroppedFrames + outputDroppedFrames)
-            update(snapshot)
+            publish {
+                outputDroppedFrames++
+                it.copy(droppedFrames = nativeDroppedFrames + outputDroppedFrames)
+            }
         }
         return accepted
     }
@@ -463,8 +800,8 @@ private class FFplayBridgeEngine(
             decoder = activeDecoder.toPublic(),
             renderer = kind,
             zeroCopy = capabilities.zeroCopy && activeDecoder == NativePlayerDecoderKind.HARDWARE,
-            sourceColorSpace = color.sourceColorSpace,
-            outputColorSpace = color.outputColorSpace,
+            sourcePrimaries = color.sourcePrimaries,
+            outputPrimaries = color.outputPrimaries,
             hdrResult = color.hdrResult,
             securePath = capabilities.protectedContent,
             decoderFallback = fallback,
@@ -495,10 +832,10 @@ private class FFplayBridgeEngine(
         configuration.outputPreference == FFplayOutputPreference.NATIVE_SURFACE &&
             kind == FFplayRendererKind.COMPOSE_CANVAS ->
             "A native video surface was required, but only the Compose Canvas output is available"
-        configuration.decoderPreference == CodecPreference.REQUIRE_HARDWARE &&
+        configuration.decoder == CodecPreference.REQUIRE_HARDWARE &&
             !capabilities.hardwareFrameImport && this.capabilities.hardwareFrameImport ->
             "FORCE_SDR must tone map this HDR source in software, but hardware decoding was required"
-        configuration.decoderPreference == CodecPreference.REQUIRE_HARDWARE &&
+        configuration.decoder == CodecPreference.REQUIRE_HARDWARE &&
             !capabilities.hardwareFrameImport ->
             "Hardware decoding was required, but the attached output cannot import hardware frames"
         !capabilities.softwareFrameUpload && !capabilities.hardwareFrameImport ->
@@ -508,7 +845,11 @@ private class FFplayBridgeEngine(
 
     /** Throws a [NativePlayerException] whose `errorCode` is the native result when [result] is an error. */
     private fun requireNativeSuccess(operation: String, result: Int) =
-        requireNative(result, operation) { _, code -> NativePlayerException(nativeError(operation, code), code) }
+        requireNative(result, operation) { _, code ->
+            // The engine's words for why, such as a named decoder's, ride on its latest snapshot.
+            val reason = runCatching { bridge.snapshot().errorMessage }.getOrNull()
+            NativePlayerException(nativeError(operation, code, reason), code)
+        }
 
     private fun checkPrepared() {
         checkOpen()
@@ -522,12 +863,41 @@ private class FFplayBridgeEngine(
 
 internal fun VideoInfo?.sampleAspectRatioValue(): Double = this?.sampleAspectRatio ?: 1.0
 
+/**
+ * A frame the player prepared for [output]: [made] drawable by an output that [FFplayVideoOutput.preparesFrames],
+ * which then owns [native]'s frame, else kept as decoded.
+ */
+private class PreparedFrame(val native: NativeVideoFrame, val output: FFplayVideoOutput, val made: FFplayPreparedFrame?) {
+    fun release() {
+        if (made != null) made.release() else native.frame.close()
+    }
+}
+
 private fun FFplayConfiguration.toNative() = NativePlayerConfiguration(
-    decoderPreference.toNative(),
-    threads.toNative(),
+    when (decoder) {
+        is CodecPreference -> decoder.toNative()
+        // A named decoder is opened alone; the preference it replaces stays AUTO.
+        is NamedCodec -> CodecPreference.AUTO.toNative()
+    },
+    // Auto is 0 and 0: FFmpeg's automatic count and its default thread types.
+    decoderThreads = when (threads) {
+        DecoderThreads.Auto -> 0
+        is DecoderThreads.Fixed -> threads.toNative()
+    },
+    decoderThreadType = when (threads) {
+        DecoderThreads.Auto -> 0
+        is DecoderThreads.Fixed -> threads.toNativeThreadType()
+    },
+    decoderName = (decoder as? NamedCodec)?.name,
+    decoderOptions = (decoder as? NamedCodec)?.options.orEmpty(),
     // -1 keeps the decoder.
-    codecReleaseDelayUs = releaseDecoderWhenPaused?.inWholeMicroseconds ?: -1,
+    codecReleaseDelayUs = if (decoderIdleRelease.isInfinite()) -1 else decoderIdleRelease.inWholeMicroseconds,
+    catchUpLagUs = if (catchUpLag.isInfinite()) -1 else catchUpLag.inWholeMicroseconds,
+    frameQueueSize = frameQueueSize,
 )
+
+/** How often the timer asks a followed clock while the player shows nothing new: ffplay's refresh rate. */
+private const val FOLLOW_INTERVAL_US = 10_000L
 
 private fun FFplayOutputCapabilities.toNative() = NativePlayerOutputCapabilities(
     hardwareFrameImport = hardwareFrameImport,
@@ -535,6 +905,8 @@ private fun FFplayOutputCapabilities.toNative() = NativePlayerOutputCapabilities
     zeroCopy = zeroCopy,
     protectedContent = protectedContent,
     toneMapHdrToSdr = toneMapHdrToSdr,
+    prepareHardwareFrames = prepareHardwareFrames,
+    hardwareFrameLimit = hardwareFrameLimit,
 )
 
 private fun NativePlayerState.toPublic(): FFplayState = when (this) {
@@ -555,6 +927,9 @@ private fun DecoderFallbackReason.message(): String = when (this) {
     DecoderFallbackReason.FAILED -> "The hardware decoder failed; using software decoding"
     DecoderFallbackReason.BUDGET -> "Every hardware decoder DecoderBudget allows is in use; using software decoding"
 }
+
+private fun nativeError(operation: String, code: Int, reason: String?): String =
+    nativeError(operation, code) + reason?.let { " ($it)" }.orEmpty()
 
 private fun nativeError(operation: String, code: Int): String = when (code) {
     NativePlayerError.ACCESS_DENIED -> "Unable to $operation: protected content requires a verified secure output path"

@@ -7,16 +7,22 @@
  * input and how much it read, and from ffplaykmp_get_statistics how many
  * codecs it opened and video packets it demuxed. The players release an idle
  * codec after the default grace, 2 s. Frames are converted into one
- * reused RGBA8 bitmap at their own size, as a Canvas output's FrameImage does.
+ * reused RGBA8 bitmap at their own size when presented, as a Canvas output's
+ * FrameImage does, and each player has a thread that refreshes it as an
+ * output's timer does: again after the time each refresh returns.
  * The hardware decoder budget is the platform's default, or
  * FFMPEGKMP_BENCH_HARDWARE_DECODERS (0 for no limit).
  * scripts/bench-player.sh builds and runs it. The audio mode prepares a
  * player and then opens the audio engine (ffmpegkmp_player.c) on the same
- * input, as FFplayPlayer does, with and without the player's input hint.
+ * input, as FFplayPlayer does, with and without the player's input hint. The
+ * pacing mode plays a clip in real time into an output that only counts,
+ * refreshed the same way, and reports how late frames reached it, for a
+ * decoder thread count: the host's smoke test of the player's frame timing.
  *
  *   player_bench <clips> transitions <clip> <AUTO|SOFTWARE>
  *   player_bench <clips> parallel <clip> <AUTO|SOFTWARE> <players>
  *   player_bench <clips> audio <clip> <AUTO|SOFTWARE>
+ *   player_bench <clips> pacing <clip> <AUTO|SOFTWARE> <threads> [seconds]
  */
 #include "ffmpegkmp_bridge.h"
 #include "ffplaykmp_player.h"
@@ -30,16 +36,55 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/resource.h>
 
 #include <libavutil/time.h>
 
 static double now_ms(void) { return av_gettime_relative() / 1000.0; }
 
+/* A thread that refreshes a player as an output's timer does: again after the time each refresh returns, 10 ms at most. */
+typedef struct bench_refresher {
+    ffplaykmp_player *player;
+    atomic_int running;
+    pthread_t thread;
+} bench_refresher;
+
+static void *bench_refresher_main(void *opaque) {
+    bench_refresher *refresher = opaque;
+    while (atomic_load(&refresher->running)) {
+        int64_t remaining_us = ffplaykmp_player_refresh(refresher->player, -1, 0);
+        if (remaining_us == FFPLAYKMP_REFRESH_IDLE || remaining_us > 10000)
+            remaining_us = 10000;
+        if (remaining_us > 0)
+            av_usleep((unsigned)remaining_us);
+    }
+    return NULL;
+}
+
+static void bench_refresher_start(bench_refresher *refresher, ffplaykmp_player *player) {
+    refresher->player = player;
+    atomic_init(&refresher->running, 1);
+    pthread_create(&refresher->thread, NULL, bench_refresher_main, refresher);
+}
+
+/* Before the player is destroyed: a refresh must not overlap it. */
+static void bench_refresher_stop(bench_refresher *refresher) {
+    atomic_store(&refresher->running, 0);
+    pthread_join(refresher->thread, NULL);
+}
+
 /* One player and what it has presented. */
 typedef struct bench_player {
     ffplaykmp_player *player;
+    bench_refresher refresher;
     bench_io io;
     atomic_int frames;
+    /* The frames prepared and not yet presented or released, by token: the queue's and a preview's. */
+    pthread_mutex_t prepared_mutex;
+    struct {
+        uint64_t token;
+        ffmpegkmp_frame *frame;
+    } prepared[16];
     /* The Canvas output's bitmap: RGBA8 at the frame's size, reused. */
     uint8_t *pixels;
     int width;
@@ -59,29 +104,82 @@ static ffmpegkmp_frame_format rgba8_format(void) {
     return format;
 }
 
-/* On the player's thread: converts the frame into the bitmap, as ComposeCanvasOutput does. */
-static void on_frame(void *opaque, const ffplaykmp_video_frame *frame) {
+/* Takes the prepared frame for `token` out of `bench->prepared`; NULL when there is none. */
+static ffmpegkmp_frame *take_prepared(bench_player *bench, uint64_t token) {
+    ffmpegkmp_frame *frame = NULL;
+    pthread_mutex_lock(&bench->prepared_mutex);
+    for (size_t index = 0; index < sizeof(bench->prepared) / sizeof(bench->prepared[0]); index++) {
+        if (bench->prepared[index].frame && bench->prepared[index].token == token) {
+            frame = bench->prepared[index].frame;
+            bench->prepared[index].frame = NULL;
+            break;
+        }
+    }
+    pthread_mutex_unlock(&bench->prepared_mutex);
+    return frame;
+}
+
+/* Keeps a reference to `frame` under `token`; 0 when there is no room. */
+static int keep_prepared(bench_player *bench, const ffmpegkmp_frame *frame, uint64_t token) {
+    int kept = 0;
+    pthread_mutex_lock(&bench->prepared_mutex);
+    for (size_t index = 0; index < sizeof(bench->prepared) / sizeof(bench->prepared[0]); index++) {
+        if (!bench->prepared[index].frame) {
+            if ((bench->prepared[index].frame = ffmpegkmp_frame_ref(frame))) {
+                bench->prepared[index].token = token;
+                kept = 1;
+            }
+            break;
+        }
+    }
+    pthread_mutex_unlock(&bench->prepared_mutex);
+    return kept;
+}
+
+/*
+ * Keeps every frame it is given under its token, and converts it into the bitmap when it is
+ * presented, on the refreshing (or, for a preview, the session) thread, as ComposeCanvasOutput does.
+ */
+static int on_frame(void *opaque, const ffplaykmp_video_frame *frame) {
     bench_player *bench = opaque;
     const ffmpegkmp_frame_format rgba8 = rgba8_format();
     ffmpegkmp_frame *bitmap;
-    double start = now_ms();
-    if (frame->width != bench->width || frame->height != bench->height) {
-        free(bench->pixels);
-        bench->pixels = malloc((size_t)frame->width * frame->height * 4);
-        bench->width = frame->width;
-        bench->height = frame->height;
+    ffmpegkmp_frame *prepared;
+    ffmpegkmp_frame_info info;
+    int width;
+    int height;
+    double start;
+    if (frame->event == FFPLAYKMP_VIDEO_FRAME_PREPARE)
+        return keep_prepared(bench, frame->frame, frame->token);
+    if (!(prepared = take_prepared(bench, frame->token)))
+        return 0;
+    if (frame->event == FFPLAYKMP_VIDEO_FRAME_PRESENT) {
+        start = now_ms();
+        ffmpegkmp_frame_info_init(&info);
+        ffmpegkmp_frame_get_info(prepared, &info);
+        width = info.width;
+        height = info.height;
+        if (width != bench->width || height != bench->height) {
+            free(bench->pixels);
+            bench->pixels = malloc((size_t)width * height * 4);
+            bench->width = width;
+            bench->height = height;
+        }
+        bitmap = ffmpegkmp_frame_wrap(&rgba8, bench->width, bench->height, bench->pixels, bench->width * 4);
+        if (bitmap && ffmpegkmp_frame_convert_into(bitmap, prepared) >= 0)
+            atomic_fetch_add(&bench->frames, 1);
+        ffmpegkmp_frame_unref(bitmap);
+        bench->convert_ms += now_ms() - start;
     }
-    bitmap = ffmpegkmp_frame_wrap(&rgba8, bench->width, bench->height, bench->pixels, bench->width * 4);
-    if (bitmap && ffmpegkmp_frame_convert_into(bitmap, frame->frame) >= 0)
-        atomic_fetch_add(&bench->frames, 1);
-    ffmpegkmp_frame_unref(bitmap);
-    bench->convert_ms += now_ms() - start;
+    ffmpegkmp_frame_unref(prepared);
+    return 0;
 }
 
 static int bench_player_open(bench_player *bench, const char *path, int preference) {
     ffplaykmp_configuration configuration;
     memset(bench, 0, sizeof(*bench));
     atomic_init(&bench->frames, 0);
+    pthread_mutex_init(&bench->prepared_mutex, NULL);
     if (bench_io_open(&bench->io, path) < 0)
         return -1;
     ffplaykmp_configuration_default(&configuration);
@@ -91,24 +189,33 @@ static int bench_player_open(bench_player *bench, const char *path, int preferen
         return -1;
     ffplaykmp_player_set_io_callback(bench->player, bench_io_callback, &bench->io);
     ffplaykmp_player_set_video_frame_callback(bench->player, on_frame, bench);
+    bench_refresher_start(&bench->refresher, bench->player);
     return 0;
 }
 
 static void bench_player_close(bench_player *bench) {
     if (bench->player) {
+        bench_refresher_stop(&bench->refresher);
         ffplaykmp_player_stop(bench->player);
         ffplaykmp_player_destroy(bench->player);
     }
     bench_io_close(&bench->io);
+    for (size_t index = 0; index < sizeof(bench->prepared) / sizeof(bench->prepared[0]); index++)
+        ffmpegkmp_frame_unref(bench->prepared[index].frame);
+    pthread_mutex_destroy(&bench->prepared_mutex);
     free(bench->pixels);
 }
 
 /* The Canvas output: frames uploaded in software, which desktop hardware decoding downloads into. */
-static int bench_set_output(bench_player *bench) {
+static int bench_set_output_of(ffplaykmp_player *player) {
     ffplaykmp_output_capabilities capabilities;
     ffplaykmp_output_capabilities_init(&capabilities);
     capabilities.flags = FFPLAYKMP_OUTPUT_SOFTWARE_FRAME_UPLOAD;
-    return ffplaykmp_player_set_output(bench->player, &capabilities);
+    return ffplaykmp_player_set_output(player, &capabilities);
+}
+
+static int bench_set_output(bench_player *bench) {
+    return bench_set_output_of(bench->player);
 }
 
 static ffplaykmp_snapshot bench_snapshot(const bench_player *bench) {
@@ -498,11 +605,162 @@ static void bench_audio(const char *path, int preference) {
     }
 }
 
+/* What a pacing run's output saw: when each frame reached it, and its media time. */
+typedef struct pacing_output {
+    pthread_mutex_t mutex;
+    int64_t *at_us;
+    int64_t *pts_us;
+    int count;
+    int capacity;
+} pacing_output;
+
+/* A null output that takes every frame and, when one is presented, only notes when and which it was. */
+static int on_paced_frame(void *opaque, const ffplaykmp_video_frame *frame) {
+    pacing_output *output = opaque;
+    int64_t now = av_gettime_relative();
+    if (frame->event != FFPLAYKMP_VIDEO_FRAME_PRESENT)
+        return frame->event == FFPLAYKMP_VIDEO_FRAME_PREPARE;
+    pthread_mutex_lock(&output->mutex);
+    if (output->count < output->capacity) {
+        output->at_us[output->count] = now;
+        output->pts_us[output->count] = frame->presentation_time_us;
+        output->count++;
+    }
+    pthread_mutex_unlock(&output->mutex);
+    return 0;
+}
+
+static int compare_int64(const void *a, const void *b) {
+    int64_t x = *(const int64_t *)a;
+    int64_t y = *(const int64_t *)b;
+    return x < y ? -1 : x > y;
+}
+
+/* The median, 95th percentile and maximum of `count` values, in ms; sorts them. */
+static void distribution(int64_t *values, int count, double *median, double *p95, double *max) {
+    *median = *p95 = *max = 0;
+    if (count <= 0)
+        return;
+    qsort(values, count, sizeof(*values), compare_int64);
+    *median = values[count / 2] / 1000.0;
+    *p95 = values[(count * 95) / 100 < count ? (count * 95) / 100 : count - 1] / 1000.0;
+    *max = values[count - 1] / 1000.0;
+}
+
+/* The process's peak resident memory in MB; getrusage reports bytes on Apple platforms and KB elsewhere. */
+static double peak_rss_mb(void) {
+    struct rusage usage;
+    getrusage(RUSAGE_SELF, &usage);
+#if defined(__APPLE__)
+    return usage.ru_maxrss / 1048576.0;
+#else
+    return usage.ru_maxrss / 1024.0;
+#endif
+}
+
+/*
+ * Plays the clip in real time, from the start, for `seconds` or to its end, through a null output
+ * that only notes when each frame reached it: as close as the host comes to the player's own
+ * pacing, with nothing converted or drawn. Audio plays no part, so the player follows the wall
+ * clock from the first frame of the run: frame i is due at the time frame 0 reached the output
+ * plus (pts i - pts 0). One line: frames presented and dropped, frames a second, how late
+ * each frame reached the output against that schedule, how far apart consecutive frames came
+ * against the stream's frame duration, and the process's peak RSS (one run per process, so it is
+ * this run's). `threads` is FFplayConfiguration.threads: 0 for the automatic count.
+ */
+static void bench_pacing(const char *path, int preference, int threads, double seconds) {
+    pacing_output output;
+    bench_refresher refresher;
+    ffplaykmp_configuration configuration;
+    ffplaykmp_snapshot snapshot;
+    bench_io io;
+    ffplaykmp_player *player;
+    int64_t *late;
+    int64_t *gap;
+    int64_t duration_us;
+    double start;
+    double late_median, late_p95, late_max, gap_median, gap_p95, gap_max;
+    int count;
+    int index;
+    memset(&output, 0, sizeof(output));
+    pthread_mutex_init(&output.mutex, NULL);
+    output.capacity = (int)(seconds * 240) + 16;
+    output.at_us = calloc(output.capacity, sizeof(int64_t));
+    output.pts_us = calloc(output.capacity, sizeof(int64_t));
+    if (bench_io_open(&io, path) < 0) {
+        printf("%s: cannot open\n", file_name(path));
+        return;
+    }
+    ffplaykmp_configuration_default(&configuration);
+    configuration.decoder_preference = preference;
+    configuration.decoder_threads = threads;
+    player = ffplaykmp_player_create(&configuration, NULL, NULL);
+    ffplaykmp_player_set_io_callback(player, bench_io_callback, &io);
+    ffplaykmp_player_set_video_frame_callback(player, on_paced_frame, &output);
+    if (ffplaykmp_player_prepare(player, BENCH_IO_URL, 0) < 0 || bench_set_output_of(player) < 0) {
+        printf("%s: prepare failed\n", file_name(path));
+        ffplaykmp_player_destroy(player);
+        bench_io_close(&io);
+        return;
+    }
+    /* The preview the output got on attaching is not part of the run. */
+    av_usleep(200000);
+    pthread_mutex_lock(&output.mutex);
+    output.count = 0;
+    pthread_mutex_unlock(&output.mutex);
+    bench_refresher_start(&refresher, player);
+    ffplaykmp_player_play(player);
+    start = now_ms();
+    do {
+        av_usleep(20000);
+        ffplaykmp_snapshot_init(&snapshot);
+        ffplaykmp_player_get_snapshot(player, &snapshot);
+    } while (snapshot.state == FFPLAYKMP_STATE_PLAYING && now_ms() - start < seconds * 1000);
+    ffplaykmp_player_pause(player);
+    bench_refresher_stop(&refresher);
+
+    pthread_mutex_lock(&output.mutex);
+    count = output.count;
+    pthread_mutex_unlock(&output.mutex);
+    late = calloc(count + 1, sizeof(int64_t));
+    gap = calloc(count + 1, sizeof(int64_t));
+    /* The stream's frame duration: the median distance between consecutive pts. */
+    for (index = 1; index < count; index++)
+        gap[index - 1] = output.pts_us[index] - output.pts_us[index - 1];
+    qsort(gap, count > 1 ? count - 1 : 0, sizeof(int64_t), compare_int64);
+    duration_us = count > 1 ? gap[(count - 1) / 2] : 0;
+    for (index = 0; index < count; index++) {
+        late[index] = output.at_us[index] - (output.at_us[0] + output.pts_us[index] - output.pts_us[0]);
+        if (index > 0) {
+            int64_t off = output.at_us[index] - output.at_us[index - 1] - duration_us;
+            gap[index - 1] = off < 0 ? -off : off;
+        }
+    }
+    distribution(late, count, &late_median, &late_p95, &late_max);
+    distribution(gap, count > 1 ? count - 1 : 0, &gap_median, &gap_p95, &gap_max);
+    printf("%-24s %-8s threads=%d | %4d presented, %4lld dropped, %5.1f fps over %.1f s | late ms median %6.2f p95 %6.2f "
+            "max %7.2f | |gap - %.1f ms| median %6.2f p95 %6.2f max %7.2f | decoder %s | peak RSS %6.0f MB\n",
+            file_name(path), preference == FFPLAYKMP_DECODER_AUTO ? "AUTO" : "SOFTWARE", threads, count,
+            (long long)snapshot.dropped_frames,
+            count > 1 ? (count - 1) * 1e6 / (output.at_us[count - 1] - output.at_us[0]) : 0,
+            (now_ms() - start) / 1000.0, late_median, late_p95, late_max, duration_us / 1000.0, gap_median, gap_p95,
+            gap_max, decoder_name(snapshot.active_decoder), peak_rss_mb());
+    ffplaykmp_player_stop(player);
+    ffplaykmp_player_destroy(player);
+    bench_io_close(&io);
+    free(late);
+    free(gap);
+    free(output.at_us);
+    free(output.pts_us);
+    pthread_mutex_destroy(&output.mutex);
+}
+
 int main(int argc, char **argv) {
     char path[1024];
     int preference;
     if (argc < 5) {
-        fprintf(stderr, "usage: %s <clips> transitions|parallel|audio <clip> AUTO|SOFTWARE [players]\n", argv[0]);
+        fprintf(stderr, "usage: %s <clips> transitions|parallel|audio|pacing <clip> AUTO|SOFTWARE [players|threads] "
+                "[seconds]\n", argv[0]);
         return 2;
     }
     if (getenv("FFMPEGKMP_BENCH_HARDWARE_DECODERS"))
@@ -515,5 +773,7 @@ int main(int argc, char **argv) {
         bench_audio(path, preference);
     else if (!strcmp(argv[2], "parallel") && argc > 5 && atoi(argv[5]) >= 1 && atoi(argv[5]) <= 32)
         bench_parallel(path, preference, atoi(argv[5]));
+    else if (!strcmp(argv[2], "pacing") && argc > 5 && atoi(argv[5]) >= 0)
+        bench_pacing(path, preference, atoi(argv[5]), argc > 6 ? atof(argv[6]) : 10);
     return 0;
 }

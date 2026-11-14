@@ -6,6 +6,7 @@
 
 package io.github.aftrolle.ffmpegkmp.ffplay
 
+import io.github.aftrolle.ffmpegkmp.bindings.NATIVE_PLAYER_REFRESH_IDLE
 import io.github.aftrolle.ffmpegkmp.bindings.NativePlayerConfiguration
 import io.github.aftrolle.ffmpegkmp.bindings.NativePlayerDecoderPreference
 import io.github.aftrolle.ffmpegkmp.bindings.NativePlayerOutputCapabilities
@@ -14,6 +15,7 @@ import io.github.aftrolle.ffmpegkmp.bindings.NativePlayerState
 import io.github.aftrolle.ffmpegkmp.bindings.NativeVideoFrame
 import io.github.aftrolle.ffmpegkmp.bindings.createPlatformPlayerBridge
 import io.github.aftrolle.ffmpegkmp.bindings.nativePlayerStatistics
+import io.github.aftrolle.ffmpegkmp.bindings.presentingFrames
 import io.github.aftrolle.ffmpegkmp.codec.CodecPreference
 import io.github.aftrolle.ffmpegkmp.codec.VideoFrame
 import io.github.aftrolle.ffmpegkmp.codec.VideoInfo
@@ -25,6 +27,8 @@ import io.github.aftrolle.ffmpegkmp.ffmpeg.FFmpegClient
 import io.github.aftrolle.ffmpegkmp.player.setTrackMuted
 import io.github.aftrolle.ffmpegkmp.player.setVolume
 import java.util.concurrent.CopyOnWriteArrayList
+import java.util.concurrent.atomic.AtomicBoolean
+import kotlin.concurrent.thread
 import kotlin.io.path.createTempDirectory
 import kotlin.test.AfterTest
 import kotlin.test.Test
@@ -55,11 +59,19 @@ class FFplayAudioJvmTest {
         createPlatformPlayerBridge(
             NativePlayerConfiguration(NativePlayerDecoderPreference.SOFTWARE),
             update = {},
-            frame = { frame: NativeVideoFrame ->
-                    presented += frame.presentationTimeUs
-                    frame.frame.close()
-                },
+            frame = presentingFrames { frame: NativeVideoFrame ->
+                presented += frame.presentationTimeUs
+                frame.frame.close()
+            },
         ).use { bridge ->
+            // The refreshes an output's timer would make: as soon as each says, polling when idle.
+            val refreshing = AtomicBoolean(true)
+            val refresher = thread(isDaemon = true) {
+                while (refreshing.get()) {
+                    val remainingUs = bridge.refresh()
+                    Thread.sleep(if (remainingUs == NATIVE_PLAYER_REFRESH_IDLE) 2 else (remainingUs / 1_000).coerceIn(0, 10))
+                }
+            }
             val io = CommandIo { input(FIXTURE, Buffer().write(bytes)) }
             assertEquals(0, bridge.setOutput(NativePlayerOutputCapabilities()))
             assertEquals(0, bridge.prepare(NativePlayerSource(FIXTURE, io.toNativeMounts())))
@@ -77,8 +89,17 @@ class FFplayAudioJvmTest {
 
             assertEquals(NativePlayerState.ENDED, bridge.snapshot().state)
             assertTrue(elapsed < 0.7.seconds, "Playback took $elapsed; it should end ~0.2 s after the clock")
-            assertTrue(bridge.snapshot().droppedFrames > 0, "Frames before the master clock should be dropped")
-            assertTrue(presented.all { it >= 600_000 }, "Presented early frames: $presented")
+            // As ffplay's video_refresh: while the frame timer catches up with the clock, each refresh
+            // shows the newest frame due and drops the older ones, so what is shown only moves forward
+            // and ends on the last frame, and every frame after the one prepare showed is either shown
+            // or counted as dropped, none lost.
+            val dropped = bridge.snapshot().droppedFrames
+            assertTrue(dropped > 0, "Frames before the master clock should be dropped")
+            assertEquals(presented.distinct().sorted(), presented.toList())
+            assertEquals(960_000L, presented.last())
+            assertEquals(FIXTURE_FRAMES_AFTER_FIRST, presented.size + dropped, "shown $presented, dropped $dropped")
+            refreshing.set(false)
+            refresher.join()
         }
     }
 
@@ -86,7 +107,7 @@ class FFplayAudioJvmTest {
     fun playsAudioWithVideoAndAppliesLiveControls() = runBlocking {
         val media = encodeAudioVideoFixture()
         val fileHandle = FileSystem.SYSTEM.openReadOnly(media)
-        val player = FFplayPlayer(FFplayConfiguration(decoderPreference = CodecPreference.SOFTWARE))
+        val player = FFplayPlayer(FFplayConfiguration(decoder = CodecPreference.SOFTWARE))
         val output = CountingOutput()
         player.attachOutput(output)
         try {
@@ -130,7 +151,7 @@ class FFplayAudioJvmTest {
         for ((container, audioCodec) in listOf("nut" to "pcm_s16le", "mp4" to "aac")) {
             val media = encodeAudioVideoFixture(container = container, audioCodec = audioCodec)
             val fileHandle = FileSystem.SYSTEM.openReadOnly(media)
-            val player = FFplayPlayer(FFplayConfiguration(decoderPreference = CodecPreference.SOFTWARE))
+            val player = FFplayPlayer(FFplayConfiguration(decoder = CodecPreference.SOFTWARE))
             try {
                 val before = nativePlayerStatistics()
                 player.prepare(MediaSource(AV_FIXTURE, CommandIo { input(AV_FIXTURE, fileHandle) }))
@@ -160,7 +181,7 @@ class FFplayAudioJvmTest {
             createPlatformPlayerBridge(
                 NativePlayerConfiguration(NativePlayerDecoderPreference.SOFTWARE),
                 update = {},
-                frame = { frame: NativeVideoFrame ->
+                frame = presentingFrames { frame: NativeVideoFrame ->
                     presented += frame.presentationTimeUs
                     frame.frame.close()
                 },
@@ -245,6 +266,10 @@ class FFplayAudioJvmTest {
 
     private companion object {
         const val FIXTURE = "playback-color-patches-1s.mp4"
+
+        /** [FIXTURE]'s frames after the first, which prepare shows: 25 fps for 1 s. */
+        const val FIXTURE_FRAMES_AFTER_FIRST = 24L
+
         const val AV_FIXTURE = "audio-video.mkv"
     }
 }

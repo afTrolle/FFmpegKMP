@@ -43,7 +43,7 @@ public data class MediaInformation(override val raw: JsonObject) : JsonBackedPro
     public val error: ProbeError? get() = raw.obj("error")?.let(::ProbeError)
 }
 
-public object MediaInformationSerializer : JsonObjectBackedSerializer<MediaInformation>(::MediaInformation)
+internal object MediaInformationSerializer : JsonObjectBackedSerializer<MediaInformation>(::MediaInformation)
 
 @Serializable(with = ProbeFormatSerializer::class)
 public data class ProbeFormat(override val raw: JsonObject) : JsonBackedProbeValue(raw) {
@@ -60,7 +60,7 @@ public data class ProbeFormat(override val raw: JsonObject) : JsonBackedProbeVal
     public val tags: Map<String, String> get() = tags()
 }
 
-public object ProbeFormatSerializer : JsonObjectBackedSerializer<ProbeFormat>(::ProbeFormat)
+internal object ProbeFormatSerializer : JsonObjectBackedSerializer<ProbeFormat>(::ProbeFormat)
 
 @Serializable(with = ProbeStreamSerializer::class)
 public data class ProbeStream(override val raw: JsonObject) : JsonBackedProbeValue(raw) {
@@ -111,7 +111,7 @@ public data class ProbeStream(override val raw: JsonObject) : JsonBackedProbeVal
     public val sideData: List<ProbeSideData> get() = raw.array("side_data_list").mapNotNull { it as? JsonObject }.map(::probeSideData)
 }
 
-public object ProbeStreamSerializer : JsonObjectBackedSerializer<ProbeStream>(::ProbeStream)
+internal object ProbeStreamSerializer : JsonObjectBackedSerializer<ProbeStream>(::ProbeStream)
 
 public data class ProbeDisposition(public override val raw: JsonObject) : JsonBackedProbeValue(raw) {
     public val default: Boolean? get() = boolean("default")
@@ -144,7 +144,7 @@ public data class ProbeChapter(override val raw: JsonObject) : JsonBackedProbeVa
     public val tags: Map<String, String> get() = tags()
 }
 
-public object ProbeChapterSerializer : JsonObjectBackedSerializer<ProbeChapter>(::ProbeChapter)
+internal object ProbeChapterSerializer : JsonObjectBackedSerializer<ProbeChapter>(::ProbeChapter)
 
 @Serializable(with = ProbeProgramSerializer::class)
 public data class ProbeProgram(override val raw: JsonObject) : JsonBackedProbeValue(raw) {
@@ -157,7 +157,7 @@ public data class ProbeProgram(override val raw: JsonObject) : JsonBackedProbeVa
     public val streams: List<ProbeStream> get() = raw.objects("streams", ::ProbeStream)
 }
 
-public object ProbeProgramSerializer : JsonObjectBackedSerializer<ProbeProgram>(::ProbeProgram)
+internal object ProbeProgramSerializer : JsonObjectBackedSerializer<ProbeProgram>(::ProbeProgram)
 
 @Serializable(with = ProbeStreamGroupSerializer::class)
 public data class ProbeStreamGroup(override val raw: JsonObject) : JsonBackedProbeValue(raw) {
@@ -170,7 +170,7 @@ public data class ProbeStreamGroup(override val raw: JsonObject) : JsonBackedPro
     public val components: List<JsonObject> get() = raw.array("components").mapNotNull { it as? JsonObject }
 }
 
-public object ProbeStreamGroupSerializer : JsonObjectBackedSerializer<ProbeStreamGroup>(::ProbeStreamGroup)
+internal object ProbeStreamGroupSerializer : JsonObjectBackedSerializer<ProbeStreamGroup>(::ProbeStreamGroup)
 
 @Serializable(with = ProbePacketSerializer::class)
 public data class ProbePacket(override val raw: JsonObject) : JsonBackedProbeValue(raw) {
@@ -189,7 +189,7 @@ public data class ProbePacket(override val raw: JsonObject) : JsonBackedProbeVal
     public val sideData: List<ProbeSideData> get() = raw.array("side_data_list").mapNotNull { it as? JsonObject }.map(::probeSideData)
 }
 
-public object ProbePacketSerializer : JsonObjectBackedSerializer<ProbePacket>(::ProbePacket)
+internal object ProbePacketSerializer : JsonObjectBackedSerializer<ProbePacket>(::ProbePacket)
 
 @Serializable(with = ProbeFrameSerializer::class)
 public data class ProbeFrame(override val raw: JsonObject) : JsonBackedProbeValue(raw) {
@@ -220,7 +220,7 @@ public data class ProbeFrame(override val raw: JsonObject) : JsonBackedProbeValu
     public val sideData: List<ProbeSideData> get() = raw.array("side_data_list").mapNotNull { it as? JsonObject }.map(::probeSideData)
 }
 
-public object ProbeFrameSerializer : JsonObjectBackedSerializer<ProbeFrame>(::ProbeFrame)
+internal object ProbeFrameSerializer : JsonObjectBackedSerializer<ProbeFrame>(::ProbeFrame)
 
 @Serializable(with = ProbePixelFormatSerializer::class)
 public data class ProbePixelFormat(override val raw: JsonObject) : JsonBackedProbeValue(raw) {
@@ -231,7 +231,7 @@ public data class ProbePixelFormat(override val raw: JsonObject) : JsonBackedPro
     public val components: List<ProbePixelComponent> get() = raw.objects("components", ::ProbePixelComponent)
 }
 
-public object ProbePixelFormatSerializer : JsonObjectBackedSerializer<ProbePixelFormat>(::ProbePixelFormat)
+internal object ProbePixelFormatSerializer : JsonObjectBackedSerializer<ProbePixelFormat>(::ProbePixelFormat)
 
 public data class ProbePixelComponent(public override val raw: JsonObject) : JsonBackedProbeValue(raw) {
     public val index: Int? get() = int("index")
@@ -246,7 +246,7 @@ public data class ProbeProgramVersion(override val raw: JsonObject) : JsonBacked
     public val configuration: String? get() = string("configuration")
 }
 
-public object ProbeProgramVersionSerializer : JsonObjectBackedSerializer<ProbeProgramVersion>(::ProbeProgramVersion)
+internal object ProbeProgramVersionSerializer : JsonObjectBackedSerializer<ProbeProgramVersion>(::ProbeProgramVersion)
 
 @Serializable(with = ProbeLibraryVersionSerializer::class)
 public data class ProbeLibraryVersion(override val raw: JsonObject) : JsonBackedProbeValue(raw) {
@@ -258,7 +258,7 @@ public data class ProbeLibraryVersion(override val raw: JsonObject) : JsonBacked
     public val identification: String? get() = string("ident")
 }
 
-public object ProbeLibraryVersionSerializer : JsonObjectBackedSerializer<ProbeLibraryVersion>(::ProbeLibraryVersion)
+internal object ProbeLibraryVersionSerializer : JsonObjectBackedSerializer<ProbeLibraryVersion>(::ProbeLibraryVersion)
 
 @Serializable(with = ProbeErrorSerializer::class)
 public data class ProbeError(override val raw: JsonObject) : JsonBackedProbeValue(raw) {
@@ -266,7 +266,7 @@ public data class ProbeError(override val raw: JsonObject) : JsonBackedProbeValu
     public val message: String? get() = string("string")
 }
 
-public object ProbeErrorSerializer : JsonObjectBackedSerializer<ProbeError>(::ProbeError)
+internal object ProbeErrorSerializer : JsonObjectBackedSerializer<ProbeError>(::ProbeError)
 
 public sealed interface ProbeSideData {
     public val type: String?
@@ -312,7 +312,7 @@ private fun probeSideData(raw: JsonObject): ProbeSideData = when (raw["side_data
     else -> ProbeSideData.Unknown(raw)
 }
 
-public abstract class JsonObjectBackedSerializer<T>(
+internal abstract class JsonObjectBackedSerializer<T>(
     private val factory: (JsonObject) -> T,
 ) : KSerializer<T> {
     final override val descriptor: SerialDescriptor = JsonObject.serializer().descriptor

@@ -1359,7 +1359,7 @@ async function handleVideoMessage(data) {
 // FFmpeg's AAC encoder the audio ones, and FFmpeg's muxer writes them into memory, which finish
 // hands to the page. One per worker.
 // sizeof the ffmpegkmp_writer.h structs in wasm32, which their init functions store first.
-const VIDEO_CONFIG_SIZE = 168;
+const VIDEO_CONFIG_SIZE = 176;
 const AUDIO_CONFIG_SIZE = 24;
 const WRITER_RESULT_SIZE = 24;
 // Frames a video encoder may hold before a write waits for it.

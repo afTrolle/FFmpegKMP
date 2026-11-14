@@ -19,15 +19,20 @@ import io.github.aftrolle.ffmpegkmp.bindings.cinterop.ffmpegkmp_writer_add_video
 import io.github.aftrolle.ffmpegkmp.bindings.cinterop.ffmpegkmp_writer_can_encode
 import io.github.aftrolle.ffmpegkmp.bindings.cinterop.ffmpegkmp_writer_create
 import io.github.aftrolle.ffmpegkmp.bindings.cinterop.ffmpegkmp_writer_destroy
+import io.github.aftrolle.ffmpegkmp.bindings.cinterop.ffmpegkmp_writer_discard_packets
 import io.github.aftrolle.ffmpegkmp.bindings.cinterop.ffmpegkmp_writer_end_track
 import io.github.aftrolle.ffmpegkmp.bindings.cinterop.ffmpegkmp_writer_finish
 import io.github.aftrolle.ffmpegkmp.bindings.cinterop.ffmpegkmp_writer_release_track
 import io.github.aftrolle.ffmpegkmp.bindings.cinterop.ffmpegkmp_writer_result
 import io.github.aftrolle.ffmpegkmp.bindings.cinterop.ffmpegkmp_writer_result_init
+import io.github.aftrolle.ffmpegkmp.bindings.cinterop.ffmpegkmp_writer_track_packets
 import io.github.aftrolle.ffmpegkmp.bindings.cinterop.ffmpegkmp_writer_write_audio
 import io.github.aftrolle.ffmpegkmp.bindings.cinterop.ffmpegkmp_writer_write_video
+import kotlinx.cinterop.ByteVar
 import kotlinx.cinterop.CPointer
 import kotlinx.cinterop.IntVar
+import kotlinx.cinterop.allocArray
+import kotlinx.cinterop.cstr
 import kotlinx.cinterop.MemScope
 import kotlinx.cinterop.StableRef
 import kotlinx.cinterop.addressOf
@@ -84,7 +89,10 @@ private class CInteropMediaWriterEngine(
     override fun addVideoTrack(config: NativeVideoEncoderConfig): NativeAddedVideoTrack = memScoped {
         val info = alloc<ffmpegkmp_video_track_info>().also { ffmpegkmp_video_track_info_init(it.ptr) }
         val index = ffmpegkmp_writer_add_video_track(writer, config.toNative(this).ptr, info.ptr)
-        requireNative(index, "add a ${config.width}x${config.height} ${config.codec} ${config.dynamicRange} track", ::NativeMediaWriterException)
+        requireNative(index, "add a ${config.width}x${config.height} ${config.codec} ${config.dynamicRange} track") { message, code ->
+            val reason = info.error.toKString().takeIf(String::isNotEmpty)
+            NativeMediaWriterException(reason?.let { "$message: $it" } ?: message, code, reason)
+        }
         NativeAddedVideoTrack(index, info.toNative())
     }
 
@@ -109,6 +117,10 @@ private class CInteropMediaWriterEngine(
     override fun endTrack(track: Int): Int = ffmpegkmp_writer_end_track(writer, track)
 
     override fun releaseTrack(track: Int) = ffmpegkmp_writer_release_track(writer, track)
+
+    override fun packetsWritten(track: Int): Long? = ffmpegkmp_writer_track_packets(writer, track).takeIf { it >= 0 }
+
+    override fun discardPacketsForTesting(track: Int): Boolean = ffmpegkmp_writer_discard_packets(writer, track) == 0
 
     override fun finish(): NativeWriterResult = memScoped {
         val result = alloc<ffmpegkmp_writer_result>().also { ffmpegkmp_writer_result_init(it.ptr) }
@@ -137,6 +149,14 @@ private fun NativeVideoEncoderConfig.toNative(scope: MemScope): ffmpegkmp_video_
         native.bit_rate = bitRate
         native.keyframe_interval_us = keyframeIntervalMicros
         native.bit_depth = bitDepth
+        // Allocated in the call's scope: the writer copies the options it keeps.
+        encoderName?.let { native.encoder_name = it.cstr.getPointer(scope) }
+        encodedOptions().takeIf(ByteArray::isNotEmpty)?.let { options ->
+            val bytes = scope.allocArray<ByteVar>(options.size)
+            options.forEachIndexed { index, byte -> bytes[index] = byte }
+            native.options = bytes
+            native.options_size = options.size
+        }
         hdrMetadata?.let { metadata ->
             native.has_hdr_metadata = 1
             val hdr = native.hdr_metadata

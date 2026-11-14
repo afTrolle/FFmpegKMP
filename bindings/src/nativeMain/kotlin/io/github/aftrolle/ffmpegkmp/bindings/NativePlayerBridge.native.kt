@@ -26,6 +26,9 @@ import io.github.aftrolle.ffmpegkmp.bindings.cinterop.ffplaykmp_player_pause
 import io.github.aftrolle.ffmpegkmp.bindings.cinterop.ffplaykmp_player_set_master_clock
 import io.github.aftrolle.ffmpegkmp.bindings.cinterop.ffplaykmp_player_play
 import io.github.aftrolle.ffmpegkmp.bindings.cinterop.ffplaykmp_player_prepare
+import io.github.aftrolle.ffmpegkmp.bindings.cinterop.ffplaykmp_player_refresh
+import io.github.aftrolle.ffmpegkmp.bindings.cinterop.ffplaykmp_player_refresh_at
+import io.github.aftrolle.ffmpegkmp.bindings.cinterop.ffplaykmp_clock_now_us
 import io.github.aftrolle.ffmpegkmp.bindings.cinterop.ffplaykmp_player_reset_cancel
 import io.github.aftrolle.ffmpegkmp.bindings.cinterop.ffplaykmp_player_seek
 import io.github.aftrolle.ffmpegkmp.bindings.cinterop.ffplaykmp_player_set_io_callback
@@ -44,7 +47,11 @@ import io.github.aftrolle.ffmpegkmp.bindings.cinterop.ffplaykmp_decoder_budget_s
 import io.github.aftrolle.ffmpegkmp.bindings.cinterop.ffplaykmp_hardware_decoder_available
 import io.github.aftrolle.ffmpegkmp.bindings.cinterop.ffplaykmp_video_frame
 import io.github.aftrolle.ffmpegkmp.bindings.cinterop.ffplaykmp_platform_video_frame
+import kotlinx.cinterop.ByteVar
 import kotlinx.cinterop.COpaquePointer
+import kotlinx.cinterop.allocArray
+import kotlinx.cinterop.cstr
+import kotlinx.cinterop.set
 import kotlinx.cinterop.CPointer
 import kotlinx.cinterop.toKString
 import kotlinx.cinterop.ExperimentalForeignApi
@@ -61,7 +68,7 @@ import kotlinx.cinterop.staticCFunction
 public actual fun createPlatformPlayerBridge(
     configuration: NativePlayerConfiguration,
     update: (NativePlayerSnapshot) -> Unit,
-    frame: (NativeVideoFrame) -> Unit,
+    frame: NativeVideoFrameSink,
     platformFrame: (NativePlatformVideoFrame) -> Boolean,
 ): NativePlayerBridge {
     val callbackState = NativePlayerCallbackState(update, frame, platformFrame)
@@ -78,7 +85,18 @@ private class NativeCInteropPlayerEngine(
         ffplaykmp_configuration_default(nativeConfiguration.ptr)
         nativeConfiguration.decoder_preference = configuration.decoderPreference.ordinal.toUInt()
         nativeConfiguration.decoder_threads = configuration.decoderThreads
+        nativeConfiguration.decoder_thread_type = configuration.decoderThreadType
         nativeConfiguration.codec_release_delay_us = configuration.codecReleaseDelayUs
+        nativeConfiguration.frame_queue_size = configuration.frameQueueSize
+        nativeConfiguration.catch_up_lag_us = configuration.catchUpLagUs
+        // Allocated in the call's scope: the player copies the name and the options it keeps.
+        configuration.decoderName?.let { nativeConfiguration.decoder_name = it.cstr.getPointer(this) }
+        packCodecOptions(configuration.decoderOptions).takeIf(ByteArray::isNotEmpty)?.let { options ->
+            val bytes = allocArray<ByteVar>(options.size)
+            options.forEachIndexed { index, byte -> bytes[index] = byte }
+            nativeConfiguration.decoder_options = bytes
+            nativeConfiguration.decoder_options_size = options.size
+        }
         ffplaykmp_player_create(
             nativeConfiguration.ptr,
             staticCFunction(::receiveNativePlayerState),
@@ -136,6 +154,10 @@ private class NativeCInteropPlayerEngine(
     override fun stop(): Int = ffplaykmp_player_stop(player)
     override fun cancel() = ffplaykmp_player_cancel(player)
     override fun setMasterClock(mediaTimeUs: Long) = ffplaykmp_player_set_master_clock(player, mediaTimeUs)
+    override fun refresh(nowUs: Long, leadUs: Long): Long = ffplaykmp_player_refresh(player, nowUs, leadUs)
+    override fun refreshAt(nowUs: Long, leadUs: Long, positionNs: Long): Long =
+        ffplaykmp_player_refresh_at(player, nowUs, leadUs, positionNs)
+    override fun clockNowUs(): Long = ffplaykmp_clock_now_us()
 
     override fun snapshot(): NativePlayerSnapshot = memScoped {
         val nativeSnapshot = alloc<ffplaykmp_snapshot>()
@@ -165,7 +187,7 @@ private class NativeCInteropPlayerEngine(
 
 private class NativePlayerCallbackState(
     val update: (NativePlayerSnapshot) -> Unit,
-    val frame: (NativeVideoFrame) -> Unit,
+    val frame: NativeVideoFrameSink,
     val platformFrame: (NativePlatformVideoFrame) -> Boolean,
 ) {
     val guard = NativeHandleGuard()
@@ -214,23 +236,32 @@ private fun receiveNativePlatformVideoFrame(
 private fun receiveNativeVideoFrame(
     opaque: COpaquePointer?,
     nativeFrame: CPointer<ffplaykmp_video_frame>?,
-) {
-    if (nativeFrame == null) return
+): Int {
+    if (nativeFrame == null) return 0
     val value = nativeFrame.pointed
-    val borrowed = value.frame ?: return
-    opaque.withCallbackState(Unit) { state ->
-        // The frame is borrowed for the callback; the receiver gets a reference of its own.
-        val retained = ffmpegkmp_frame_ref(borrowed).toNativeFrame() ?: return@withCallbackState
-        state.frame(
-            NativeVideoFrame(
-                frame = retained,
-                width = value.width,
-                height = value.height,
-                presentationTimeUs = value.presentation_time_us,
-                queueSerial = value.queue_serial,
-            ),
-        )
-    }
+    // Not withCallbackState: a release still reaches the sink while the bridge closes.
+    val state = opaque?.asStableRef<NativePlayerCallbackState>()?.get() ?: return 0
+    return runCatching {
+        dispatchVideoFrame(
+            state.frame,
+            value.event.toInt(),
+            value.token.toLong(),
+            state.guard.isOpen,
+            value.display_time_us,
+        ) {
+            // The frame is borrowed for the callback; the receiver gets a reference of its own.
+            value.frame?.let { borrowed -> ffmpegkmp_frame_ref(borrowed).toNativeFrame() }?.let { retained ->
+                NativeVideoFrame(
+                    frame = retained,
+                    width = value.width,
+                    height = value.height,
+                    presentationTimeUs = value.presentation_time_us,
+                    queueSerial = value.queue_serial,
+                    token = value.token.toLong(),
+                )
+            }
+        }
+    }.getOrDefault(0)
 }
 
 private fun receiveNativePlayerState(
@@ -263,6 +294,7 @@ internal fun ffplaykmp_snapshot.toNativeSnapshot(): NativePlayerSnapshot = nativ
     videoHeight = video_height,
     activeDecoder = active_decoder.toInt(),
     droppedFrames = dropped_frames.toLong(),
+    catchUps = catch_ups.toLong(),
     pixelFormat = pixel_format,
     pixelFormatName = ffplaykmp_pixel_format_name(pixel_format)?.toKString(),
     bitDepth = bit_depth,
@@ -288,6 +320,7 @@ internal fun ffplaykmp_snapshot.toNativeSnapshot(): NativePlayerSnapshot = nativ
     maxContentLightLevel = max_content_light_level.toInt(),
     maxFrameAverageLightLevel = max_frame_average_light_level.toInt(),
     decoderFallback = decoder_fallback.toInt(),
+    errorMessage = error_message.toKString(),
 )
 
 @InternalFFmpegKmpApi

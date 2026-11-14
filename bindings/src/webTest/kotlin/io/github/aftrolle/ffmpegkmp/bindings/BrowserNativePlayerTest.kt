@@ -483,7 +483,7 @@ class BrowserNativePlayerTest {
                 if (update.state == NativePlayerState.FAILED) failures += update
                 snapshot.value = update
             },
-            frame = { frame ->
+            frame = presentingFrames { frame ->
                 softwareFrames++
                 val bytes = frame.frame.usePlanes { planes -> (planes.single().memory as ByteArray).size }
                 show(frame.number(), frame.width, frame.height, frame.presentationTimeUs, frame.queueSerial, bytes)

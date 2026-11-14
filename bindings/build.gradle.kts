@@ -5,6 +5,7 @@ import org.gradle.jvm.tasks.Jar
 import org.gradle.api.tasks.bundling.Zip
 import org.gradle.api.tasks.testing.Test
 import org.gradle.api.tasks.compile.JavaCompile
+import org.jetbrains.kotlin.gradle.dsl.abi.ExperimentalAbiValidation
 import org.jetbrains.kotlin.gradle.plugin.mpp.KotlinNativeTarget
 import java.util.Properties
 
@@ -510,6 +511,22 @@ tasks.named<Test>("jvmTest") {
 }
 
 kotlin {
+    // On the JVM a nested class is its own class file and does not carry its outer class's
+    // InternalFFmpegKmpApi marker, so the convention's annotation filter misses these two. The klib
+    // dumps already leave them out. The JavaCPP-generated declarations are compiled into a separate
+    // jar and the cinterop declarations into a separate klib, so neither is in the dumps.
+    @OptIn(ExperimentalAbiValidation::class)
+    abiValidation {
+        filters {
+            exclude {
+                byNames.addAll(
+                    "io.github.aftrolle.ffmpegkmp.bindings.NativeExecutionEvent.**",
+                    "io.github.aftrolle.ffmpegkmp.bindings.NativeWriterOutput.**",
+                )
+            }
+        }
+    }
+
     sourceSets {
         commonMain.dependencies {
             implementation(libs.kotlinx.coroutines.core)

@@ -9,6 +9,7 @@ import io.github.aftrolle.ffmpegkmp.bindings.generated.bridge.ffmpegkmp_video_de
 import io.github.aftrolle.ffmpegkmp.bindings.generated.bridge.ffplaykmp_io_callback
 import io.github.aftrolle.ffmpegkmp.bindings.generated.bridge.ffplaykmp_snapshot
 import io.github.aftrolle.ffmpegkmp.bindings.generated.bridge.global.bridge
+import org.bytedeco.javacpp.BytePointer
 
 /** [attachSurface] hands a Surface output's target to the created decoder; 0 on success. */
 internal fun createJavaCppVideoDecoder(
@@ -20,6 +21,10 @@ internal fun createJavaCppVideoDecoder(
     decoderPreference: NativePlayerDecoderPreference,
     decoderThreads: Int,
     timeoutMicros: Long,
+    decoderThreadType: Int,
+    frameRing: Int,
+    decoderName: String?,
+    decoderOptions: Map<String, String>,
     attachSurface: (ffmpegkmp_video_decoder) -> Int,
 ): NativeVideoDecoder {
     JavaCppBridgeLoader.load()
@@ -45,6 +50,41 @@ internal fun createJavaCppVideoDecoder(
         throw NativeVideoDecoderException("Could not create a decoder for '${source.input}' (error ${error[0]})", error[0])
     }
     val engine = JavaCppVideoDecoderEngine(decoder, ioCallback)
+    if (frameRing != DEFAULT_FRAME_RING) {
+        val set = bridge.ffmpegkmp_video_decoder_set_frame_ring(decoder, frameRing)
+        if (set < 0) {
+            engine.release()
+            throw NativeVideoDecoderException("Could not set the decoder's ring of $frameRing frames (error $set)", set)
+        }
+    }
+    if (decoderThreadType != 0) {
+        val set = bridge.ffmpegkmp_video_decoder_set_thread_type(decoder, decoderThreadType)
+        if (set < 0) {
+            engine.release()
+            throw NativeVideoDecoderException("Could not set the decoder's thread type $decoderThreadType (error $set)", set)
+        }
+    }
+    if (decoderName != null) {
+        val packed = packCodecOptions(decoderOptions)
+        // Copied by the decoder before the call returns.
+        val name = BytePointer(decoderName, Charsets.UTF_8)
+        val options = packed.takeIf(ByteArray::isNotEmpty)?.let { BytePointer(*it) }
+        val named = try {
+            bridge.ffmpegkmp_video_decoder_set_named_decoder(decoder, name, options, packed.size)
+        } finally {
+            name.close()
+            options?.close()
+        }
+        if (named < 0) {
+            val reason = engine.error()
+            engine.release()
+            throw NativeVideoDecoderException(
+                "Could not name the decoder '$decoderName'" + (reason?.let { ": $it" } ?: " (error $named)"),
+                named,
+                reason,
+            )
+        }
+    }
     val attached = attachSurface(decoder)
     if (attached < 0) {
         engine.release()
@@ -96,11 +136,15 @@ private class JavaCppVideoDecoderEngine(
         )
     }
 
+    override fun setSize(width: Int, height: Int) = bridge.ffmpegkmp_video_decoder_set_size(decoder, width, height)
+
     override fun interrupt() = bridge.ffmpegkmp_video_decoder_interrupt(decoder)
 
     override fun abort() = bridge.ffmpegkmp_video_decoder_abort(decoder)
 
     override fun timeLeft(): Long = bridge.ffmpegkmp_video_decoder_time_left(decoder)
+
+    override fun error(): String? = bridge.ffmpegkmp_video_decoder_error(decoder)?.string?.takeIf(String::isNotEmpty)
 
     override fun release() {
         bridge.ffmpegkmp_video_decoder_destroy(decoder)

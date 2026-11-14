@@ -22,6 +22,12 @@ import kotlin.concurrent.withLock
  * Opens a [SurfaceVideoEncoder] for a track the FFmpeg encoder of [info] took, or returns null:
  * Android 14 (API 34) and later, 8-bit SDR H.264 or HEVC, or HDR10 or HLG HEVC Main10, with a
  * hardware encoder that takes Surface input.
+ *
+ * A track whose config names its encoder keeps that encoder: the surface opens the same MediaCodec
+ * component, the one `codec_name` pins or else MediaCodec's default for the type, as FFmpeg's
+ * wrapper opens it, whether it runs in hardware or not. Any other named encoder, or one with
+ * AVOptions besides `codec_name`, which MediaCodec's own API cannot take, gets no surface, and its
+ * frames reach the FFmpeg encoder the caller named, one copy each.
  */
 internal val openSurfaceVideoEncoder: PacketEncoderFactory = { config, info, sink, timeoutMicros ->
     val qualifies = if (config.dynamicRange == NativeDynamicRange.SDR) {
@@ -29,12 +35,58 @@ internal val openSurfaceVideoEncoder: PacketEncoderFactory = { config, info, sin
     } else {
         config.codec == NativeVideoCodec.HEVC
     }
-    if (Build.VERSION.SDK_INT >= 34 && info.hardware && qualifies) {
+    val surfaceEncoder = if (config.encoderName == null) info.hardware else config.surfaceTakesTheNamedEncoder
+    if (Build.VERSION.SDK_INT >= 34 && surfaceEncoder && qualifies) {
         SurfaceVideoEncoder.open(config, info, sink, timeoutMicros)
     } else {
-        println("FFmpegKMP: no input surface for ${config.width}x${config.height} ${config.dynamicRange} ${config.codec}: API ${Build.VERSION.SDK_INT}, ${info.encoder} hardware ${info.hardware}, qualifies $qualifies")
+        println(
+            "FFmpegKMP: no input surface for ${config.width}x${config.height} ${config.dynamicRange} ${config.codec}: API ${Build.VERSION.SDK_INT}, " +
+                "${info.encoder} hardware ${info.hardware}, named ${config.encoderName} ${config.encoderOptions}, qualifies $qualifies",
+        )
         null
     }
+}
+
+/** The MediaCodec component a named `*_mediacodec` encoder is pinned to with FFmpeg's `codec_name` AVOption, or null. */
+private val NativeVideoEncoderConfig.pinnedComponent: String?
+    get() = encoderOptions["codec_name"]?.takeIf { encoderName?.endsWith("_mediacodec") == true }
+
+/** Whether the input surface opens exactly the encoder the config names: a MediaCodec one with no AVOption but its component. */
+private val NativeVideoEncoderConfig.surfaceTakesTheNamedEncoder: Boolean
+    get() = encoderName?.endsWith("_mediacodec") == true && encoderOptions.keys.all { it == "codec_name" }
+
+/**
+ * Corrects [NativeVideoTrackInfo.hardware] for a named MediaCodec encoder, which FFmpeg reports as
+ * hardware whichever component runs behind it. The component is the one `codec_name` pins, or else
+ * the one MediaCodec's `createEncoderByType` opens, as FFmpeg's wrapper does: the first encoder
+ * `MediaCodecList` lists for the type, its order being the platform's preference. Android 10 (API
+ * 29) and later say whether it is hardware; before, Android's own software encoders are known by
+ * their documented name prefixes, `OMX.google.` and `c2.android.`, and the rest count as hardware.
+ */
+internal val describeMediaCodecTrack: TrackDescriber = { config, info ->
+    val codecs = if (config.encoderName?.endsWith("_mediacodec") == true) MediaCodecList(MediaCodecList.ALL_CODECS).codecInfos else emptyArray()
+    val mime = mimeOf(config.codec)
+    val component = config.pinnedComponent?.let { name -> codecs.firstOrNull { it.name == name } }
+        ?: codecs.takeIf { config.pinnedComponent == null }?.firstOrNull { it.isEncoder && !it.isAlias() && mime in it.supportedTypes }
+    val hardware = component?.let { codec ->
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            codec.isHardwareAccelerated
+        } else {
+            SOFTWARE_PREFIXES.none(codec.name::startsWith)
+        }
+    }
+    if (hardware == null || hardware == info.hardware) info else NativeVideoTrackInfo(info.inputFormat, hardware, info.encoder, info.bitRate)
+}
+
+/** Android's own software codecs' name prefixes: OMX's before Android 10, Codec2's since. */
+private val SOFTWARE_PREFIXES = listOf("OMX.google.", "c2.android.")
+
+private fun MediaCodecInfo.isAlias(): Boolean = Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q && isAlias
+
+private fun mimeOf(codec: NativeVideoCodec): String = when (codec) {
+    NativeVideoCodec.H264 -> MediaFormat.MIMETYPE_VIDEO_AVC
+    NativeVideoCodec.HEVC -> MediaFormat.MIMETYPE_VIDEO_HEVC
+    NativeVideoCodec.AV1 -> MediaFormat.MIMETYPE_VIDEO_AV1
 }
 
 /**
@@ -62,6 +114,9 @@ internal class SurfaceVideoEncoder private constructor(
     private val timeoutNanos: Long,
     private val colorTransfer: Int,
 ) : PacketTrackEncoder {
+    /** The MediaCodec component that took the surface. */
+    override val encoderName: String = codec.name
+
     private val lock = ReentrantLock()
     private val changed = lock.newCondition()
     private val drain = Thread(::drainPackets, "FFmpegKMP SurfaceVideoEncoder")
@@ -276,10 +331,11 @@ internal class SurfaceVideoEncoder private constructor(
 
         /**
          * The encoder for [config], started, with its first buffer lent and given back to prove the GPU can draw into it;
-         * null where any step fails. An HDR10 track asks for the HDR10 profile first and settles for Main10.
+         * null where any step fails. An HDR10 track asks for the HDR10 profile first and settles for Main10. A track
+         * whose config names its encoder tries that component only (see [openSurfaceVideoEncoder]).
          */
         fun open(config: NativeVideoEncoderConfig, info: NativeVideoTrackInfo, sink: PacketSink, timeoutMicros: Long): SurfaceVideoEncoder? {
-            val mime = if (config.codec == NativeVideoCodec.HEVC) MediaFormat.MIMETYPE_VIDEO_HEVC else MediaFormat.MIMETYPE_VIDEO_AVC
+            val mime = mimeOf(config.codec)
             val profiles = when (config.dynamicRange) {
                 NativeDynamicRange.SDR -> listOf(null)
                 NativeDynamicRange.HDR10 -> listOf(MediaCodecInfo.CodecProfileLevel.HEVCProfileMain10HDR10, MediaCodecInfo.CodecProfileLevel.HEVCProfileMain10)
@@ -288,10 +344,16 @@ internal class SurfaceVideoEncoder private constructor(
             val reasons = mutableListOf<String>()
             for (profile in profiles) {
                 val format = formatOf(config, info, mime, profile)
-                val names = hardwareEncoders(mime, format)
+                // Null for MediaCodec's default encoder for the type, as FFmpeg's wrapper opens one without codec_name.
+                val names: List<String?> = when {
+                    config.encoderName == null -> hardwareEncoders(mime, format)
+                    else -> listOf(config.pinnedComponent)
+                }
                 if (names.isEmpty()) reasons += "no hardware encoder takes $format"
                 for (name in names) {
-                    val codec = runCatching { MediaCodec.createByCodecName(name) }.getOrElse { failure ->
+                    val codec = runCatching {
+                        if (name != null) MediaCodec.createByCodecName(name) else MediaCodec.createEncoderByType(mime)
+                    }.getOrElse { failure ->
                         reasons += "$name: ${failure.message}"
                         continue
                     }
@@ -299,7 +361,10 @@ internal class SurfaceVideoEncoder private constructor(
                         reasons += "$name (profile $profile): ${failure.message ?: failure.toString()}"
                         null
                     }
-                    if (encoder != null) return encoder
+                    if (encoder != null) {
+                        println("FFmpegKMP: ${encoder.encoderName} took the input surface for ${config.width}x${config.height} ${config.dynamicRange} ${config.codec}")
+                        return encoder
+                    }
                     runCatching(codec::release)
                 }
             }

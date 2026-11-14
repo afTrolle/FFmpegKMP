@@ -1,0 +1,132 @@
+public final class io/github/aftrolle/ffmpegkmp/player/AudioDecoder : io/github/aftrolle/ffmpegkmp/player/AudioMixControls, java/lang/AutoCloseable {
+	public static final field Companion Lio/github/aftrolle/ffmpegkmp/player/AudioDecoder$Companion;
+	public fun close ()V
+	public final fun getDuration-FghU774 ()Lkotlin/time/Duration;
+	public fun getEnabledTracks ()Lkotlinx/coroutines/flow/StateFlow;
+	public final fun getFormat ()Lio/github/aftrolle/ffmpegkmp/player/PcmFormat;
+	public fun getLevel ()Lkotlinx/coroutines/flow/StateFlow;
+	public final fun getPosition-UwyO8pc ()J
+	public fun getTrackLevels ()Lkotlinx/coroutines/flow/StateFlow;
+	public fun getTracks ()Ljava/util/List;
+	public final fun read ([FIILkotlin/coroutines/Continuation;)Ljava/lang/Object;
+	public static synthetic fun read$default (Lio/github/aftrolle/ffmpegkmp/player/AudioDecoder;[FIILkotlin/coroutines/Continuation;ILjava/lang/Object;)Ljava/lang/Object;
+	public final fun seek-VtjQ1oo (JLkotlin/coroutines/Continuation;)Ljava/lang/Object;
+	public fun selectTracks (Ljava/util/Set;)V
+	public fun setTrackEnabled (IZ)V
+	public fun updateLevel (Lkotlin/jvm/functions/Function1;)V
+	public fun updateTrackLevel (ILkotlin/jvm/functions/Function1;)V
+}
+
+public final class io/github/aftrolle/ffmpegkmp/player/AudioDecoder$Companion {
+	public final fun open (Lio/github/aftrolle/ffmpegkmp/core/MediaSource;Lio/github/aftrolle/ffmpegkmp/player/PcmFormat;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
+	public static synthetic fun open$default (Lio/github/aftrolle/ffmpegkmp/player/AudioDecoder$Companion;Lio/github/aftrolle/ffmpegkmp/core/MediaSource;Lio/github/aftrolle/ffmpegkmp/player/PcmFormat;Lkotlin/coroutines/Continuation;ILjava/lang/Object;)Ljava/lang/Object;
+}
+
+public final class io/github/aftrolle/ffmpegkmp/player/AudioDecodingException : io/github/aftrolle/ffmpegkmp/core/FFmpegKmpException {
+	public fun <init> (Ljava/lang/String;Ljava/lang/Throwable;)V
+	public synthetic fun <init> (Ljava/lang/String;Ljava/lang/Throwable;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
+}
+
+public abstract interface class io/github/aftrolle/ffmpegkmp/player/AudioMixControls {
+	public abstract fun getEnabledTracks ()Lkotlinx/coroutines/flow/StateFlow;
+	public abstract fun getLevel ()Lkotlinx/coroutines/flow/StateFlow;
+	public abstract fun getTrackLevels ()Lkotlinx/coroutines/flow/StateFlow;
+	public abstract fun getTracks ()Ljava/util/List;
+	public abstract fun selectTracks (Ljava/util/Set;)V
+	public abstract fun setTrackEnabled (IZ)V
+	public abstract fun updateLevel (Lkotlin/jvm/functions/Function1;)V
+	public abstract fun updateTrackLevel (ILkotlin/jvm/functions/Function1;)V
+}
+
+public final class io/github/aftrolle/ffmpegkmp/player/AudioMixKt {
+	public static final fun selectTrack (Lio/github/aftrolle/ffmpegkmp/player/AudioMixControls;I)V
+	public static final fun setLevel (Lio/github/aftrolle/ffmpegkmp/player/AudioMixControls;Lio/github/aftrolle/ffmpegkmp/core/AudioLevel;)V
+	public static final fun setMuted (Lio/github/aftrolle/ffmpegkmp/player/AudioMixControls;Z)V
+	public static final fun setTrackLevel (Lio/github/aftrolle/ffmpegkmp/player/AudioMixControls;ILio/github/aftrolle/ffmpegkmp/core/AudioLevel;)V
+	public static final fun setTrackMuted (Lio/github/aftrolle/ffmpegkmp/player/AudioMixControls;IZ)V
+	public static final fun setTrackVolume (Lio/github/aftrolle/ffmpegkmp/player/AudioMixControls;ID)V
+	public static final fun setVolume (Lio/github/aftrolle/ffmpegkmp/player/AudioMixControls;D)V
+}
+
+public final class io/github/aftrolle/ffmpegkmp/player/AudioPlayer : io/github/aftrolle/ffmpegkmp/player/AudioMixControls, java/lang/AutoCloseable {
+	public static final field Companion Lio/github/aftrolle/ffmpegkmp/player/AudioPlayer$Companion;
+	public fun close ()V
+	public final fun getDuration-FghU774 ()Lkotlin/time/Duration;
+	public fun getEnabledTracks ()Lkotlinx/coroutines/flow/StateFlow;
+	public final fun getFailure ()Ljava/lang/Throwable;
+	public final fun getFormat ()Lio/github/aftrolle/ffmpegkmp/player/PcmFormat;
+	public fun getLevel ()Lkotlinx/coroutines/flow/StateFlow;
+	public final fun getPosition ()Lkotlinx/coroutines/flow/StateFlow;
+	public final fun getState ()Lkotlinx/coroutines/flow/StateFlow;
+	public fun getTrackLevels ()Lkotlinx/coroutines/flow/StateFlow;
+	public fun getTracks ()Ljava/util/List;
+	public final fun pause ()V
+	public final fun play ()V
+	public final fun seekTo-LRDsOJo (J)V
+	public fun selectTracks (Ljava/util/Set;)V
+	public fun setTrackEnabled (IZ)V
+	public fun updateLevel (Lkotlin/jvm/functions/Function1;)V
+	public fun updateTrackLevel (ILkotlin/jvm/functions/Function1;)V
+}
+
+public final class io/github/aftrolle/ffmpegkmp/player/AudioPlayer$Companion {
+	public final fun open (Lio/github/aftrolle/ffmpegkmp/core/MediaSource;Lio/github/aftrolle/ffmpegkmp/player/PcmFormat;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
+	public static synthetic fun open$default (Lio/github/aftrolle/ffmpegkmp/player/AudioPlayer$Companion;Lio/github/aftrolle/ffmpegkmp/core/MediaSource;Lio/github/aftrolle/ffmpegkmp/player/PcmFormat;Lkotlin/coroutines/Continuation;ILjava/lang/Object;)Ljava/lang/Object;
+}
+
+public final class io/github/aftrolle/ffmpegkmp/player/AudioTrackInfo {
+	public fun <init> (ILjava/lang/String;Ljava/lang/String;Ljava/lang/String;IIZZ)V
+	public final fun component1 ()I
+	public final fun component2 ()Ljava/lang/String;
+	public final fun component3 ()Ljava/lang/String;
+	public final fun component4 ()Ljava/lang/String;
+	public final fun component5 ()I
+	public final fun component6 ()I
+	public final fun component7 ()Z
+	public final fun component8 ()Z
+	public final fun copy (ILjava/lang/String;Ljava/lang/String;Ljava/lang/String;IIZZ)Lio/github/aftrolle/ffmpegkmp/player/AudioTrackInfo;
+	public static synthetic fun copy$default (Lio/github/aftrolle/ffmpegkmp/player/AudioTrackInfo;ILjava/lang/String;Ljava/lang/String;Ljava/lang/String;IIZZILjava/lang/Object;)Lio/github/aftrolle/ffmpegkmp/player/AudioTrackInfo;
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getChannels ()I
+	public final fun getCodec ()Ljava/lang/String;
+	public final fun getIndex ()I
+	public final fun getLanguage ()Ljava/lang/String;
+	public final fun getSampleRate ()I
+	public final fun getTitle ()Ljava/lang/String;
+	public fun hashCode ()I
+	public final fun isDecodable ()Z
+	public final fun isDefault ()Z
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class io/github/aftrolle/ffmpegkmp/player/PcmFormat {
+	public static final field Companion Lio/github/aftrolle/ffmpegkmp/player/PcmFormat$Companion;
+	public fun <init> ()V
+	public fun <init> (II)V
+	public synthetic fun <init> (IIILkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public final fun component1 ()I
+	public final fun component2 ()I
+	public final fun copy (II)Lio/github/aftrolle/ffmpegkmp/player/PcmFormat;
+	public static synthetic fun copy$default (Lio/github/aftrolle/ffmpegkmp/player/PcmFormat;IIILjava/lang/Object;)Lio/github/aftrolle/ffmpegkmp/player/PcmFormat;
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getChannels ()I
+	public final fun getSampleRate ()I
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class io/github/aftrolle/ffmpegkmp/player/PcmFormat$Companion {
+	public final fun getDefault ()Lio/github/aftrolle/ffmpegkmp/player/PcmFormat;
+}
+
+public final class io/github/aftrolle/ffmpegkmp/player/PlaybackState : java/lang/Enum {
+	public static final field CLOSED Lio/github/aftrolle/ffmpegkmp/player/PlaybackState;
+	public static final field ENDED Lio/github/aftrolle/ffmpegkmp/player/PlaybackState;
+	public static final field FAILED Lio/github/aftrolle/ffmpegkmp/player/PlaybackState;
+	public static final field PAUSED Lio/github/aftrolle/ffmpegkmp/player/PlaybackState;
+	public static final field PLAYING Lio/github/aftrolle/ffmpegkmp/player/PlaybackState;
+	public static fun getEntries ()Lkotlin/enums/EnumEntries;
+	public static fun valueOf (Ljava/lang/String;)Lio/github/aftrolle/ffmpegkmp/player/PlaybackState;
+	public static fun values ()[Lio/github/aftrolle/ffmpegkmp/player/PlaybackState;
+}
+

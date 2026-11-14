@@ -40,6 +40,22 @@ class DecoderModelsTest {
     }
 
     @Test
+    fun aFixedChoiceAllowsBothTypesByDefaultAndAtLeastOne() {
+        assertEquals(setOf(DecoderThreadType.FRAME, DecoderThreadType.SLICE), DecoderThreads.Fixed(4).types)
+        assertFailsWith<IllegalArgumentException> { DecoderThreads.Fixed(4, emptySet()) }
+        assertEquals(DecoderThreads.Fixed(4, setOf(DecoderThreadType.SLICE)), DecoderThreads.Fixed(4, setOf(DecoderThreadType.SLICE)))
+    }
+
+    @Test
+    fun threadTypesReachTheBridgeAsFfmpegsBitsWithZeroForAuto() {
+        // FF_THREAD_FRAME is 1 and FF_THREAD_SLICE 2; Auto leaves the kind to the bridge's caller.
+        assertEquals(0, DecoderThreads.Auto.toNativeThreadType())
+        assertEquals(3, DecoderThreads.Fixed(2).toNativeThreadType())
+        assertEquals(1, DecoderThreads.Fixed(2, setOf(DecoderThreadType.FRAME)).toNativeThreadType())
+        assertEquals(2, DecoderThreads.Fixed(2, setOf(DecoderThreadType.SLICE)).toNativeThreadType())
+    }
+
+    @Test
     fun preferencesAndKindsMapOneToOne() {
         for (preference in CodecPreference.entries) {
             assertEquals(preference.name, preference.toNative().name)
