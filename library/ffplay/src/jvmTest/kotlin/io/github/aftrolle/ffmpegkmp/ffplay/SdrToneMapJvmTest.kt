@@ -48,6 +48,14 @@ class SdrToneMapJvmTest {
     fun theShadersHlgToneMapMatchesTheConvertersWithinTwoEightBitCodes() = assertPortMatchesConverter(ColorTransfer.HLG)
 
     @Test
+    fun onAWideCanvasTheShadersPqToneMapMatchesTheConvertersIntoDisplayP3() =
+        assertPortMatchesConverter(ColorTransfer.PQ, FrameColor.DisplayP3)
+
+    @Test
+    fun onAWideCanvasTheShadersHlgToneMapMatchesTheConvertersIntoDisplayP3() =
+        assertPortMatchesConverter(ColorTransfer.HLG, FrameColor.DisplayP3)
+
+    @Test
     fun theClipPeakIsTheConvertersFromTheStreamsMetadata() {
         fun video(transfer: ColorTransfer, mastering: Double? = null, maxCll: Int? = null) = VideoInfo(
             width = 64,
@@ -67,7 +75,8 @@ class SdrToneMapJvmTest {
         assertEquals(null, SdrToneMap.of(video(ColorTransfer.BT709)), "SDR is not tone mapped")
     }
 
-    private fun assertPortMatchesConverter(transfer: ColorTransfer) {
+    /** The port, gamut mapped into [target]'s primaries as the shader maps for its canvas, against the converter into [target]. */
+    private fun assertPortMatchesConverter(transfer: ColorTransfer, target: FrameColor = FrameColor.Srgb) {
         val codes = testCodes()
         val format = FrameFormat(PixelLayout.RGBA_1010102, FrameColor(ColorPrimaries.BT2020, transfer, ColorMatrix.RGB, ColorRange.FULL))
         val converted = allocateNativeFrame(format.toNative(), WIDTH, HEIGHT).use { source ->
@@ -79,7 +88,7 @@ class SdrToneMapJvmTest {
                     bytes.putInt(pixel / WIDTH * plane.rowBytes + pixel % WIDTH * 4, red or (green shl 10) or (blue shl 20) or (3 shl 30))
                 }
             }
-            source.convert(FrameFormat.Rgba8.toNative()).use { rgba ->
+            source.convert(FrameFormat(PixelLayout.RGBA8, target).toNative()).use { rgba ->
                 rgba.usePlanes { planes ->
                     val plane = planes.single()
                     val bytes = (plane.memory as ByteBuffer).duplicate()
@@ -92,7 +101,8 @@ class SdrToneMapJvmTest {
         }
         // Without metadata the converter takes 1,000 nits, as the stream's would give here.
         val toneMap = SdrToneMap(1000.0, ColorPrimaries.BT2020)
-        val lattice = nativeGamutMap(AVCOL_PRI_BT2020, AVCOL_PRI_BT709, AVCOL_TRC_IEC61966_2_1)
+        val to = if (target.primaries == ColorPrimaries.DISPLAY_P3) AVCOL_PRI_SMPTE432 else AVCOL_PRI_BT709
+        val lattice = nativeGamutMap(AVCOL_PRI_BT2020, to, AVCOL_TRC_IEC61966_2_1)
         var worst = 0
         var worstAt = ""
         var sum = 0L
@@ -109,9 +119,10 @@ class SdrToneMapJvmTest {
                 }
             }
         }
-        println("SdrToneMapJvmTest: $transfer worst $worst 8-bit codes at $worstAt, mean %.3f".format(sum / (WIDTH * HEIGHT * 3.0)))
-        assertTrue(worst <= TOLERANCE, "$transfer: $worst codes apart at $worstAt")
-        assertTrue(sum / (WIDTH * HEIGHT * 3.0) <= MEAN_TOLERANCE, "$transfer: ${sum / (WIDTH * HEIGHT * 3.0)} codes apart on average")
+        println("SdrToneMapJvmTest: $transfer into ${target.primaries} worst $worst 8-bit codes at $worstAt, mean %.3f".format(sum / (WIDTH * HEIGHT * 3.0)))
+        assertTrue(worst <= TOLERANCE, "$transfer into ${target.primaries}: $worst codes apart at $worstAt")
+        val mean = sum / (WIDTH * HEIGHT * 3.0)
+        assertTrue(mean <= MEAN_TOLERANCE, "$transfer into ${target.primaries}: $mean codes apart on average")
     }
 
     /** Greys, each channel alone and in pairs, ramped, then colours at random: 10-bit codes per pixel. */
@@ -188,6 +199,7 @@ class SdrToneMapJvmTest {
 
         const val AVCOL_PRI_BT709 = 1
         const val AVCOL_PRI_BT2020 = 9
+        const val AVCOL_PRI_SMPTE432 = 12
         const val AVCOL_TRC_IEC61966_2_1 = 13
     }
 }

@@ -60,9 +60,9 @@ internal actual fun DrawScope.checkDrawsGpuImages() = check(drawContext.canvas.n
  * A new hardware bitmap over the buffer of every frame, which draws that frame with no copy. SDR
  * wraps as its primaries with the sRGB curve, shown as coded as the conversion shows it: sRGB,
  * Display P3, or BT.2020 primaries, which HWUI maps into the canvas's gamut. PQ and HLG wrap as
- * linear sRGB, or, tone mapped for an SDR canvas, as sRGB, so that HWUI applies no tone mapping and no curve:
- * the GPU converts the buffer's YUV to RGB with the matrix its data space names, and the pixels
- * reach [drawCodedImage]'s shader as the signal's codes. A wrap made once for a buffer would go on
+ * linear sRGB, so that HWUI applies no tone mapping: the GPU converts the buffer's YUV to RGB with
+ * the matrix its data space names, and [drawCodedImage]'s shader takes the signal's codes back out
+ * of whatever canvas it draws on with `toLinearSrgb`. A wrap made once for a buffer would go on
  * drawing its first frame, since the GPU texture HWUI makes of a hardware bitmap is cached with the
  * bitmap and never learns that the decoder wrote the buffer again. The last two wraps stay open, as
  * [FrameImage] keeps the last two frames, since a drawing may still use the previous one.
@@ -81,9 +81,7 @@ private class HardwareFrameBitmaps : GpuFrameWraps {
             else -> ColorTransfer.SRGB
         }
         val colorSpace = when {
-            transfer != ColorTransfer.SRGB && toneMap == null -> ColorSpace.get(ColorSpace.Named.LINEAR_SRGB)
-            // An SDR canvas is sRGB: a buffer of codes tagged so reaches the shader as they are.
-            transfer != ColorTransfer.SRGB -> ColorSpace.get(ColorSpace.Named.SRGB)
+            transfer != ColorTransfer.SRGB -> ColorSpace.get(ColorSpace.Named.LINEAR_SRGB)
             gpu.colorPrimaries == AVCOL_PRI_SMPTE432 -> ColorSpace.get(ColorSpace.Named.DISPLAY_P3)
             gpu.colorPrimaries == AVCOL_PRI_BT2020 -> bt2020Srgb
             else -> ColorSpace.get(ColorSpace.Named.SRGB)
@@ -146,11 +144,13 @@ private fun DrawScope.drawCodedRect(
             shader.setFloatUniform("sourceMax", toneMap.sourceMax.toFloat())
             shader.setFloatUniform("target", toneMap.target.toFloat())
             shader.setFloatUniform("knee", toneMap.knee.toFloat())
-            val lattice = GamutLattices.to709(toneMap.primaries)
-            shader.setFloatUniform("gamut", if (lattice != null) 1f else 0f)
-            shader.setInputShader("lattice", BitmapShader(lattice ?: GamutLattices.none, Shader.TileMode.CLAMP, Shader.TileMode.CLAMP).apply {
-                filterMode = BitmapShader.FILTER_MODE_NEAREST
-            })
+            val narrow = GamutLattices.of(toneMap.primaries, ColorPrimaries.BT709)
+            val wide = GamutLattices.of(toneMap.primaries, ColorPrimaries.DISPLAY_P3)
+            shader.setFloatUniform("narrowGamut", if (narrow != null) 1f else 0f)
+            shader.setFloatUniform("wideGamut", if (wide != null) 1f else 0f)
+            shader.setFloatUniform("wideIsP3", if (wide != null || toneMap.primaries == ColorPrimaries.DISPLAY_P3) 1f else 0f)
+            shader.setInputShader("narrowLattice", GamutLattices.shader(narrow))
+            shader.setInputShader("wideLattice", GamutLattices.shader(wide))
         }
         shader.setFloatUniform("origin", origin.x, origin.y)
         shader.setFloatUniform("scale", scale.x, scale.y)
@@ -174,27 +174,35 @@ private object CodedShaders {
 }
 
 /**
- * The converter's gamut maps into BT.709 for sRGB codes, one per source primaries, tiled for
+ * The converter's gamut maps for sRGB-curve codes, one per pair of primaries, tiled for
  * [TONE_MAPPED_IMAGE_SHADER]: the lattice's 65 slices of 65 × 65 points, one per blue, 8 to a row in
  * 9 rows, 520 × 585, since 65 × 65 side by side is wider than many GPUs take. Half floats, tagged
- * sRGB so that an sRGB canvas reads them as they are; 2.4 MB each, made once for the process.
+ * linear so that the shader reads them back as they are with `toLinearSrgb` on any canvas; 2.4 MB
+ * each, made once for the process.
  */
 @RequiresApi(Build.VERSION_CODES.TIRAMISU)
 private object GamutLattices {
-    private val made = mutableMapOf<ColorPrimaries, Bitmap>()
+    private val made = mutableMapOf<Pair<ColorPrimaries, ColorPrimaries>, Bitmap>()
 
     /** A pixel the shader is given where it maps no gamut, as an input it must have. */
-    val none: Bitmap by lazy { Bitmap.createBitmap(1, 1, Bitmap.Config.RGBA_F16, false, ColorSpace.get(ColorSpace.Named.SRGB)) }
+    private val none: Bitmap by lazy { Bitmap.createBitmap(1, 1, Bitmap.Config.RGBA_F16, false, linear) }
 
-    /** The lattice from [primaries] into BT.709; null from BT.709 itself. */
-    fun to709(primaries: ColorPrimaries): Bitmap? = when (primaries) {
-        ColorPrimaries.BT709 -> null
-        else -> synchronized(made) { made.getOrPut(primaries) { tile(primaries) } }
+    /**
+     * The lattice from [from] into [to]; null where [from] fits in [to] as it is: the same primaries, or BT.709 into
+     * Display P3.
+     */
+    fun of(from: ColorPrimaries, to: ColorPrimaries): Bitmap? = when {
+        from == to || from == ColorPrimaries.BT709 -> null
+        else -> synchronized(made) { made.getOrPut(from to to) { tile(from, to) } }
     }
 
-    private fun tile(primaries: ColorPrimaries): Bitmap {
-        val from = if (primaries == ColorPrimaries.DISPLAY_P3) AVCOL_PRI_SMPTE432 else AVCOL_PRI_BT2020
-        val points = nativeGamutMap(from, AVCOL_PRI_BT709, AVCOL_TRC_IEC61966_2_1)
+    /** [lattice] as the shader's input, read point by point. */
+    fun shader(lattice: Bitmap?): BitmapShader = BitmapShader(lattice ?: none, Shader.TileMode.CLAMP, Shader.TileMode.CLAMP).apply {
+        filterMode = BitmapShader.FILTER_MODE_NEAREST
+    }
+
+    private fun tile(source: ColorPrimaries, target: ColorPrimaries): Bitmap {
+        val points = nativeGamutMap(source.avcol, target.avcol, AVCOL_TRC_IEC61966_2_1)
         val side = GAMUT_MAP_POINTS
         val width = side * LATTICE_COLUMNS
         val height = side * ((side + LATTICE_COLUMNS - 1) / LATTICE_COLUMNS)
@@ -211,22 +219,37 @@ private object GamutLattices {
                 }
             }
         }
-        return Bitmap.createBitmap(width, height, Bitmap.Config.RGBA_F16, false, ColorSpace.get(ColorSpace.Named.SRGB)).apply {
+        return Bitmap.createBitmap(width, height, Bitmap.Config.RGBA_F16, false, linear).apply {
             copyPixelsFromBuffer(ShortBuffer.wrap(halves))
         }
     }
 
+    private val ColorPrimaries.avcol: Int
+        get() = when (this) {
+            ColorPrimaries.BT709 -> AVCOL_PRI_BT709
+            ColorPrimaries.DISPLAY_P3 -> AVCOL_PRI_SMPTE432
+            ColorPrimaries.BT2020 -> AVCOL_PRI_BT2020
+        }
+
+    private val linear get() = ColorSpace.get(ColorSpace.Named.LINEAR_EXTENDED_SRGB)
     private const val LATTICE_COLUMNS = 8
     private val HALF_ONE = Half.toHalf(1f)
 }
 
+/** Linear Display P3 to linear sRGB, both D65. */
+private val DISPLAY_P3_TO_SRGB = doubleArrayOf(
+    1.2249401, -0.2249404, 0.0,
+    -0.0420569, 1.0420571, 0.0,
+    -0.0196376, -0.0786361, 1.0982735,
+)
+
 /**
- * PQ (ST 2084) or HLG codes, sampled from a linear sRGB wrap and so as the GPU's YUV to RGB
- * conversion left them, to linear light on the canvas's sRGB primaries, 1.0 at 203 nits: what the
- * CPU converter makes of the same frame. HLG takes BT.2100's OOTF for a 1000-nit display. The
- * matrix is BT.2020 to BT.709 primaries; negative results are out-of-gamut colours, which an
- * extended-range canvas keeps. `origin` and `scale` map the draw's coordinates into the image, and
- * `crop` holds the sampling to the picture.
+ * PQ (ST 2084) or HLG codes, read out of a linear sRGB wrap with `toLinearSrgb` and so as the GPU's
+ * YUV to RGB conversion left them, whatever canvas draws, to linear light, 1.0 at 203 nits: what the
+ * CPU converter makes of the same frame, handed to the canvas with `fromLinearSrgb`. HLG takes
+ * BT.2100's OOTF for a 1000-nit display. The matrix is BT.2020 to BT.709 primaries; negative results
+ * are out-of-gamut colours, which a wide or extended-range canvas keeps. `origin` and `scale` map the
+ * draw's coordinates into the image, and `crop` holds the sampling to the picture.
  */
 private val CODED_IMAGE_SHADER = """
 uniform shader image;
@@ -237,7 +260,7 @@ uniform float hlg;
 
 half4 main(float2 coord) {
     float2 at = clamp(coord * scale + origin, crop.xy + 0.5, crop.zw - 0.5);
-    float3 code = clamp(float3(image.eval(at).rgb), 0.0, 1.0);
+    float3 code = clamp(float3(toLinearSrgb(image.eval(at).rgb)), 0.0, 1.0);
     float3 light;
     if (hlg > 0.5) {
         float3 scene = mix(code * code / 3.0, (exp((code - 0.55991073) / 0.17883277) + 0.28466892) / 12.0, step(float3(0.5), code));
@@ -246,22 +269,26 @@ half4 main(float2 coord) {
         float3 signal = pow(code, float3(1.0 / 78.84375));
         light = pow(max(signal - 0.8359375, 0.0) / (18.8515625 - 18.6875 * signal), float3(1.0 / 0.1593017578125)) * (10000.0 / 203.0);
     }
-    return half4(half3(${Bt2020Matrices.agsl(Bt2020Matrices.toSrgb, "light")}), 1.0);
+    return half4(fromLinearSrgb(half3(${Bt2020Matrices.agsl(Bt2020Matrices.toSrgb, "light")})), 1.0);
 }
 """
 
 /**
- * PQ or HLG codes, as [CODED_IMAGE_SHADER] samples them from an sRGB wrap, tone mapped to sRGB codes
- * for an SDR canvas as the CPU converter maps the same frame ([SdrToneMap]): light in the source's own
- * primaries, 1.0 at 203 nits; on the brightest component, BT.2390's EETF in PQ to SDR white at the
- * clip's `peak`, with `sourceMax`, `target` and `knee` its signals; clipped and sRGB encoded; then,
- * where `gamut` is set, through the converter's gamut map into BT.709, the `lattice` [GamutLattices]
- * tiles, looked up tetrahedrally with four fetches, as the converter does: trilinear filtering
- * would tint greys.
+ * PQ or HLG codes, as [CODED_IMAGE_SHADER] reads them, tone mapped to SDR as the CPU converter maps the
+ * same frame ([SdrToneMap]): light in the source's own primaries, 1.0 at 203 nits; on the brightest
+ * component, BT.2390's EETF in PQ to SDR white at the clip's `peak`, with `sourceMax`, `target` and
+ * `knee` its signals; clipped and sRGB encoded; then through the converter's gamut map, the lattices
+ * [GamutLattices] tiles, looked up tetrahedrally with four fetches, as the converter does: trilinear
+ * filtering would tint greys. An sRGB canvas takes the map into BT.709 (`narrowLattice`, where
+ * `narrowGamut` is set); a canvas of wider primaries, or of linear light, as a wide-gamut or HDR window
+ * draws on, the map into Display P3 (`wideLattice`, where `wideGamut` is set), which `wideIsP3` says
+ * the codes are then in. The result reaches the canvas through `fromLinearSrgb`, so each canvas shows
+ * the codes the converter would make for it.
  */
 private val TONE_MAPPED_IMAGE_SHADER = """
 uniform shader image;
-uniform shader lattice;
+uniform shader narrowLattice;
+uniform shader wideLattice;
 uniform float2 origin;
 uniform float2 scale;
 uniform float4 crop;
@@ -270,7 +297,9 @@ uniform float peak;
 uniform float sourceMax;
 uniform float target;
 uniform float knee;
-uniform float gamut;
+uniform float narrowGamut;
+uniform float wideGamut;
+uniform float wideIsP3;
 
 float pqSignal(float nits) {
     float power = pow(clamp(nits / 10000.0, 0.0, 1.0), 0.1593017578125);
@@ -294,12 +323,23 @@ float eetf(float x) {
     return pqNits(e2 * sourceMax) / 203.0;
 }
 
-float3 latticePoint(float3 at) {
-    float2 tile = float2(mod(at.b, 8.0), floor(at.b / 8.0)) * 65.0;
-    return float3(lattice.eval(tile + at.rg + 0.5).rgb);
+float3 latticePoint(float3 at, bool wide) {
+    float2 point = float2(mod(at.b, 8.0), floor(at.b / 8.0)) * 65.0 + at.rg + 0.5;
+    return float3(toLinearSrgb(wide ? wideLattice.eval(point).rgb : narrowLattice.eval(point).rgb));
 }
 
-float3 mapGamut(float3 code) {
+float3 decodeSrgb(float3 code) {
+    return mix(code / 12.92, pow((code + 0.055) / 1.055, float3(2.4)), step(float3(0.04045), code));
+}
+
+// Wider than sRGB: other primaries, or linear light, which an extended-range canvas holds.
+bool wideCanvas() {
+    half3 red = fromLinearSrgb(half3(1.0, 0.0, 0.0));
+    half3 grey = fromLinearSrgb(half3(0.5));
+    return abs(red.g) > 0.01 || abs(red.b) > 0.01 || abs(grey.g - 0.5) < 0.01;
+}
+
+float3 mapGamut(float3 code, bool wide) {
     float3 position = code * 64.0;
     float3 cell = min(floor(position), float3(63.0));
     float3 f = position - cell;
@@ -308,13 +348,13 @@ float3 mapGamut(float3 code) {
     float middle = f.r + f.g + f.b - high - low;
     float3 first = f.r >= f.g && f.r >= f.b ? float3(1.0, 0.0, 0.0) : (f.g >= f.b ? float3(0.0, 1.0, 0.0) : float3(0.0, 0.0, 1.0));
     float3 last = f.r < f.g && f.r < f.b ? float3(1.0, 0.0, 0.0) : (f.g < f.b ? float3(0.0, 1.0, 0.0) : float3(0.0, 0.0, 1.0));
-    return (1.0 - high) * latticePoint(cell) + (high - middle) * latticePoint(cell + first) +
-        (middle - low) * latticePoint(cell + float3(1.0) - last) + low * latticePoint(cell + float3(1.0));
+    return (1.0 - high) * latticePoint(cell, wide) + (high - middle) * latticePoint(cell + first, wide) +
+        (middle - low) * latticePoint(cell + float3(1.0) - last, wide) + low * latticePoint(cell + float3(1.0), wide);
 }
 
 half4 main(float2 coord) {
     float2 at = clamp(coord * scale + origin, crop.xy + 0.5, crop.zw - 0.5);
-    float3 code = clamp(float3(image.eval(at).rgb), 0.0, 1.0);
+    float3 code = clamp(float3(toLinearSrgb(image.eval(at).rgb)), 0.0, 1.0);
     float3 light;
     if (hlg > 0.5) {
         float3 scene = mix(code * code / 3.0, (exp((code - 0.55991073) / 0.17883277) + 0.28466892) / 12.0, step(float3(0.5), code));
@@ -326,7 +366,14 @@ half4 main(float2 coord) {
     float brightest = max(light.r, max(light.g, light.b));
     float3 mapped = brightest > 0.0 ? clamp(light * (eetf(brightest * 203.0 / peak) / brightest), 0.0, 1.0) : float3(0.0);
     float3 srgb = mix(mapped * 12.92, 1.055 * pow(mapped, float3(1.0 / 2.4)) - 0.055, step(float3(0.0031308), mapped));
-    return half4(half3(gamut > 0.5 ? mapGamut(srgb) : srgb), 1.0);
+    float3 shown;
+    if (wideCanvas()) {
+        shown = decodeSrgb(wideGamut > 0.5 ? mapGamut(srgb, true) : srgb);
+        if (wideIsP3 > 0.5) shown = ${Bt2020Matrices.agsl(DISPLAY_P3_TO_SRGB, "shown")};
+    } else {
+        shown = decodeSrgb(narrowGamut > 0.5 ? mapGamut(srgb, false) : srgb);
+    }
+    return half4(fromLinearSrgb(half3(shown)), 1.0);
 }
 """
 

@@ -12,7 +12,9 @@ import kotlin.math.pow
  * 203 nits, in the source's own [primaries]; scaled on its brightest component through BT.2390's
  * EETF in PQ, which keeps light below the knee and rolls highlights off to SDR white at the clip's
  * [peakNits]; clipped to 0..1 and sRGB encoded; then, from other primaries than BT.709's, taken
- * through the converter's gamut map, swscale's perceptual mapping sampled on a lattice.
+ * through the converter's gamut map, swscale's perceptual mapping sampled on a lattice. A canvas
+ * wider than sRGB, as a wide-gamut or HDR window draws on, takes the map into Display P3 instead, as
+ * the converter maps the frame into Display P3 frames.
  */
 internal class SdrToneMap(val peakNits: Double, val primaries: ColorPrimaries) {
     /** The clip's peak as a PQ signal: what the EETF's signals are fractions of. */
