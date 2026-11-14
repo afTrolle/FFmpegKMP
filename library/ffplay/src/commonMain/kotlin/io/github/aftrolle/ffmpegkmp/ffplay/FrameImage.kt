@@ -30,6 +30,9 @@ import kotlin.concurrent.atomics.AtomicLong
 import kotlin.concurrent.atomics.AtomicReference
 import kotlin.math.roundToInt
 import kotlin.time.Duration
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.update
 
 /**
  * One source's frames as an image Compose draws, in two bitmaps that [update] converts into in
@@ -65,13 +68,25 @@ import kotlin.time.Duration
  * at 203 nits, as the same frame from memory does on an `RgbaF16` canvas. It is not tone mapped, so
  * draw it on an `RgbaF16` canvas, and take an SDR export's HDR sources from `Memory(canvasFormat)`,
  * which tone maps.
+ *
+ * A player's Canvas output uses it another way, [prepare] then [present]: each frame is converted
+ * as the player queues it, ahead of its time, into a free bitmap of a ring of `bitmaps`, and
+ * presenting it flips to that bitmap. A frame queued while the ring has no bitmap free stays as it
+ * was decoded and is converted as it is presented, on the presenting thread: into the bitmap that
+ * left the screen last, or, with a ring of one, over the picture on screen. With `keepsPrevious`
+ * the frame that left the screen last keeps its bitmap, or its GPU buffer, until the next one
+ * leaves, for a drawing still under way; without it that goes back to the ring at once. One image
+ * is used one way or the other, not both.
  */
-public class FrameImage internal constructor(private val bitmaps: Int) : AutoCloseable {
+public class FrameImage internal constructor(
+    private val bitmaps: Int,
+    private val keepsPrevious: Boolean = true,
+) : AutoCloseable {
     /** An image of two bitmaps: enough while each update is drawn before the one after next. */
     public constructor() : this(2)
 
     init {
-        require(bitmaps >= 2) { "A frame image needs at least two bitmaps: $bitmaps" }
+        require(bitmaps >= 1) { "A frame image needs at least one bitmap: $bitmaps" }
     }
 
     /**
@@ -104,6 +119,21 @@ public class FrameImage internal constructor(private val bitmaps: Int) : AutoClo
     /** The frames in GPU memory the last two updates showed, oldest first; null for an update from memory. */
     private val held = ArrayDeque<VideoFrame?>()
     private val wraps = gpuFrameWraps()
+
+    /** The ring [prepare] converts into: its bitmaps no frame holds, oldest first, and how many it has in all. */
+    private val free = ArrayDeque<FrameBitmap>()
+    private var ringSize = 0
+
+    /** The prepared frame on screen, and the one shown before it, which a drawing may still be using. */
+    private var onScreen: Prepared? = null
+    private var previous: Prepared? = null
+
+    /**
+     * Counts changes of where a surface draws this image and of [targetSize], so that a frame on
+     * screen while nothing new comes, a paused player's, can be converted again at the new size.
+     */
+    internal val sizeChanges: StateFlow<Int> get() = mutableSizeChanges
+    private val mutableSizeChanges = MutableStateFlow(0)
 
     /** Bitmaps allocated and frames converted, for tests. */
     internal var allocations: Int = 0
@@ -139,7 +169,7 @@ public class FrameImage internal constructor(private val bitmaps: Int) : AutoClo
         get() = target.load().unpack()
         set(value) {
             require(value == null || (value.width >= 0 && value.height >= 0)) { "A target size is not negative: $value" }
-            target.store(value?.pack() ?: UNSET)
+            if (target.exchange(value?.pack() ?: UNSET) != (value?.pack() ?: UNSET)) mutableSizeChanges.update { it + 1 }
         }
 
     /**
@@ -148,8 +178,9 @@ public class FrameImage internal constructor(private val bitmaps: Int) : AutoClo
      * writes and no snapshot state, so drawing neither invalidates nor allocates.
      */
     internal fun drawnIn(area: Size, contentScale: ContentScale) {
-        drawScale.store(contentScale)
-        drawArea.store(IntSize(area.width.roundToInt(), area.height.roundToInt()).pack())
+        val packed = IntSize(area.width.roundToInt(), area.height.roundToInt()).pack()
+        val scaleBefore = drawScale.exchange(contentScale)
+        if (drawArea.exchange(packed) != packed || scaleBefore != contentScale) mutableSizeChanges.update { it + 1 }
     }
 
     /** The size [drawnIn] places [frame] at; null before a surface drew this image. */
@@ -220,7 +251,208 @@ public class FrameImage internal constructor(private val bitmaps: Int) : AutoClo
     internal fun clear(): Unit = lock.withLock {
         if (closed || shown == null) return@withLock
         show(null)
+        // A drawing may still be using what was on screen: it goes back to the ring with the next present.
+        previous?.let(::retire)
+        previous = onScreen?.also(::leaveScreen)
+        onScreen = null
+        dropPrevious()
     }
+
+    /**
+     * Makes [frame] drawable ahead of its time and takes it, for [present] to show later: converts
+     * it, on the calling thread, into a bitmap of the ring that nothing shows or holds, at the size
+     * [targetSize] asks for, else the size a surface last drew this image at, as [update] does. The
+     * ring reuses its bitmaps while that size and the frame's format stay; one of another size is
+     * replaced. A frame in GPU memory is kept as it is. [videoSize] is [updateIfOpen]'s.
+     *
+     * Exactly one [present] or [release] must follow. Returns null once this image is closed, having
+     * closed [frame]; throws, having closed it, when it cannot be converted. A PQ or HLG frame in GPU
+     * memory is drawn with [toneMap], for an SDR canvas, where one is given.
+     */
+    internal fun prepare(frame: VideoFrame, videoSize: IntSize? = null, toneMap: SdrToneMap? = null): Prepared? {
+        val frameSize = videoSize ?: IntSize(frame.width, frame.height)
+        val claim = try {
+            val format = if (frame.gpuBuffer == null) frame.bitmapFormat() else null
+            lock.withLock {
+                when {
+                    closed -> null
+                    format == null -> NO_BITMAP
+                    // Every bitmap is shown or holds a frame queued before this one: converted as it is presented.
+                    free.isEmpty() && ringSize >= bitmaps -> DEFERRED
+                    else -> claim(sizing.sizeFor(frame, targetSize ?: drawnSize(frame)), format)
+                }
+            }
+        } catch (failure: Throwable) {
+            frame.close()
+            throw failure
+        }
+        if (claim == null) {
+            frame.close()
+            return null
+        }
+        val bitmap = if (claim === NO_BITMAP || claim === DEFERRED) null else convert(frame, claim)
+        val prepared = Prepared(frame.pts, bitmap, frame, frameSize, frame.rotationDegrees, frame.sampleAspectRatio, toneMap)
+        if (lock.withLock { closed }) {
+            retire(prepared)
+            return null
+        }
+        return prepared
+    }
+
+    /**
+     * [prepare] for a frame in GPU memory that [take] gives only as it is presented, since the one
+     * buffer its source has is the one on screen until then: [present] gives that one back, then
+     * takes this frame, on the presenting thread. Null once this image is closed.
+     */
+    internal fun prepareLate(
+        pts: Duration,
+        frameSize: IntSize,
+        rotationDegrees: Double,
+        sampleAspectRatio: Double,
+        toneMap: SdrToneMap?,
+        take: () -> VideoFrame,
+    ): Prepared? = lock.withLock {
+        if (closed) return@withLock null
+        Prepared(pts, null, null, frameSize, rotationDegrees, sampleAspectRatio, toneMap).also { it.late = take }
+    }
+
+    /**
+     * Gives [prepared] what it is drawn from where [prepare] left that for now: takes a late frame,
+     * or converts a deferred one. False, the frame done with, when that fails. Under [lock].
+     */
+    private fun materialize(prepared: Prepared): Boolean {
+        val late = prepared.late
+        if (late != null) {
+            prepared.late = null
+            // The one buffer goes back before the next frame is taken from it.
+            previous?.let(::retire)
+            previous = null
+            onScreen?.let(::retire)
+            onScreen = null
+            prepared.frame = try {
+                late()
+            } catch (failure: Exception) {
+                show(null)
+                prepared.done = true
+                return false
+            }
+            return true
+        }
+        val frame = prepared.frame ?: return true
+        if (prepared.bitmap != null || frame.gpuBuffer != null) return true
+        prepared.bitmap = try {
+            val format = frame.bitmapFormat()
+            val size = sizing.sizeFor(frame, targetSize ?: drawnSize(frame))
+            if (free.isEmpty() && ringSize >= bitmaps) dropPrevious(always = true)
+            val showing = onScreen
+            val over = showing?.bitmap?.takeIf { free.isEmpty() && ringSize >= bitmaps }
+            val claim = if (showing == null || over == null) {
+                claim(size, format)
+            } else {
+                // No bitmap but the one on screen: this frame is written over it.
+                showing.bitmap = null
+                onScreen = null
+                retire(showing)
+                if (over.holds(size, format)) {
+                    Claim(over, size, format)
+                } else {
+                    over.close()
+                    allocations++
+                    Claim(null, size, format)
+                }
+            }
+            convert(frame, claim)
+        } catch (failure: Exception) {
+            // convert closed the frame.
+            prepared.frame = null
+            prepared.done = true
+            return false
+        }
+        return true
+    }
+
+    /** Gives back the frame that left the screen last, unless it is kept for a drawing under way. Under [lock]. */
+    private fun dropPrevious(always: Boolean = false) {
+        if (keepsPrevious && !always) return
+        previous?.let(::retire)
+        previous = null
+    }
+
+    /**
+     * Shows [prepared], a flip to what [prepare] made; the frame shown before it goes back to the
+     * ring with the present after this one, since a drawing may still be using it. False once this
+     * image is closed, or for a frame already presented or released.
+     */
+    internal fun present(prepared: Prepared): Boolean = lock.withLock {
+        if (closed || prepared.done || prepared === onScreen || prepared === previous) {
+            if (prepared !== onScreen && prepared !== previous) retire(prepared)
+            return@withLock false
+        }
+        if (!materialize(prepared)) return@withLock false
+        val bitmap = prepared.bitmap
+        val shown = if (bitmap != null) {
+            Shown(bitmap.image, bitmap.source, prepared.frameSize, prepared.rotationDegrees, prepared.sampleAspectRatio, gpu = false)
+        } else {
+            val frame = checkNotNull(prepared.frame)
+            val buffer = checkNotNull(frame.gpuBuffer)
+            val wrapped = wraps.wrap(frame, prepared.toneMap)
+            val source = IntRect(buffer.cropLeft, buffer.cropTop, buffer.cropRight, buffer.cropBottom)
+            Shown(
+                wrapped.image, source, source.size, prepared.rotationDegrees, prepared.sampleAspectRatio, gpu = true,
+                wrapped.transfer, wrapped.toneMap,
+            )
+        }
+        flip(prepared, shown)
+        true
+    }
+
+    /** Gives back a [prepare]d frame that will not be shown: its bitmap returns to the ring, its frame is closed. */
+    internal fun release(prepared: Prepared): Unit = lock.withLock {
+        if (prepared !== onScreen && prepared !== previous) retire(prepared)
+    }
+
+    /**
+     * Converts the frame on screen again, from the frame it was made from, at the size this image is
+     * now drawn at, and flips to it: for a resize while nothing new is shown, as when paused. Does
+     * nothing where that size is the one on screen, for a frame in GPU memory, which scales as it is
+     * drawn, and once the frame on screen changed meanwhile. The conversion runs on the calling
+     * thread. Returns whether it redrew.
+     */
+    internal fun redraw(): Boolean {
+        var current: Prepared? = null
+        var source: VideoFrame? = null
+        val claim = lock.withLock {
+            val showing = onScreen?.takeIf { !closed && shown != null } ?: return@withLock null
+            val frame = showing.frame ?: return@withLock null
+            val bitmap = showing.bitmap ?: return@withLock null
+            val size = sizing.sizeFor(frame, targetSize ?: drawnSize(frame))
+            if (bitmap.holds(size, bitmap.format)) return@withLock null
+            current = showing
+            // Presents may move it off screen, and close the frame, while this converts.
+            source = frame.retain()
+            claim(size, bitmap.format)
+        } ?: return false
+        val frame = checkNotNull(source)
+        val bitmap = try {
+            convert(frame, claim)
+        } finally {
+            frame.close()
+        }
+        return lock.withLock {
+            val showing = checkNotNull(current)
+            if (closed || onScreen !== showing || shown == null) {
+                giveBack(bitmap)
+                return@withLock false
+            }
+            val redrawn = Prepared(showing.pts, bitmap, showing.frame, showing.frameSize, showing.rotationDegrees, showing.sampleAspectRatio)
+            showing.frame = null
+            flip(redrawn, Shown(bitmap.image, bitmap.source, redrawn.frameSize, redrawn.rotationDegrees, redrawn.sampleAspectRatio, gpu = false))
+            true
+        }
+    }
+
+    /** Bitmaps the ring has: free, prepared, on screen and the one before it. For tests. */
+    internal val ringBitmaps: Int get() = lock.withLock { ringSize }
 
     /** Frees the bitmaps and closes the frames held. Whatever draws the image draws nothing from then on. */
     override fun close(): Unit = lock.withLock {
@@ -233,7 +465,81 @@ public class FrameImage internal constructor(private val bitmaps: Int) : AutoClo
         behind.clear()
         held.forEach { it?.close() }
         held.clear()
+        // Prepared frames still out close their bitmaps as they come back.
+        onScreen?.let(::retire)
+        previous?.let(::retire)
+        onScreen = null
+        previous = null
+        free.forEach { it.close() }
+        ringSize -= free.size
+        free.clear()
         wraps.close()
+    }
+
+    /** A free bitmap of the ring that holds [size] and [format]; else, with null, room for a new one. Under [lock]. */
+    private fun claim(size: IntSize, format: FrameFormat): Claim {
+        val fitting = free.firstOrNull { it.holds(size, format) }
+        if (fitting != null) {
+            free.remove(fitting)
+            return Claim(fitting, size, format)
+        }
+        // Of another size or format: the oldest free one makes way.
+        if (ringSize >= bitmaps) free.removeFirstOrNull()?.let {
+            it.close()
+            ringSize--
+        }
+        ringSize++
+        allocations++
+        return Claim(null, size, format)
+    }
+
+    /** [frame] converted into [claim]'s bitmap, or into a new one; a failure gives the claim back. */
+    private fun convert(frame: VideoFrame, claim: Claim): FrameBitmap {
+        val bitmap = try {
+            claim.bitmap?.apply { write(frame) } ?: frame.toFrameBitmap(claim.format, claim.size)
+        } catch (failure: Throwable) {
+            lock.withLock { claim.bitmap?.let(::giveBack) ?: ringSize-- }
+            frame.close()
+            throw failure
+        }
+        lock.withLock { conversions++ }
+        return bitmap
+    }
+
+    /** Shows [next], whose [shown] is ready; what was on screen becomes the previous frame, and the previous one goes back. */
+    private fun flip(next: Prepared, shown: Shown) {
+        previous?.let(::retire)
+        previous = onScreen?.also(::leaveScreen)
+        onScreen = next
+        show(shown)
+        dropPrevious()
+    }
+
+    /** A frame leaving the screen keeps its bitmap for a drawing still under way; a frame in memory is needed no more. */
+    private fun leaveScreen(prepared: Prepared) {
+        if (prepared.bitmap != null) {
+            prepared.frame?.close()
+            prepared.frame = null
+        }
+    }
+
+    /** Done with [prepared]: its frame closed and its bitmap back in the ring. */
+    private fun retire(prepared: Prepared) = lock.withLock {
+        if (prepared.done) return@withLock
+        prepared.done = true
+        prepared.frame?.close()
+        prepared.frame = null
+        prepared.bitmap?.let(::giveBack)
+    }
+
+    /** Returns [bitmap] to the ring, or frees it once the image is closed or the ring has more than it keeps. */
+    private fun giveBack(bitmap: FrameBitmap) {
+        if (closed || ringSize > bitmaps) {
+            bitmap.close()
+            ringSize--
+        } else {
+            free.addLast(bitmap)
+        }
     }
 
     /** Shows [frame], which lies in GPU memory, through a wrap of its buffer. */
@@ -274,7 +580,7 @@ public class FrameImage internal constructor(private val bitmaps: Int) : AutoClo
     /**
      * The [source] rectangle of [image], which holds a frame of [frameSize] at that size or smaller,
      * drawn turned and stretched; [gpu] when the image lies in GPU memory, where [transfer] says how
-     * its pixels are coded: PQ and HLG ones are drawn as light.
+     * its pixels are coded: PQ and HLG ones are drawn as light, or with [toneMap] tone mapped to SDR.
      */
     internal class Shown(
         val image: ImageBitmap,
@@ -284,9 +590,52 @@ public class FrameImage internal constructor(private val bitmaps: Int) : AutoClo
         val sampleAspectRatio: Double,
         val gpu: Boolean,
         val transfer: ColorTransfer = ColorTransfer.SRGB,
+        val toneMap: SdrToneMap? = null,
     ) {
         /** The frame's, whatever size [image] holds it at, so that layout never follows the bitmaps. */
         val displaySize: Size = displaySize(frameSize.width, frameSize.height, sampleAspectRatio, rotationDegrees)
+    }
+
+    /**
+     * A frame [prepare] made drawable: converted into [bitmap], one of the ring's, or for a frame in
+     * GPU memory, null, the frame itself shown through a wrap of its buffer. [frameSize] is the
+     * video's size, as [Shown.frameSize]; [toneMap] is [prepare]'s.
+     */
+    internal class Prepared(
+        val pts: Duration,
+        bitmap: FrameBitmap?,
+        frame: VideoFrame?,
+        val frameSize: IntSize,
+        val rotationDegrees: Double,
+        val sampleAspectRatio: Double,
+        val toneMap: SdrToneMap? = null,
+    ) {
+        /**
+         * The frame it was made from, kept until it leaves the screen, so that [redraw] can convert
+         * it again; a frame in GPU memory until it leaves the ring, since it is what is drawn.
+         * Guarded by the image's lock.
+         */
+        var frame: VideoFrame? = frame
+
+        /** The ring's bitmap it is converted into; null for a frame in GPU memory, and until [present] for a deferred one. */
+        var bitmap: FrameBitmap? = bitmap
+
+        /** Takes the frame, in GPU memory, as it is presented ([prepareLate]); null otherwise and once taken. */
+        var late: (() -> VideoFrame)? = null
+
+        /** Retired: its bitmap went back to the ring. Guarded by the image's lock. */
+        var done: Boolean = false
+    }
+
+    /** A bitmap [claim]ed for a conversion, or null for a new one, and what it converts to. */
+    private class Claim(val bitmap: FrameBitmap?, val size: IntSize, val format: FrameFormat)
+
+    private companion object {
+        /** The claim of a frame in GPU memory, which is shown without a bitmap. */
+        val NO_BITMAP = Claim(null, IntSize.Zero, FrameFormat.Rgba8)
+
+        /** The claim of a frame queued while the ring has no bitmap free, converted as it is presented. */
+        val DEFERRED = Claim(null, IntSize.Zero, FrameFormat.Rgba8)
     }
 }
 
@@ -305,7 +654,7 @@ public fun DrawScope.drawFrameImage(
 ) {
     val shown = image.shown ?: return
     if (shown.gpu) checkDrawsGpuImages()
-    drawUpright(shown.image, shown.source, shown.rotationDegrees, Rect(topLeft, size), shown.transfer)
+    drawUpright(shown.image, shown.source, shown.rotationDegrees, Rect(topLeft, size), shown.transfer, shown.toneMap)
 }
 
 /** Draws [source] of [image] turned upright by [rotationDegrees], so that it fills [destination]. */
@@ -315,6 +664,7 @@ internal fun DrawScope.drawUpright(
     rotationDegrees: Double,
     destination: Rect,
     transfer: ColorTransfer = ColorTransfer.SRGB,
+    toneMap: SdrToneMap? = null,
 ) {
     val turn = uprightTurn(rotationDegrees)
     val target = destination.beforeTurn(turn)
@@ -322,7 +672,7 @@ internal fun DrawScope.drawUpright(
     val dstSize = IntSize(target.width.roundToInt(), target.height.roundToInt())
     withTransform({ rotate(turn, destination.center) }) {
         when (transfer) {
-            ColorTransfer.PQ, ColorTransfer.HLG -> drawCodedImage(image, source, dstOffset, dstSize, transfer)
+            ColorTransfer.PQ, ColorTransfer.HLG -> drawCodedImage(image, source, dstOffset, dstSize, transfer, toneMap)
             else -> drawImage(image, srcOffset = source.topLeft, srcSize = source.size, dstOffset = dstOffset, dstSize = dstSize)
         }
     }

@@ -38,9 +38,13 @@ public actual suspend fun createPlatformMediaWriter(
     return writer
 }
 
-/** The WebCodecs encoder the browser has for [config], which it asks without opening one; null when it has none. */
+/**
+ * The WebCodecs encoder the browser has for [config], which it asks without opening one; null when
+ * it has none, and for a config naming one of FFmpeg's encoders, which the browser cannot open.
+ */
 @InternalFFmpegKmpApi
 public actual suspend fun platformVideoEncoderFor(config: NativeVideoEncoderConfig): NativeVideoTrackInfo? {
+    if (config.encoderName != null) return null
     val encoderConfig = webEncoderConfig(config, annexB = false) ?: return null
     if (!webCodecsEncodes(encoderConfig).awaitTrue()) return null
     return webTrackInfo(encoderConfig)
@@ -58,6 +62,10 @@ private class BrowserMediaWriter(
     private var closed = false
 
     override suspend fun addVideoTrack(config: NativeVideoEncoderConfig): NativeAddedVideoTrack {
+        config.encoderName?.let { name ->
+            val reason = "the browser encodes with WebCodecs, which cannot open FFmpeg's encoder $name"
+            throw NativeMediaWriterException("Could not add the video track: $reason", NativePlayerError.UNSUPPORTED, reason)
+        }
         val encoderConfig = webEncoderConfig(config, annexB = container == NativeContainer.MPEGTS)
             ?: throw NativeMediaWriterException(unsupported(config), NativePlayerError.UNSUPPORTED)
         val reply = call(track = null) {

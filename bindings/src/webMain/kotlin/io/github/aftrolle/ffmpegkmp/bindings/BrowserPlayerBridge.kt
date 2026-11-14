@@ -58,7 +58,7 @@ internal interface BrowserPlayerWorkerListener {
 internal fun createBrowserPlayerBridge(
     configuration: NativePlayerConfiguration,
     update: (NativePlayerSnapshot) -> Unit,
-    frame: (NativeVideoFrame) -> Unit,
+    frame: NativeVideoFrameSink,
     platformFrame: (NativePlatformVideoFrame) -> Boolean,
     workerFactory: (NativePlayerConfiguration, BrowserPlayerWorkerListener) -> BrowserPlayerWorker =
         ::startBrowserPlayerWorker,
@@ -73,11 +73,14 @@ internal fun createBrowserPlayerBridge(
 private class BrowserNativePlayerBridge(
     private val configuration: NativePlayerConfiguration,
     private val update: (NativePlayerSnapshot) -> Unit,
-    private val frame: (NativeVideoFrame) -> Unit,
+    private val frame: NativeVideoFrameSink,
     private val platformFrame: (NativePlatformVideoFrame) -> Boolean,
     private val workerFactory: (NativePlayerConfiguration, BrowserPlayerWorkerListener) -> BrowserPlayerWorker,
 ) : NativePlayerBridge {
     private var current = NativePlayerSnapshot()
+
+    /** Names the worker's frames for [frame]; never 0. */
+    private var frameTokens = 0L
     private var source: NativePlayerSource? = null
     private var output: NativePlayerOutputCapabilities? = null
     private var closed = false
@@ -129,6 +132,10 @@ private class BrowserNativePlayerBridge(
 
     override fun setOutput(capabilities: NativePlayerOutputCapabilities): Int {
         checkOpen()
+        // The browser decodes with WebCodecs, which has no FFmpeg decoders to name.
+        configuration.decoderName?.let { name ->
+            return fail(NativePlayerError.UNSUPPORTED, "the browser has no FFmpeg decoder $name to open")
+        }
         val validation = when {
             capabilities.protectedContent -> NativePlayerError.UNSUPPORTED
             configuration.decoderPreference == NativePlayerDecoderPreference.REQUIRE_HARDWARE -> NativePlayerError.UNSUPPORTED
@@ -268,15 +275,17 @@ private class BrowserNativePlayerBridge(
             queueSerial: UInt,
         ) {
             if (closed || generation != workerGeneration || queueSerial != current.queueSerial) return
-            frame(
-                NativeVideoFrame(
-                    frame = BrowserFrame.rgba(bytes, width, height, stride),
-                    width = width,
-                    height = height,
-                    presentationTimeUs = presentationTimeUs,
-                    queueSerial = queueSerial,
-                ),
+            // The worker paces its own frames (it ignores frameQueueSize): each one comes as it is shown.
+            val token = ++frameTokens
+            val prepared = NativeVideoFrame(
+                frame = BrowserFrame.rgba(bytes, width, height, stride),
+                width = width,
+                height = height,
+                presentationTimeUs = presentationTimeUs,
+                queueSerial = queueSerial,
+                token = token,
             )
+            if (frame.prepare(prepared)) frame.present(token)
         }
 
         override fun onPlatformFrame(
@@ -320,8 +329,8 @@ private class BrowserNativePlayerBridge(
             pendingPreparation?.takeIf { it.generation == generation }
     }
 
-    private fun fail(code: Int): Int {
-        current = current.copy(state = NativePlayerState.FAILED, errorCode = code)
+    private fun fail(code: Int, message: String? = null): Int {
+        current = current.copy(state = NativePlayerState.FAILED, errorCode = code, errorMessage = message)
         update(current)
         return code
     }
@@ -348,6 +357,7 @@ internal fun String.toBrowserNativePlayerSnapshot(decoderFallback: Int = 0): Nat
         videoHeight = value.int("videoHeight"),
         activeDecoder = value.int("activeDecoder"),
         droppedFrames = value.long("droppedFrames"),
+        catchUps = value["catchUps"]?.jsonPrimitive?.long ?: 0,
         pixelFormat = value.int("pixelFormat"),
         pixelFormatName = value.getValue("pixelFormatName").jsonPrimitive.content,
         bitDepth = value.int("bitDepth"),

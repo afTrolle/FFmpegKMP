@@ -33,7 +33,10 @@ public class NativeHdrMetadata(
     public val contentLight: Pair<Int, Int>?,
 )
 
-/** `ffmpegkmp_video_encoder_config`. The preference shares the decoders' ordinals. */
+/**
+ * `ffmpegkmp_video_encoder_config`. The preference shares the decoders' ordinals; with an
+ * [encoderName] it is ignored and that encoder alone opens, with [encoderOptions].
+ */
 @InternalFFmpegKmpApi
 public class NativeVideoEncoderConfig(
     public val width: Int,
@@ -50,7 +53,21 @@ public class NativeVideoEncoderConfig(
     public val hdrMetadata: NativeHdrMetadata?,
     /** 8 or 10; 0 for the dynamic range's own. */
     public val bitDepth: Int = 0,
-)
+    /** An FFmpeg encoder's name, opened alone; null to choose by [preference]. */
+    public val encoderName: String? = null,
+    /** The named encoder's AVOptions. */
+    public val encoderOptions: Map<String, String> = emptyMap(),
+) {
+    /** [encoderOptions] as `ffmpegkmp_video_encoder_config.options` holds them: each key and value NUL-terminated, in turn. */
+    public fun encodedOptions(): ByteArray = packCodecOptions(encoderOptions)
+}
+
+/**
+ * A codec's AVOptions as the bridge takes them, encoders' and named decoders' alike: each key and
+ * value NUL-terminated, in turn (`ffmpegkmp_codec_options_check`).
+ */
+internal fun packCodecOptions(options: Map<String, String>): ByteArray =
+    options.entries.joinToString(separator = "") { (key, value) -> "$key\u0000$value\u0000" }.encodeToByteArray()
 
 /** The encoder a video track opened, and the format it takes without a conversion. */
 @InternalFFmpegKmpApi
@@ -112,6 +129,19 @@ public interface NativeMediaWriter : AutoCloseable {
     /** Frees [track]'s encoder without draining it, on its thread, for an output that is abandoned. */
     public fun releaseTrack(track: Int)
 
+    /**
+     * The packets [track] has written so far, its encoder's or its input surface's; once the track
+     * has ended, 0 for one that took frames means its encoder gave none. Null where the binding
+     * does not count them (the browser's).
+     */
+    public fun packetsWritten(track: Int): Long? = null
+
+    /**
+     * For tests only: [track] drops its packets instead of writing them, as an encoder that takes
+     * frames and gives none would. Before the first write; false where the binding cannot.
+     */
+    public fun discardPacketsForTesting(track: Int): Boolean = false
+
     public suspend fun finish(): NativeWriterResult
 
     public fun abort()
@@ -125,6 +155,9 @@ public interface NativeMediaWriter : AutoCloseable {
  */
 @InternalFFmpegKmpApi
 public interface NativeEncoderSurface {
+    /** The platform encoder that took the surface, such as a MediaCodec component's name; null where it does not say. */
+    public val encoderName: String? get() = null
+
     /** The next buffer to draw into, waiting until the encoder has room; throws [NativeMediaWriterException] when the encoder failed. */
     public fun dequeue(): NativeGpuBuffer
 
@@ -132,8 +165,13 @@ public interface NativeEncoderSurface {
     public fun queue(buffer: NativeGpuBuffer, ptsNanos: Long)
 }
 
+/** A writer call that failed; [reason], where the writer gave one, says why in words. */
 @InternalFFmpegKmpApi
-public class NativeMediaWriterException(message: String, errorCode: Int) : NativeCallException(message, errorCode)
+public class NativeMediaWriterException(
+    message: String,
+    errorCode: Int,
+    public val reason: String? = null,
+) : NativeCallException(message, errorCode)
 
 /**
  * Creates a writer for [output], opening it for writing. [fastStart] puts an MP4's index first.
@@ -162,6 +200,8 @@ internal interface MediaWriterEngineCalls {
     fun endTrack(track: Int): Int
     fun openInputSurface(track: Int): NativeEncoderSurface? = null
     fun releaseTrack(track: Int)
+    fun packetsWritten(track: Int): Long? = null
+    fun discardPacketsForTesting(track: Int): Boolean = false
     fun finish(): NativeWriterResult
     fun abort()
 
@@ -198,6 +238,10 @@ internal class GuardedMediaWriter(
     override suspend fun openInputSurface(track: Int): NativeEncoderSurface? = guard.use(::closedError) { engine.openInputSurface(track) }
 
     override fun releaseTrack(track: Int) = guard.use({}) { engine.releaseTrack(track) }
+
+    override fun packetsWritten(track: Int): Long? = guard.use(::closedError) { engine.packetsWritten(track) }
+
+    override fun discardPacketsForTesting(track: Int): Boolean = guard.use(::closedError) { engine.discardPacketsForTesting(track) }
 
     override suspend fun finish(): NativeWriterResult = guard.use(::closedError) { engine.finish() }
 

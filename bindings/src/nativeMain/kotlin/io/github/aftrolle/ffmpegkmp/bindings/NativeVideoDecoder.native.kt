@@ -17,15 +17,26 @@ import io.github.aftrolle.ffmpegkmp.bindings.cinterop.ffmpegkmp_video_decoder_de
 import io.github.aftrolle.ffmpegkmp.bindings.cinterop.ffmpegkmp_video_decoder_frame_at
 import io.github.aftrolle.ffmpegkmp.bindings.cinterop.ffmpegkmp_video_decoder_get_info
 import io.github.aftrolle.ffmpegkmp.bindings.cinterop.ffmpegkmp_video_decoder_seek
+import io.github.aftrolle.ffmpegkmp.bindings.cinterop.ffmpegkmp_video_decoder_set_size
+import io.github.aftrolle.ffmpegkmp.bindings.cinterop.ffmpegkmp_video_decoder_error
+import io.github.aftrolle.ffmpegkmp.bindings.cinterop.ffmpegkmp_video_decoder_set_named_decoder
+import io.github.aftrolle.ffmpegkmp.bindings.cinterop.ffmpegkmp_video_decoder_set_frame_ring
+import io.github.aftrolle.ffmpegkmp.bindings.cinterop.ffmpegkmp_video_decoder_set_thread_type
 import io.github.aftrolle.ffmpegkmp.bindings.cinterop.ffmpegkmp_video_decoder_start
 import io.github.aftrolle.ffmpegkmp.bindings.cinterop.ffmpegkmp_video_decoder_time_left
 import io.github.aftrolle.ffmpegkmp.bindings.cinterop.ffplaykmp_snapshot
 import io.github.aftrolle.ffmpegkmp.bindings.cinterop.ffplaykmp_snapshot_init
+import kotlinx.cinterop.ByteVar
 import kotlinx.cinterop.CPointer
 import kotlinx.cinterop.IntVar
 import kotlinx.cinterop.StableRef
 import kotlinx.cinterop.alloc
+import kotlinx.cinterop.allocArray
+import kotlinx.cinterop.set
+import kotlinx.cinterop.toKString
 import kotlinx.cinterop.free
+import kotlinx.cinterop.cstr
+import kotlinx.cinterop.toCValues
 import kotlinx.cinterop.memScoped
 import kotlinx.cinterop.nativeHeap
 import kotlinx.cinterop.ptr
@@ -42,6 +53,10 @@ public actual fun createPlatformVideoDecoder(
     decoderPreference: NativePlayerDecoderPreference,
     decoderThreads: Int,
     timeoutMicros: Long,
+    decoderThreadType: Int,
+    frameRing: Int,
+    decoderName: String?,
+    decoderOptions: Map<String, String>,
 ): NativeVideoDecoder {
     requireMemoryOutput(output)
     val mounts = StableRef.create(MountTable(source.mounts, replayableSources = true))
@@ -67,7 +82,41 @@ public actual fun createPlatformVideoDecoder(
             )
         }
     }
-    return GuardedVideoDecoder(CInteropVideoDecoderEngine(decoder, mounts), source.input)
+    val engine = CInteropVideoDecoderEngine(decoder, mounts)
+    if (frameRing != DEFAULT_FRAME_RING) {
+        val set = ffmpegkmp_video_decoder_set_frame_ring(decoder, frameRing)
+        if (set < 0) {
+            engine.release()
+            throw NativeVideoDecoderException("Could not set the decoder's ring of $frameRing frames (error $set)", set)
+        }
+    }
+    if (decoderThreadType != 0) {
+        val set = ffmpegkmp_video_decoder_set_thread_type(decoder, decoderThreadType)
+        if (set < 0) {
+            engine.release()
+            throw NativeVideoDecoderException("Could not set the decoder's thread type $decoderThreadType (error $set)", set)
+        }
+    }
+    if (decoderName != null) {
+        val packed = packCodecOptions(decoderOptions)
+        // Copied by the decoder before the call returns.
+        val named = ffmpegkmp_video_decoder_set_named_decoder(
+            decoder,
+            decoderName.cstr,
+            packed.takeIf(ByteArray::isNotEmpty)?.toCValues(),
+            packed.size,
+        )
+        if (named < 0) {
+            val reason = engine.error()
+            engine.release()
+            throw NativeVideoDecoderException(
+                "Could not name the decoder '$decoderName'" + (reason?.let { ": $it" } ?: " (error $named)"),
+                named,
+                reason,
+            )
+        }
+    }
+    return GuardedVideoDecoder(engine, source.input)
 }
 
 private class CInteropVideoDecoderEngine(
@@ -108,11 +157,15 @@ private class CInteropVideoDecoderEngine(
         )
     }
 
+    override fun setSize(width: Int, height: Int) = ffmpegkmp_video_decoder_set_size(decoder, width, height)
+
     override fun interrupt() = ffmpegkmp_video_decoder_interrupt(decoder)
 
     override fun abort() = ffmpegkmp_video_decoder_abort(decoder)
 
     override fun timeLeft(): Long = ffmpegkmp_video_decoder_time_left(decoder)
+
+    override fun error(): String? = ffmpegkmp_video_decoder_error(decoder)?.toKString()?.takeIf(String::isNotEmpty)
 
     override fun release() {
         ffmpegkmp_video_decoder_destroy(decoder)

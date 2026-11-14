@@ -13,7 +13,7 @@ import io.github.aftrolle.ffmpegkmp.bindings.setNativeDecoderBudget
  *
  * A hardware decoder takes a place when it opens and gives it back when it closes: a
  * [VideoDecoder] at [VideoDecoder.close], a player once it has been idle for its
- * `releaseDecoderWhenPaused` grace, or when it stops or closes. A decoder that finds every place
+ * `decoderIdleRelease` grace, or when it stops or closes. A decoder that finds every place
  * taken does not wait: under [CodecPreference.AUTO] it decodes in software and reports
  * [DecoderFallbackReason.BUDGET], under [CodecPreference.REQUIRE_HARDWARE] it fails.
  *

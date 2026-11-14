@@ -1,0 +1,97 @@
+public final class io/github/aftrolle/ffmpegkmp/filters/AudioMixDuration : java/lang/Enum {
+	public static final field FIRST Lio/github/aftrolle/ffmpegkmp/filters/AudioMixDuration;
+	public static final field LONGEST Lio/github/aftrolle/ffmpegkmp/filters/AudioMixDuration;
+	public static final field SHORTEST Lio/github/aftrolle/ffmpegkmp/filters/AudioMixDuration;
+	public static fun getEntries ()Lkotlin/enums/EnumEntries;
+	public static fun valueOf (Ljava/lang/String;)Lio/github/aftrolle/ffmpegkmp/filters/AudioMixDuration;
+	public static fun values ()[Lio/github/aftrolle/ffmpegkmp/filters/AudioMixDuration;
+}
+
+public final class io/github/aftrolle/ffmpegkmp/filters/FadeType : java/lang/Enum {
+	public static final field IN Lio/github/aftrolle/ffmpegkmp/filters/FadeType;
+	public static final field OUT Lio/github/aftrolle/ffmpegkmp/filters/FadeType;
+	public static fun getEntries ()Lkotlin/enums/EnumEntries;
+	public static fun valueOf (Ljava/lang/String;)Lio/github/aftrolle/ffmpegkmp/filters/FadeType;
+	public static fun values ()[Lio/github/aftrolle/ffmpegkmp/filters/FadeType;
+}
+
+public final class io/github/aftrolle/ffmpegkmp/filters/FilterGraph {
+	public static final field Companion Lio/github/aftrolle/ffmpegkmp/filters/FilterGraph$Companion;
+	public final fun compile ()Ljava/lang/String;
+}
+
+public final class io/github/aftrolle/ffmpegkmp/filters/FilterGraph$Builder {
+	public fun <init> ()V
+	public final fun alphaMask (Lio/github/aftrolle/ffmpegkmp/filters/FilterPad;Lio/github/aftrolle/ffmpegkmp/filters/FilterPad;Ljava/lang/String;)Lio/github/aftrolle/ffmpegkmp/filters/FilterPad;
+	public static synthetic fun alphaMask$default (Lio/github/aftrolle/ffmpegkmp/filters/FilterGraph$Builder;Lio/github/aftrolle/ffmpegkmp/filters/FilterPad;Lio/github/aftrolle/ffmpegkmp/filters/FilterPad;Ljava/lang/String;ILjava/lang/Object;)Lio/github/aftrolle/ffmpegkmp/filters/FilterPad;
+	public final fun audioTrack (II)Lio/github/aftrolle/ffmpegkmp/filters/FilterPad;
+	public static synthetic fun audioTrack$default (Lio/github/aftrolle/ffmpegkmp/filters/FilterGraph$Builder;IIILjava/lang/Object;)Lio/github/aftrolle/ffmpegkmp/filters/FilterPad;
+	public final fun audioTrim (Lio/github/aftrolle/ffmpegkmp/filters/FilterPad;Ljava/lang/Double;Ljava/lang/Double;Ljava/lang/String;)Lio/github/aftrolle/ffmpegkmp/filters/FilterPad;
+	public static synthetic fun audioTrim$default (Lio/github/aftrolle/ffmpegkmp/filters/FilterGraph$Builder;Lio/github/aftrolle/ffmpegkmp/filters/FilterPad;Ljava/lang/Double;Ljava/lang/Double;Ljava/lang/String;ILjava/lang/Object;)Lio/github/aftrolle/ffmpegkmp/filters/FilterPad;
+	public final fun crop (Lio/github/aftrolle/ffmpegkmp/filters/FilterPad;IIIILjava/lang/String;)Lio/github/aftrolle/ffmpegkmp/filters/FilterPad;
+	public static synthetic fun crop$default (Lio/github/aftrolle/ffmpegkmp/filters/FilterGraph$Builder;Lio/github/aftrolle/ffmpegkmp/filters/FilterPad;IIIILjava/lang/String;ILjava/lang/Object;)Lio/github/aftrolle/ffmpegkmp/filters/FilterPad;
+	public final fun fade (Lio/github/aftrolle/ffmpegkmp/filters/FilterPad;Lio/github/aftrolle/ffmpegkmp/filters/FadeType;DDLjava/lang/String;)Lio/github/aftrolle/ffmpegkmp/filters/FilterPad;
+	public static synthetic fun fade$default (Lio/github/aftrolle/ffmpegkmp/filters/FilterGraph$Builder;Lio/github/aftrolle/ffmpegkmp/filters/FilterPad;Lio/github/aftrolle/ffmpegkmp/filters/FadeType;DDLjava/lang/String;ILjava/lang/Object;)Lio/github/aftrolle/ffmpegkmp/filters/FilterPad;
+	public final fun frameRate (Lio/github/aftrolle/ffmpegkmp/filters/FilterPad;DLjava/lang/String;)Lio/github/aftrolle/ffmpegkmp/filters/FilterPad;
+	public static synthetic fun frameRate$default (Lio/github/aftrolle/ffmpegkmp/filters/FilterGraph$Builder;Lio/github/aftrolle/ffmpegkmp/filters/FilterPad;DLjava/lang/String;ILjava/lang/Object;)Lio/github/aftrolle/ffmpegkmp/filters/FilterPad;
+	public final fun input (ILjava/lang/String;)Lio/github/aftrolle/ffmpegkmp/filters/FilterPad;
+	public static synthetic fun input$default (Lio/github/aftrolle/ffmpegkmp/filters/FilterGraph$Builder;ILjava/lang/String;ILjava/lang/Object;)Lio/github/aftrolle/ffmpegkmp/filters/FilterPad;
+	public final fun lumaMask (Lio/github/aftrolle/ffmpegkmp/filters/FilterPad;Lio/github/aftrolle/ffmpegkmp/filters/FilterPad;Lio/github/aftrolle/ffmpegkmp/filters/FilterPad;Ljava/lang/String;)Lio/github/aftrolle/ffmpegkmp/filters/FilterPad;
+	public static synthetic fun lumaMask$default (Lio/github/aftrolle/ffmpegkmp/filters/FilterGraph$Builder;Lio/github/aftrolle/ffmpegkmp/filters/FilterPad;Lio/github/aftrolle/ffmpegkmp/filters/FilterPad;Lio/github/aftrolle/ffmpegkmp/filters/FilterPad;Ljava/lang/String;ILjava/lang/Object;)Lio/github/aftrolle/ffmpegkmp/filters/FilterPad;
+	public final fun mixAudio (Ljava/util/List;Lio/github/aftrolle/ffmpegkmp/filters/AudioMixDuration;ZLjava/lang/String;)Lio/github/aftrolle/ffmpegkmp/filters/FilterPad;
+	public static synthetic fun mixAudio$default (Lio/github/aftrolle/ffmpegkmp/filters/FilterGraph$Builder;Ljava/util/List;Lio/github/aftrolle/ffmpegkmp/filters/AudioMixDuration;ZLjava/lang/String;ILjava/lang/Object;)Lio/github/aftrolle/ffmpegkmp/filters/FilterPad;
+	public final fun overlay (Lio/github/aftrolle/ffmpegkmp/filters/FilterPad;Lio/github/aftrolle/ffmpegkmp/filters/FilterPad;Ljava/lang/String;Ljava/lang/String;DLjava/lang/String;)Lio/github/aftrolle/ffmpegkmp/filters/FilterPad;
+	public static synthetic fun overlay$default (Lio/github/aftrolle/ffmpegkmp/filters/FilterGraph$Builder;Lio/github/aftrolle/ffmpegkmp/filters/FilterPad;Lio/github/aftrolle/ffmpegkmp/filters/FilterPad;Ljava/lang/String;Ljava/lang/String;DLjava/lang/String;ILjava/lang/Object;)Lio/github/aftrolle/ffmpegkmp/filters/FilterPad;
+	public final fun pad (Lio/github/aftrolle/ffmpegkmp/filters/FilterPad;IIIILjava/lang/String;Ljava/lang/String;)Lio/github/aftrolle/ffmpegkmp/filters/FilterPad;
+	public static synthetic fun pad$default (Lio/github/aftrolle/ffmpegkmp/filters/FilterGraph$Builder;Lio/github/aftrolle/ffmpegkmp/filters/FilterPad;IIIILjava/lang/String;Ljava/lang/String;ILjava/lang/Object;)Lio/github/aftrolle/ffmpegkmp/filters/FilterPad;
+	public final fun raw (Ljava/util/List;Ljava/lang/String;Ljava/lang/String;)Lio/github/aftrolle/ffmpegkmp/filters/FilterPad;
+	public static synthetic fun raw$default (Lio/github/aftrolle/ffmpegkmp/filters/FilterGraph$Builder;Ljava/util/List;Ljava/lang/String;Ljava/lang/String;ILjava/lang/Object;)Lio/github/aftrolle/ffmpegkmp/filters/FilterPad;
+	public final fun rotate (Lio/github/aftrolle/ffmpegkmp/filters/FilterPad;Ljava/lang/String;Ljava/lang/String;)Lio/github/aftrolle/ffmpegkmp/filters/FilterPad;
+	public static synthetic fun rotate$default (Lio/github/aftrolle/ffmpegkmp/filters/FilterGraph$Builder;Lio/github/aftrolle/ffmpegkmp/filters/FilterPad;Ljava/lang/String;Ljava/lang/String;ILjava/lang/Object;)Lio/github/aftrolle/ffmpegkmp/filters/FilterPad;
+	public final fun scale (Lio/github/aftrolle/ffmpegkmp/filters/FilterPad;IILjava/lang/String;)Lio/github/aftrolle/ffmpegkmp/filters/FilterPad;
+	public static synthetic fun scale$default (Lio/github/aftrolle/ffmpegkmp/filters/FilterGraph$Builder;Lio/github/aftrolle/ffmpegkmp/filters/FilterPad;IILjava/lang/String;ILjava/lang/Object;)Lio/github/aftrolle/ffmpegkmp/filters/FilterPad;
+	public final fun tempo (Lio/github/aftrolle/ffmpegkmp/filters/FilterPad;DLjava/lang/String;)Lio/github/aftrolle/ffmpegkmp/filters/FilterPad;
+	public static synthetic fun tempo$default (Lio/github/aftrolle/ffmpegkmp/filters/FilterGraph$Builder;Lio/github/aftrolle/ffmpegkmp/filters/FilterPad;DLjava/lang/String;ILjava/lang/Object;)Lio/github/aftrolle/ffmpegkmp/filters/FilterPad;
+	public final fun transpose (Lio/github/aftrolle/ffmpegkmp/filters/FilterPad;Lio/github/aftrolle/ffmpegkmp/filters/TransposeDirection;Ljava/lang/String;)Lio/github/aftrolle/ffmpegkmp/filters/FilterPad;
+	public static synthetic fun transpose$default (Lio/github/aftrolle/ffmpegkmp/filters/FilterGraph$Builder;Lio/github/aftrolle/ffmpegkmp/filters/FilterPad;Lio/github/aftrolle/ffmpegkmp/filters/TransposeDirection;Ljava/lang/String;ILjava/lang/Object;)Lio/github/aftrolle/ffmpegkmp/filters/FilterPad;
+	public final fun trim (Lio/github/aftrolle/ffmpegkmp/filters/FilterPad;Ljava/lang/Double;Ljava/lang/Double;Ljava/lang/String;)Lio/github/aftrolle/ffmpegkmp/filters/FilterPad;
+	public static synthetic fun trim$default (Lio/github/aftrolle/ffmpegkmp/filters/FilterGraph$Builder;Lio/github/aftrolle/ffmpegkmp/filters/FilterPad;Ljava/lang/Double;Ljava/lang/Double;Ljava/lang/String;ILjava/lang/Object;)Lio/github/aftrolle/ffmpegkmp/filters/FilterPad;
+	public final fun videoSpeed (Lio/github/aftrolle/ffmpegkmp/filters/FilterPad;DLjava/lang/String;)Lio/github/aftrolle/ffmpegkmp/filters/FilterPad;
+	public static synthetic fun videoSpeed$default (Lio/github/aftrolle/ffmpegkmp/filters/FilterGraph$Builder;Lio/github/aftrolle/ffmpegkmp/filters/FilterPad;DLjava/lang/String;ILjava/lang/Object;)Lio/github/aftrolle/ffmpegkmp/filters/FilterPad;
+	public final fun volume (Lio/github/aftrolle/ffmpegkmp/filters/FilterPad;DLjava/lang/String;)Lio/github/aftrolle/ffmpegkmp/filters/FilterPad;
+	public final fun volume (Lio/github/aftrolle/ffmpegkmp/filters/FilterPad;Lio/github/aftrolle/ffmpegkmp/core/AudioLevel;Ljava/lang/String;)Lio/github/aftrolle/ffmpegkmp/filters/FilterPad;
+	public static synthetic fun volume$default (Lio/github/aftrolle/ffmpegkmp/filters/FilterGraph$Builder;Lio/github/aftrolle/ffmpegkmp/filters/FilterPad;DLjava/lang/String;ILjava/lang/Object;)Lio/github/aftrolle/ffmpegkmp/filters/FilterPad;
+	public static synthetic fun volume$default (Lio/github/aftrolle/ffmpegkmp/filters/FilterGraph$Builder;Lio/github/aftrolle/ffmpegkmp/filters/FilterPad;Lio/github/aftrolle/ffmpegkmp/core/AudioLevel;Ljava/lang/String;ILjava/lang/Object;)Lio/github/aftrolle/ffmpegkmp/filters/FilterPad;
+}
+
+public final class io/github/aftrolle/ffmpegkmp/filters/FilterGraph$Companion {
+	public final fun invoke (Lkotlin/jvm/functions/Function1;)Lio/github/aftrolle/ffmpegkmp/filters/FilterGraph;
+}
+
+public final class io/github/aftrolle/ffmpegkmp/filters/FilterGraphKt {
+	public static final fun filterGraph (Lio/github/aftrolle/ffmpegkmp/ffmpeg/FFmpegCommand$Builder;Lio/github/aftrolle/ffmpegkmp/filters/FilterGraph;)V
+}
+
+public final class io/github/aftrolle/ffmpegkmp/filters/FilterPad {
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class io/github/aftrolle/ffmpegkmp/filters/ToneMap {
+	public static final field Hdr10P010Output Ljava/lang/String;
+	public static final field INSTANCE Lio/github/aftrolle/ffmpegkmp/filters/ToneMap;
+	public static final field SdrBt709ToHdr10 Ljava/lang/String;
+	public static final field SrgbToHdr10 Ljava/lang/String;
+	public static final field ToHdr10Bt2020 Ljava/lang/String;
+	public static final field ToSdrBt709 Ljava/lang/String;
+}
+
+public final class io/github/aftrolle/ffmpegkmp/filters/TransposeDirection : java/lang/Enum {
+	public static final field CLOCKWISE Lio/github/aftrolle/ffmpegkmp/filters/TransposeDirection;
+	public static final field CLOCKWISE_AND_FLIP Lio/github/aftrolle/ffmpegkmp/filters/TransposeDirection;
+	public static final field COUNTER_CLOCKWISE Lio/github/aftrolle/ffmpegkmp/filters/TransposeDirection;
+	public static final field COUNTER_CLOCKWISE_AND_FLIP Lio/github/aftrolle/ffmpegkmp/filters/TransposeDirection;
+	public static fun getEntries ()Lkotlin/enums/EnumEntries;
+	public static fun valueOf (Ljava/lang/String;)Lio/github/aftrolle/ffmpegkmp/filters/TransposeDirection;
+	public static fun values ()[Lio/github/aftrolle/ffmpegkmp/filters/TransposeDirection;
+}
+

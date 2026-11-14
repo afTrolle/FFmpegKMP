@@ -65,7 +65,7 @@ class FFplayPlayerTest {
     @Test
     fun strictHardwarePreferenceFailsTruthfullyOnCanvas() = runTest {
         val player = testPlayer(
-            FFplayConfiguration(decoderPreference = CodecPreference.REQUIRE_HARDWARE),
+            FFplayConfiguration(decoder = CodecPreference.REQUIRE_HARDWARE),
         )
         player.prepare(MediaSource("movie.mp4"))
         player.attachOutput(FakeOutput())
@@ -143,7 +143,7 @@ class FFplayPlayerTest {
     @Test
     fun protectedSourceAcceptsOnlyVerifiedSecureNativeOutput() = runTest {
         val player = testPlayer(
-            FFplayConfiguration(decoderPreference = CodecPreference.REQUIRE_HARDWARE),
+            FFplayConfiguration(decoder = CodecPreference.REQUIRE_HARDWARE),
         )
         player.prepare(MediaSource("protected.m3u8"), FFplayContentProtection.REQUIRE_SECURE_PATH)
         player.attachOutput(SecureFakeOutput())

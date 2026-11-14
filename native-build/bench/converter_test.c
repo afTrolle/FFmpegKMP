@@ -13,15 +13,22 @@
  * every second row. codec's VideoDecoderGoldenTest and ffplay's VideoFrameImageTest
  * read the RGBA8 and RGBA F16 ones.
  *
- * check also runs the converter's own checks: the matrix-only RGBA8 of HDR
- * sources against the legacy swscale setup, and the encode-direction round
- * trip, linear F16 to P010 PQ or HLG and back.
+ * check also runs the converter's own checks: the gamut maps its tone map
+ * keeps (one per colour pair however many sizes it converts into, no limit on
+ * pairs, one map when converters first need it at once) and how far their
+ * lattice strays from swscale's own perceptual mapping, the matrix-only RGBA8
+ * of HDR sources against the legacy swscale setup, and the encode-direction
+ * round trip, linear F16 to P010 PQ or HLG and back.
+ *
+ *   converter_test <fixture dir> <golden dir> bench    times the HDR tone map
  */
 #include "ffmpegkmp_decoder.h"
 #include "ffplaykmp_core.h"
 
 #include <CoreVideo/CoreVideo.h>
 #include <math.h>
+#include <pthread.h>
+#include <time.h>
 #include <libavutil/imgutils.h>
 #include <libavutil/mastering_display_metadata.h>
 #include <stdio.h>
@@ -1014,13 +1021,449 @@ static int check_matrix_only(const char *fixtures, const char *clip) {
     return worst > 1;
 }
 
+static double now_ms(void) {
+    struct timespec time;
+    clock_gettime(CLOCK_MONOTONIC, &time);
+    return time.tv_sec * 1e3 + time.tv_nsec / 1e6;
+}
+
+static uint64_t gamut_maps(void) {
+    ffmpegkmp_frame_statistics statistics;
+    ffmpegkmp_frame_statistics_init(&statistics);
+    ffmpegkmp_frame_get_statistics(&statistics);
+    return statistics.gamut_maps;
+}
+
+/* An SDR RGBA8 frame of `width` x `height` in `primaries` and `transfer`, as the decoder's outputs are. */
+static AVFrame *sdr_frame(int width, int height, enum AVColorPrimaries primaries, enum AVColorTransferCharacteristic transfer) {
+    return new_frame(AV_PIX_FMT_RGBA, width, height, primaries, transfer, AVCOL_SPC_RGB, AVCOL_RANGE_JPEG);
+}
+
+/* The levels of light the canvas's colour bands are at, in nits, darkest first; a band of greys follows. */
+static const double CANVAS_NITS[] = { 5, 20, 100, 400, 1000 };
+#define CANVAS_BANDS (int)(sizeof(CANVAS_NITS) / sizeof(CANVAS_NITS[0]) + 1)
+
+/*
+ * A PQ frame in `primaries` whose colours reach the edges of its gamut, so a
+ * tone map into narrower primaries has colours to compress: smooth ramps of
+ * hue at full saturation and of saturation at each hue, at the levels of
+ * CANVAS_NITS from near black up, and a ramp of greys.
+ */
+static AVFrame *pq_canvas(enum AVColorPrimaries primaries, int width, int height) {
+    AVFrame *frame = new_frame(AV_PIX_FMT_GBRP16, width, height, primaries, AVCOL_TRC_SMPTE2084, AVCOL_SPC_RGB,
+            AVCOL_RANGE_JPEG);
+    const int rows = height / CANVAS_BANDS;
+    int x;
+    int y;
+    for (y = 0; frame && y < height; y++) {
+        for (x = 0; x < width; x++) {
+            /* Hue around the circle across, saturation down each band, light by band. */
+            const double hue = 6.0 * x / width;
+            const int band = y / rows < CANVAS_BANDS ? y / rows : CANVAS_BANDS - 1;
+            const int grey = band == CANVAS_BANDS - 1;
+            const double saturation = grey ? 0.0 : (double)(y - band * rows) / (rows - 1);
+            const double nits = grey ? 1000.0 * x / (width - 1) : CANVAS_NITS[band];
+            const double up = hue - floor(hue);
+            const double down = 1 - up;
+            double colour[3];
+            int channel;
+            switch ((int)hue) {
+            case 0: colour[0] = 1; colour[1] = up; colour[2] = 0; break;
+            case 1: colour[0] = down; colour[1] = 1; colour[2] = 0; break;
+            case 2: colour[0] = 0; colour[1] = 1; colour[2] = up; break;
+            case 3: colour[0] = 0; colour[1] = down; colour[2] = 1; break;
+            case 4: colour[0] = up; colour[1] = 0; colour[2] = 1; break;
+            default: colour[0] = 1; colour[1] = 0; colour[2] = down; break;
+            }
+            for (channel = 0; channel < 3; channel++) {
+                const double light = (1 - saturation) + saturation * colour[channel];
+                const int plane = (channel + 2) % 3;
+                ((uint16_t *)(frame->data[plane] + (size_t)y * frame->linesize[plane]))[x] =
+                        (uint16_t)lrint(pq_signal(light * nits) * 65535);
+            }
+        }
+    }
+    return frame;
+}
+
+/* A 16-bit planar RGB pixel's red, green and blue codes, from 0 to 1. */
+static void rgb16_pixel(const AVFrame *frame, int x, int y, double rgb[3]) {
+    int channel;
+    for (channel = 0; channel < 3; channel++) {
+        /* GBR plane order. */
+        const int plane = (channel + 2) % 3;
+        rgb[channel] = ((const uint16_t *)(frame->data[plane] + (size_t)y * frame->linesize[plane]))[x] / 65535.0;
+    }
+}
+
+/*
+ * CIELAB (D65) of SDR codes in BT.709 or Display P3 primaries, shown with the
+ * sRGB curve, as the converter shows every SDR curve.
+ */
+static void lab_of(const double codes[3], enum AVColorPrimaries primaries, double lab[3]) {
+    static const double BT709_XYZ[9] = {
+        0.4124, 0.3576, 0.1805, 0.2126, 0.7152, 0.0722, 0.0193, 0.1192, 0.9505,
+    };
+    static const double P3_XYZ[9] = {
+        0.4865709, 0.2656677, 0.1982173, 0.2289746, 0.6917385, 0.0792869, 0.0, 0.0451134, 1.0439444,
+    };
+    static const double white[3] = { 0.95047, 1.0, 1.08883 };
+    double linear[3];
+    double xyz[3];
+    double f[3];
+    int channel;
+    for (channel = 0; channel < 3; channel++) {
+        const double code = codes[channel];
+        linear[channel] = code <= 0.04045 ? code / 12.92 : pow((code + 0.055) / 1.055, 2.4);
+    }
+    multiply(primaries == AVCOL_PRI_SMPTE432 ? P3_XYZ : BT709_XYZ, linear, xyz);
+    for (channel = 0; channel < 3; channel++) {
+        const double t = xyz[channel] / white[channel];
+        f[channel] = t > 216.0 / 24389 ? cbrt(t) : (24389.0 / 27 * t + 16) / 116;
+    }
+    lab[0] = 116 * f[1] - 16;
+    lab[1] = 500 * (f[0] - f[1]);
+    lab[2] = 200 * (f[1] - f[2]);
+}
+
+/*
+ * The gate. The lattice has swscale's own 65 points per side and is looked up
+ * as swscale looks up its table, so it should reproduce swscale's mapping but
+ * for float and 16-bit rounding: a few hundredths of an 8-bit code, CIE76
+ * about 0.01. Each limit is some ten times that, far below a just-noticeable
+ * difference (2.3): the CIE76 distance, which weighs a code by the light it
+ * stands for; the signed mean in 8-bit codes of any channel, which a viewer
+ * would see as a cast; and in 8-bit codes the largest error of any channel and
+ * the 99.9th percentile (measured in sixteenths of a code, so 0.06 at best).
+ */
+#define GAMUT_DELTA_E 0.1
+#define GAMUT_BIAS 0.02
+#define GAMUT_MAX 0.25
+#define GAMUT_P999 0.25
+/* The percentile's histogram: sixteenths of an 8-bit code, up to 64 codes. */
+#define GAMUT_BINS 1024
+
+/*
+ * The tone map of `source` into `primaries` and `transfer` against swscale's
+ * perceptual mapping of the same tone-mapped codes, which the converter ran on
+ * every frame before it sampled the mapping on a lattice: the tone map into
+ * the source's own primaries (no gamut map), then swscale. In 16 bits, so 8-bit
+ * rounding hides nothing; errors are given in 8-bit codes. Returns the
+ * failures against the gate.
+ */
+static int check_gamut_accuracy(
+        const char *name,
+        const AVFrame *source,
+        enum AVColorPrimaries primaries,
+        enum AVColorTransferCharacteristic transfer) {
+    const int width = source->width;
+    const int height = source->height;
+    const double pixels = (double)width * height;
+    ffmpegkmp_converter *converter = ffmpegkmp_converter_alloc(0);
+    SwsContext *scaler = sws_alloc_context();
+    AVFrame *lattice = new_frame(AV_PIX_FMT_GBRP16, width, height, primaries, transfer, AVCOL_SPC_RGB, AVCOL_RANGE_JPEG);
+    AVFrame *coded = new_frame(AV_PIX_FMT_GBRP16, width, height, ffmpegkmp_known_primaries(source->color_primaries),
+            transfer, AVCOL_SPC_RGB, AVCOL_RANGE_JPEG);
+    AVFrame *mapped = new_frame(AV_PIX_FMT_GBRP16, width, height, primaries, transfer, AVCOL_SPC_RGB, AVCOL_RANGE_JPEG);
+    static uint32_t histogram[GAMUT_BINS + 1];
+    double signed_total[3] = { 0 };
+    double worst[3] = { 0 };
+    double difference = 0;
+    double differences = 0;
+    double percentile = GAMUT_BINS / 16.0;
+    double bias = 0;
+    uint64_t counted = 0;
+    int failed;
+    int bin;
+    int x;
+    int y;
+    int channel;
+    if (!converter || !scaler || !lattice || !coded || !mapped || ffmpegkmp_frame_convert(converter, lattice, source) < 0 ||
+            ffmpegkmp_frame_convert(converter, coded, source) < 0) {
+        printf("FAIL %s gamut map: convert failed\n", name);
+        return 1;
+    }
+    scaler->flags = SWS_BILINEAR;
+    scaler->intent = SWS_INTENT_PERCEPTUAL;
+    if (sws_scale_frame(scaler, mapped, coded) < 0) {
+        printf("FAIL %s gamut map: swscale failed\n", name);
+        return 1;
+    }
+    memset(histogram, 0, sizeof(histogram));
+    for (y = 0; y < height; y++) {
+        for (x = 0; x < width; x++) {
+            double expected[3];
+            double actual[3];
+            double expected_lab[3];
+            double actual_lab[3];
+            double distance;
+            rgb16_pixel(mapped, x, y, expected);
+            rgb16_pixel(lattice, x, y, actual);
+            lab_of(expected, primaries, expected_lab);
+            lab_of(actual, primaries, actual_lab);
+            distance = sqrt((actual_lab[0] - expected_lab[0]) * (actual_lab[0] - expected_lab[0]) +
+                    (actual_lab[1] - expected_lab[1]) * (actual_lab[1] - expected_lab[1]) +
+                    (actual_lab[2] - expected_lab[2]) * (actual_lab[2] - expected_lab[2]));
+            difference = fmax(difference, distance);
+            differences += distance;
+            for (channel = 0; channel < 3; channel++) {
+                const double error = (actual[channel] - expected[channel]) * 255;
+                const int slot = (int)(fabs(error) * 16);
+                signed_total[channel] += error;
+                worst[channel] = fmax(worst[channel], fabs(error));
+                histogram[slot < GAMUT_BINS ? slot : GAMUT_BINS]++;
+            }
+        }
+    }
+    for (bin = 0; bin <= GAMUT_BINS; bin++) {
+        counted += histogram[bin];
+        if (counted >= 0.999 * pixels * 3) {
+            percentile = (bin + 1) / 16.0;
+            break;
+        }
+    }
+    for (channel = 0; channel < 3; channel++)
+        bias = fmax(bias, fabs(signed_total[channel] / pixels));
+    failed = difference > GAMUT_DELTA_E || bias > GAMUT_BIAS || percentile > GAMUT_P999 ||
+            fmax(worst[0], fmax(worst[1], worst[2])) > GAMUT_MAX;
+    printf("%s %s gamut map into %s against swscale's per frame, in 8-bit codes: max %.2f %.2f %.2f (R G B), signed mean "
+            "%+.3f %+.3f %+.3f, 99.9th percentile %.2f; CIE76 max %.2f, mean %.3f\n", failed ? "FAIL" : "ok  ", name,
+            primaries == AVCOL_PRI_SMPTE432 ? "Display P3" : transfer == AVCOL_TRC_BT709 ? "BT.709 (BT.709 curve)" : "sRGB",
+            worst[0], worst[1], worst[2], signed_total[0] / pixels, signed_total[1] / pixels, signed_total[2] / pixels,
+            percentile, difference, differences / pixels);
+    sws_free_context(&scaler);
+    av_frame_free(&lattice);
+    av_frame_free(&coded);
+    av_frame_free(&mapped);
+    ffmpegkmp_converter_free(&converter);
+    return failed;
+}
+
+static int check_gamut_accuracy_of_clip(const char *directory, const char *clip) {
+    char path[1024];
+    AVFrame *source;
+    int failures;
+    snprintf(path, sizeof(path), "%s/%s", directory, clip);
+    if (!(source = first_frame(path))) {
+        printf("FAIL %s gamut map: decode failed\n", clip);
+        return 1;
+    }
+    failures = check_gamut_accuracy(clip, source, AVCOL_PRI_BT709, AVCOL_TRC_IEC61966_2_1);
+    av_frame_free(&source);
+    return failures;
+}
+
+#define GAMUT_THREADS 8
+
+/* Holds threads until every one is ready (macOS has no pthread barrier). */
+typedef struct start_gate {
+    pthread_mutex_t mutex;
+    pthread_cond_t opened;
+    int waiting;
+    int count;
+} start_gate;
+
+static void start_gate_wait(start_gate *gate) {
+    pthread_mutex_lock(&gate->mutex);
+    if (++gate->waiting == gate->count)
+        pthread_cond_broadcast(&gate->opened);
+    while (gate->waiting < gate->count)
+        pthread_cond_wait(&gate->opened, &gate->mutex);
+    pthread_mutex_unlock(&gate->mutex);
+}
+
+typedef struct gamut_thread {
+    pthread_t thread;
+    start_gate *start;
+    const AVFrame *source;
+    AVFrame *destination;
+    int result;
+} gamut_thread;
+
+static void *convert_at_once(void *opaque) {
+    gamut_thread *job = opaque;
+    ffmpegkmp_converter *converter = ffmpegkmp_converter_alloc(1);
+    start_gate_wait(job->start);
+    job->result = converter ? ffmpegkmp_frame_convert(converter, job->destination, job->source) : AVERROR(ENOMEM);
+    ffmpegkmp_converter_free(&converter);
+    return NULL;
+}
+
+/*
+ * The gamut maps the tone map keeps, in a process that has made none yet:
+ * - one HDR frame into many sizes makes one map;
+ * - more colour pairs than the cache once held (eight) all convert, a map each;
+ * - converters on several threads that first need one pair at once all
+ *   convert, alike, and keep one map between them.
+ */
+static int check_gamut_maps(void) {
+    static const enum AVColorPrimaries primaries[] = { AVCOL_PRI_BT709, AVCOL_PRI_BT2020, AVCOL_PRI_SMPTE432 };
+    static const enum AVColorTransferCharacteristic transfers[] = {
+        AVCOL_TRC_IEC61966_2_1, AVCOL_TRC_BT709, AVCOL_TRC_GAMMA22,
+    };
+    ffmpegkmp_converter *converter = ffmpegkmp_converter_alloc(0);
+    AVFrame *canvases[3];
+    start_gate start = { PTHREAD_MUTEX_INITIALIZER, PTHREAD_COND_INITIALIZER, 0, GAMUT_THREADS };
+    gamut_thread jobs[GAMUT_THREADS];
+    uint64_t made;
+    int failures = 0;
+    int failed = 0;
+    int pairs = 0;
+    int index;
+    size_t from;
+    size_t to;
+    size_t transfer;
+    for (index = 0; index < 3; index++)
+        canvases[index] = pq_canvas(primaries[index], 96, 64);
+    if (!converter || !canvases[0] || !canvases[1] || !canvases[2]) {
+        printf("FAIL gamut maps: out of memory\n");
+        return 1;
+    }
+    made = gamut_maps();
+    for (index = 0; index < 12 && !failed; index++) {
+        AVFrame *sized = sdr_frame(96 - index * 4, 64 - index * 2, AVCOL_PRI_BT709, AVCOL_TRC_IEC61966_2_1);
+        failed = !sized || ffmpegkmp_frame_convert(converter, sized, canvases[1]) < 0;
+        av_frame_free(&sized);
+    }
+    failed |= gamut_maps() - made != 1;
+    failures += failed;
+    printf("%s one BT.2020 PQ frame into 12 sizes of sRGB: %llu gamut map(s) made, 1 expected\n", failed ? "FAIL" : "ok  ",
+            (unsigned long long)(gamut_maps() - made));
+
+    made = gamut_maps();
+    failed = 0;
+    for (from = 0; from < 3; from++) {
+        for (to = 0; to < 3; to++) {
+            for (transfer = 0; transfer < 3 && from != to; transfer++) {
+                AVFrame *output = sdr_frame(48, 32, primaries[to], transfers[transfer]);
+                if (!output || ffmpegkmp_frame_convert(converter, output, canvases[from]) < 0) {
+                    printf("FAIL gamut maps: PQ in primaries %d into %d, curve %d failed\n", primaries[from],
+                            primaries[to], transfers[transfer]);
+                    failed = 1;
+                }
+                /* BT.2020 into sRGB was made above. */
+                pairs += !(from == 1 && to == 0 && transfer == 0);
+                av_frame_free(&output);
+            }
+        }
+    }
+    failed |= gamut_maps() - made != (uint64_t)pairs;
+    failures += failed;
+    printf("%s %d more colour pairs, more than the cache once held: all converted, %llu gamut maps made, %d expected\n",
+            failed ? "FAIL" : "ok  ", pairs, (unsigned long long)(gamut_maps() - made), pairs);
+
+    made = gamut_maps();
+    failed = 0;
+    for (index = 0; index < GAMUT_THREADS && !failed; index++) {
+        jobs[index].start = &start;
+        jobs[index].source = canvases[1];
+        jobs[index].destination = sdr_frame(96, 64, AVCOL_PRI_BT709, AVCOL_TRC_SMPTE170M);
+        jobs[index].result = -1;
+        failed = !jobs[index].destination || pthread_create(&jobs[index].thread, NULL, convert_at_once, &jobs[index]) != 0;
+    }
+    if (failed) {
+        printf("FAIL gamut maps: could not start %d threads\n", GAMUT_THREADS);
+        return failures + 1;
+    }
+    for (index = 0; index < GAMUT_THREADS; index++)
+        pthread_join(jobs[index].thread, NULL);
+    for (index = 0; index < GAMUT_THREADS; index++) {
+        failed |= jobs[index].result < 0 || memcmp(jobs[index].destination->data[0], jobs[0].destination->data[0],
+                (size_t)jobs[0].destination->linesize[0] * jobs[0].destination->height) != 0;
+    }
+    failed |= gamut_maps() - made != 1;
+    failures += failed;
+    printf("%s %d converters first needing one colour pair at once: all converted alike, %llu gamut map(s) kept, 1 "
+            "expected\n", failed ? "FAIL" : "ok  ", GAMUT_THREADS, (unsigned long long)(gamut_maps() - made));
+    for (index = 0; index < GAMUT_THREADS; index++)
+        av_frame_free(&jobs[index].destination);
+    for (index = 0; index < 3; index++)
+        av_frame_free(&canvases[index]);
+    ffmpegkmp_converter_free(&converter);
+    return failures;
+}
+
+/*
+ * What the HDR tone map costs into RGBA8, from a 1080p 10-bit frame: per frame
+ * at one size, and the first frame at each new size, as a resized player
+ * converts.
+ */
+static int bench_tone_map(const char *fixtures) {
+    char path[1024];
+    static const int sizes[][2] = { { 1920, 1080 }, { 960, 540 } };
+    AVFrame *decoded;
+    AVFrame *source = NULL;
+    SwsContext *scaler = sws_alloc_context();
+    size_t index;
+    snprintf(path, sizeof(path), "%s/hdr10-pq-gradient.mp4", fixtures);
+    if (!(decoded = first_frame(path)) || !scaler ||
+            !(source = new_frame(decoded->format, 1920, 1080, decoded->color_primaries, decoded->color_trc,
+                    decoded->colorspace, decoded->color_range)) || sws_scale_frame(scaler, source, decoded) < 0) {
+        printf("FAIL tone map bench: no source\n");
+        return 1;
+    }
+    for (index = 0; index < sizeof(sizes) / sizeof(sizes[0]); index++) {
+        ffmpegkmp_converter *converter = ffmpegkmp_converter_alloc(0);
+        AVFrame *output = sdr_frame(sizes[index][0], sizes[index][1], AVCOL_PRI_BT709, AVCOL_TRC_IEC61966_2_1);
+        double first;
+        double started;
+        int frame;
+        started = now_ms();
+        ffmpegkmp_frame_convert(converter, output, source);
+        first = now_ms() - started;
+        for (frame = 0; frame < 5; frame++)
+            ffmpegkmp_frame_convert(converter, output, source);
+        started = now_ms();
+        for (frame = 0; frame < 50; frame++)
+            ffmpegkmp_frame_convert(converter, output, source);
+        printf("tone map 1920x1080 P010 PQ -> %dx%d RGBA8: %.2f ms a frame; the converter's first frame %.2f ms\n",
+                sizes[index][0], sizes[index][1], (now_ms() - started) / 50, first);
+        av_frame_free(&output);
+        ffmpegkmp_converter_free(&converter);
+    }
+    {
+        ffmpegkmp_converter *converter = ffmpegkmp_converter_alloc(0);
+        double total = 0;
+        double worst = 0;
+        int step;
+        AVFrame *output = sdr_frame(1280, 720, AVCOL_PRI_BT709, AVCOL_TRC_IEC61966_2_1);
+        ffmpegkmp_frame_convert(converter, output, source);
+        av_frame_free(&output);
+        for (step = 1; step <= 20; step++) {
+            double took;
+            double started;
+            output = sdr_frame(1280 - step * 16, 720 - step * 9, AVCOL_PRI_BT709, AVCOL_TRC_IEC61966_2_1);
+            started = now_ms();
+            ffmpegkmp_frame_convert(converter, output, source);
+            took = now_ms() - started;
+            total += took;
+            worst = fmax(worst, took);
+            av_frame_free(&output);
+        }
+        printf("tone map 1920x1080 P010 PQ -> RGBA8 at a new size each frame, 1264x711 down to 960x540: %.2f ms a frame "
+                "on average, %.2f ms at most\n", total / 20, worst);
+        ffmpegkmp_converter_free(&converter);
+    }
+    sws_free_context(&scaler);
+    av_frame_free(&decoded);
+    av_frame_free(&source);
+    return 0;
+}
+
 int main(int argc, char **argv) {
     const char *fixtures = argc > 1 ? argv[1] : ".";
     const char *golden = argc > 2 ? argv[2] : ".";
     const char *mode = argc > 3 ? argv[3] : "check";
     const int record = !strcmp(mode, "record");
+    /* The library's other fixtures, with more HDR clips. */
+    const char *core = argc > 4 ? argv[4] : NULL;
     int failures = 0;
     size_t index;
+    if (!strcmp(mode, "bench"))
+        return bench_tone_map(fixtures);
+    /* First, while the process has made no gamut map. */
+    if (!record)
+        failures += check_gamut_maps();
     for (index = 0; index < sizeof(CASES) / sizeof(CASES[0]); index++)
         failures += check_case(fixtures, golden, &CASES[index], record);
     if (!record) {
@@ -1028,6 +1471,28 @@ int main(int argc, char **argv) {
         failures += check_matrix_only(fixtures, "hlg.mp4");
         failures += check_roundtrip(0);
         failures += check_roundtrip(1);
+        {
+            static const char *clips[] = {
+                "hdr10-pq.mp4", "hdr10-pq-patches.mp4", "hdr10-pq-gradient.mp4", "hlg.mp4", "hlg-large.mp4",
+            };
+            AVFrame *bt2020 = pq_canvas(AVCOL_PRI_BT2020, 1536, 768);
+            AVFrame *p3 = pq_canvas(AVCOL_PRI_SMPTE432, 1536, 768);
+            for (index = 0; index < sizeof(clips) / sizeof(clips[0]); index++)
+                failures += check_gamut_accuracy_of_clip(fixtures, clips[index]);
+            for (index = 0; core && index < 2; index++)
+                failures += check_gamut_accuracy_of_clip(core, index ? "hdr-hlg.mp4" : "hdr10-pq.mp4");
+            if (!bt2020 || !p3) {
+                printf("FAIL gamut map canvases: out of memory\n");
+                failures++;
+            } else {
+                failures += check_gamut_accuracy("BT.2020 PQ ramps", bt2020, AVCOL_PRI_BT709, AVCOL_TRC_IEC61966_2_1);
+                failures += check_gamut_accuracy("BT.2020 PQ ramps", bt2020, AVCOL_PRI_SMPTE432, AVCOL_TRC_IEC61966_2_1);
+                failures += check_gamut_accuracy("BT.2020 PQ ramps", bt2020, AVCOL_PRI_BT709, AVCOL_TRC_BT709);
+                failures += check_gamut_accuracy("Display P3 PQ ramps", p3, AVCOL_PRI_BT709, AVCOL_TRC_IEC61966_2_1);
+            }
+            av_frame_free(&bt2020);
+            av_frame_free(&p3);
+        }
     }
     printf("%d failure(s)\n", failures);
     return failures ? 1 : 0;

@@ -28,9 +28,17 @@ public actual fun createPlatformVideoDecoder(
     decoderPreference: NativePlayerDecoderPreference,
     decoderThreads: Int,
     timeoutMicros: Long,
+    decoderThreadType: Int,
+    frameRing: Int,
+    decoderName: String?,
+    decoderOptions: Map<String, String>,
 ): NativeVideoDecoder {
     if (output != NativeVideoDecoderOutput.MEMORY) {
         throw NativeVideoDecoderException("The browser decodes into memory only", NativePlayerError.UNSUPPORTED)
+    }
+    decoderName?.let { name ->
+        val reason = "the browser decodes with WebCodecs, which cannot open FFmpeg's decoder $name"
+        throw NativeVideoDecoderException("Could not open the decoder: $reason", NativePlayerError.UNSUPPORTED, reason)
     }
     return BrowserVideoDecoder(source, memoryFormat, memoryWidth, memoryHeight, decoderPreference, timeoutMicros)
 }
@@ -134,6 +142,10 @@ private class BrowserVideoDecoder(
             frame = frame.retain(),
         )
     }
+
+    // The worker's canvas size is fixed when it opens.
+    override suspend fun setSize(width: Int, height: Int): Unit =
+        throw UnsupportedOperationException("The browser cannot resize an open decoder's frames yet; open another decoder")
 
     // The worker drops the running call at its next wait; the next call seeks to its own position first.
     override fun interrupt() {

@@ -1,25 +1,27 @@
 [versions]
-agp = "9.4.1"
+agp = "9.5.1"
 android-compileSdk = "37"
 android-minSdk = "24"
-android-ndk = "30.0.15729638"
+android-ndk = "30.0.16248370"
 jvm-toolchain = "21"
 jvm-bytecode = "11"
 apple-iosDeployment = "15.0"
 apple-macosDeployment = "12.0"
 apple-tvosDeployment = "15.0"
 apple-watchosDeployment = "8.0"
-kotlin = "2.4.20"
+kotlin = "2.4.21"
 coroutines = "1.11.0"
 okio = "3.18.2"
-serialization = "1.11.0"
+serialization = "1.13.0"
 javacpp = "1.5.14"
 androidx-test-runner = "1.7.0"
-compose = "1.12.0"
+compose = "1.12.2"
 compose-material3 = "1.9.0"
-filekit = "0.15.0"
+filekit = "0.17.0"
 maven-publish = "0.37.0"
 androidx-activity = "1.13.0"
+# Media3 is the playback reference of PlaybackTimingDeviceTest only, never a dependency of a published artifact.
+media3 = "1.11.1"
 
 [libraries]
 android-gradle-plugin = { module = "com.android.tools.build:gradle", version.ref = "agp" }
@@ -38,6 +40,7 @@ filekit-core = { module = "io.github.vinceglb:filekit-core", version.ref = "file
 filekit-dialogs-compose = { module = "io.github.vinceglb:filekit-dialogs-compose", version.ref = "filekit" }
 maven-publish-gradle-plugin = { module = "com.vanniktech:gradle-maven-publish-plugin", version.ref = "maven-publish" }
 androidx-activity-compose = { module = "androidx.activity:activity-compose", version.ref = "androidx-activity" }
+media3-exoplayer = { module = "androidx.media3:media3-exoplayer", version.ref = "media3" }
 compose-runtime = { module = "org.jetbrains.compose.runtime:runtime", version.ref = "compose" }
 compose-foundation = { module = "org.jetbrains.compose.foundation:foundation", version.ref = "compose" }
 compose-ui = { module = "org.jetbrains.compose.ui:ui", version.ref = "compose" }

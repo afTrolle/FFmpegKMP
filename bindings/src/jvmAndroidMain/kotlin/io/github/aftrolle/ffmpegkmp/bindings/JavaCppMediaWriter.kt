@@ -11,14 +11,27 @@ import io.github.aftrolle.ffmpegkmp.bindings.generated.bridge.ffmpegkmp_writer_r
 import io.github.aftrolle.ffmpegkmp.bindings.generated.bridge.ffplaykmp_io_callback
 import io.github.aftrolle.ffmpegkmp.bindings.generated.bridge.global.bridge
 import java.util.concurrent.ConcurrentHashMap
+import org.bytedeco.javacpp.BytePointer
 
-/** A writer on the JavaCPP bridge; [openEncoder] opens the platform's own encoder for [NativeMediaWriter.openInputSurface], where it has one. */
+/**
+ * What the platform knows of a video track's encoder that FFmpeg does not tell, such as whether
+ * the MediaCodec component a named encoder was pinned to runs in hardware: [info] as the platform
+ * corrects it.
+ */
+internal typealias TrackDescriber = (config: NativeVideoEncoderConfig, info: NativeVideoTrackInfo) -> NativeVideoTrackInfo
+
+/**
+ * A writer on the JavaCPP bridge; [openEncoder] opens the platform's own encoder for
+ * [NativeMediaWriter.openInputSurface], where it has one, and [describeTrack] corrects what an
+ * added track reports.
+ */
 internal fun createJavaCppMediaWriter(
     output: NativeWriterOutput,
     container: NativeContainer,
     fastStart: Boolean,
     timeoutMicros: Long,
     openEncoder: PacketEncoderFactory?,
+    describeTrack: TrackDescriber? = null,
 ): NativeMediaWriter {
     JavaCppBridgeLoader.load()
     val ioCallback = (output as? NativeWriterOutput.Mounted)
@@ -34,7 +47,7 @@ internal fun createJavaCppMediaWriter(
         ioCallback?.close()
         throw NativeMediaWriterException("Could not open '$url' for writing (error ${error[0]})", error[0])
     }
-    return GuardedMediaWriter(JavaCppMediaWriterEngine(writer, ioCallback, timeoutMicros, openEncoder), url)
+    return GuardedMediaWriter(JavaCppMediaWriterEngine(writer, ioCallback, timeoutMicros, openEncoder, describeTrack), url)
 }
 
 @InternalFFmpegKmpApi
@@ -59,6 +72,7 @@ private class JavaCppMediaWriterEngine(
     private val ioCallback: ffplaykmp_io_callback?,
     private val timeoutMicros: Long,
     private val openEncoder: PacketEncoderFactory?,
+    private val describeTrack: TrackDescriber?,
 ) : MediaWriterEngineCalls {
     /** Audio from an offset goes through here: JavaCPP passes arrays from their start. */
     private var samples = FloatArray(0)
@@ -71,8 +85,12 @@ private class JavaCppMediaWriterEngine(
         try {
             bridge.ffmpegkmp_video_track_info_init(info)
             val index = bridge.ffmpegkmp_writer_add_video_track(writer, native, info)
-            requireNative(index, "add a ${config.width}x${config.height} ${config.codec} ${config.dynamicRange} track", ::NativeMediaWriterException)
-            NativeAddedVideoTrack(index, info.toNative()).also { videoTracks[index] = config to it.info }
+            requireNative(index, "add a ${config.width}x${config.height} ${config.codec} ${config.dynamicRange} track") { message, code ->
+                val reason = info.error().string.takeIf(String::isNotEmpty)
+                NativeMediaWriterException(reason?.let { "$message: $it" } ?: message, code, reason)
+            }
+            val added = info.toNative()
+            NativeAddedVideoTrack(index, describeTrack?.invoke(config, added) ?: added).also { videoTracks[index] = config to it.info }
         } finally {
             info.close()
         }
@@ -137,6 +155,11 @@ private class JavaCppMediaWriterEngine(
         bridge.ffmpegkmp_writer_release_track(writer, track)
     }
 
+    override fun packetsWritten(track: Int): Long? =
+        bridge.ffmpegkmp_writer_track_packets(writer, track).takeIf { it >= 0 }
+
+    override fun discardPacketsForTesting(track: Int): Boolean = bridge.ffmpegkmp_writer_discard_packets(writer, track) == 0
+
     override fun finish(): NativeWriterResult {
         val result = ffmpegkmp_writer_result()
         return try {
@@ -158,12 +181,17 @@ private class JavaCppMediaWriterEngine(
 
 private inline fun <T> NativeVideoEncoderConfig.withNative(block: (ffmpegkmp_video_encoder_config) -> T): T {
     val native = ffmpegkmp_video_encoder_config()
+    // Kept until the call returns: the writer copies the options it keeps.
+    val name = encoderName?.let { BytePointer(it, Charsets.UTF_8) }
+    val options = encodedOptions().takeIf(ByteArray::isNotEmpty)?.let { BytePointer(*it) }
     return try {
         bridge.ffmpegkmp_video_encoder_config_init(native)
         native.width(width).height(height)
             .frame_rate_num(frameRateNumerator).frame_rate_den(frameRateDenominator)
             .codec(codec.ordinal).dynamic_range(dynamicRange.ordinal).preference(preference.ordinal)
             .bit_rate(bitRate).keyframe_interval_us(keyframeIntervalMicros).bit_depth(bitDepth)
+        name?.let(native::encoder_name)
+        options?.let { native.options(it).options_size(it.capacity().toInt()) }
         hdrMetadata?.let { metadata ->
             native.has_hdr_metadata(1)
             val hdr = native.hdr_metadata()
@@ -183,6 +211,8 @@ private inline fun <T> NativeVideoEncoderConfig.withNative(block: (ffmpegkmp_vid
         block(native)
     } finally {
         native.close()
+        name?.close()
+        options?.close()
     }
 }
 

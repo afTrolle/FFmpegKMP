@@ -7,6 +7,16 @@ compressed-frame source for the color-metadata fixtures below.
 compiled-player lifecycle, scheduling, seeking, frame-drop, and mounted-I/O tests. Its fixed color
 patches keep those tests independent of decoder recovery from the damaged baseline sample.
 
+`playback-gop-6s.mp4` and `playback-one-gop-6s.mp4` are six seconds of 64x64 MPEG-2 at 25 fps for
+the player's catch-up tests: the first has a keyframe every 12 frames (0.48 s), the second only its
+first frame. They are generated with:
+
+```shell
+ffmpeg -f lavfi -i testsrc2=size=64x64:rate=25 -t 6 -c:v mpeg2video -g 12 -bf 0 -q:v 4 playback-gop-6s.mp4
+ffmpeg -f lavfi -i testsrc2=size=64x64:rate=25 -t 6 -c:v mpeg2video -g 1000 -sc_threshold 1000000000 \
+  -bf 0 -q:v 4 playback-one-gop-6s.mp4
+```
+
 `hardware-h264.mp4` is the same clean image sequence transcoded to H.264. It is reserved for
 hardware-decoder acceptance tests because VideoToolbox must produce a real hardware frame; merely
 advertising a hardware pixel format does not satisfy that test.

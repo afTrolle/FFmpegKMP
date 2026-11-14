@@ -1,0 +1,401 @@
+// Klib ABI Dump
+// Targets: [iosArm64, iosSimulatorArm64, js, macosArm64, wasmJs]
+// Rendering settings:
+// - Signature version: 2
+// - Show manifest properties: true
+// - Show declarations: true
+
+// Library unique name: <io.github.aftrolle.ffmpegkmp:ffplay>
+final enum class io.github.aftrolle.ffmpegkmp.ffplay/FFplayContentProtection : kotlin/Enum<io.github.aftrolle.ffmpegkmp.ffplay/FFplayContentProtection> { // io.github.aftrolle.ffmpegkmp.ffplay/FFplayContentProtection|null[0]
+    enum entry CLEAR_OR_AUTO_DETECT // io.github.aftrolle.ffmpegkmp.ffplay/FFplayContentProtection.CLEAR_OR_AUTO_DETECT|null[0]
+    enum entry REQUIRE_SECURE_PATH // io.github.aftrolle.ffmpegkmp.ffplay/FFplayContentProtection.REQUIRE_SECURE_PATH|null[0]
+
+    final val entries // io.github.aftrolle.ffmpegkmp.ffplay/FFplayContentProtection.entries|#static{}entries[0]
+        final fun <get-entries>(): kotlin.enums/EnumEntries<io.github.aftrolle.ffmpegkmp.ffplay/FFplayContentProtection> // io.github.aftrolle.ffmpegkmp.ffplay/FFplayContentProtection.entries.<get-entries>|<get-entries>#static(){}[0]
+
+    final fun valueOf(kotlin/String): io.github.aftrolle.ffmpegkmp.ffplay/FFplayContentProtection // io.github.aftrolle.ffmpegkmp.ffplay/FFplayContentProtection.valueOf|valueOf#static(kotlin.String){}[0]
+    final fun values(): kotlin/Array<io.github.aftrolle.ffmpegkmp.ffplay/FFplayContentProtection> // io.github.aftrolle.ffmpegkmp.ffplay/FFplayContentProtection.values|values#static(){}[0]
+}
+
+final enum class io.github.aftrolle.ffmpegkmp.ffplay/FFplayHdrPolicy : kotlin/Enum<io.github.aftrolle.ffmpegkmp.ffplay/FFplayHdrPolicy> { // io.github.aftrolle.ffmpegkmp.ffplay/FFplayHdrPolicy|null[0]
+    enum entry FORCE_SDR // io.github.aftrolle.ffmpegkmp.ffplay/FFplayHdrPolicy.FORCE_SDR|null[0]
+    enum entry PRESERVE_OR_TONE_MAP // io.github.aftrolle.ffmpegkmp.ffplay/FFplayHdrPolicy.PRESERVE_OR_TONE_MAP|null[0]
+
+    final val entries // io.github.aftrolle.ffmpegkmp.ffplay/FFplayHdrPolicy.entries|#static{}entries[0]
+        final fun <get-entries>(): kotlin.enums/EnumEntries<io.github.aftrolle.ffmpegkmp.ffplay/FFplayHdrPolicy> // io.github.aftrolle.ffmpegkmp.ffplay/FFplayHdrPolicy.entries.<get-entries>|<get-entries>#static(){}[0]
+
+    final fun valueOf(kotlin/String): io.github.aftrolle.ffmpegkmp.ffplay/FFplayHdrPolicy // io.github.aftrolle.ffmpegkmp.ffplay/FFplayHdrPolicy.valueOf|valueOf#static(kotlin.String){}[0]
+    final fun values(): kotlin/Array<io.github.aftrolle.ffmpegkmp.ffplay/FFplayHdrPolicy> // io.github.aftrolle.ffmpegkmp.ffplay/FFplayHdrPolicy.values|values#static(){}[0]
+}
+
+final enum class io.github.aftrolle.ffmpegkmp.ffplay/FFplayHdrResult : kotlin/Enum<io.github.aftrolle.ffmpegkmp.ffplay/FFplayHdrResult> { // io.github.aftrolle.ffmpegkmp.ffplay/FFplayHdrResult|null[0]
+    enum entry NOT_HDR // io.github.aftrolle.ffmpegkmp.ffplay/FFplayHdrResult.NOT_HDR|null[0]
+    enum entry PRESERVED // io.github.aftrolle.ffmpegkmp.ffplay/FFplayHdrResult.PRESERVED|null[0]
+    enum entry TONE_MAPPED // io.github.aftrolle.ffmpegkmp.ffplay/FFplayHdrResult.TONE_MAPPED|null[0]
+    enum entry UNSUPPORTED // io.github.aftrolle.ffmpegkmp.ffplay/FFplayHdrResult.UNSUPPORTED|null[0]
+
+    final val entries // io.github.aftrolle.ffmpegkmp.ffplay/FFplayHdrResult.entries|#static{}entries[0]
+        final fun <get-entries>(): kotlin.enums/EnumEntries<io.github.aftrolle.ffmpegkmp.ffplay/FFplayHdrResult> // io.github.aftrolle.ffmpegkmp.ffplay/FFplayHdrResult.entries.<get-entries>|<get-entries>#static(){}[0]
+
+    final fun valueOf(kotlin/String): io.github.aftrolle.ffmpegkmp.ffplay/FFplayHdrResult // io.github.aftrolle.ffmpegkmp.ffplay/FFplayHdrResult.valueOf|valueOf#static(kotlin.String){}[0]
+    final fun values(): kotlin/Array<io.github.aftrolle.ffmpegkmp.ffplay/FFplayHdrResult> // io.github.aftrolle.ffmpegkmp.ffplay/FFplayHdrResult.values|values#static(){}[0]
+}
+
+final enum class io.github.aftrolle.ffmpegkmp.ffplay/FFplayOutputPreference : kotlin/Enum<io.github.aftrolle.ffmpegkmp.ffplay/FFplayOutputPreference> { // io.github.aftrolle.ffmpegkmp.ffplay/FFplayOutputPreference|null[0]
+    enum entry AUTO // io.github.aftrolle.ffmpegkmp.ffplay/FFplayOutputPreference.AUTO|null[0]
+    enum entry COMPOSE_CANVAS // io.github.aftrolle.ffmpegkmp.ffplay/FFplayOutputPreference.COMPOSE_CANVAS|null[0]
+    enum entry NATIVE_SURFACE // io.github.aftrolle.ffmpegkmp.ffplay/FFplayOutputPreference.NATIVE_SURFACE|null[0]
+
+    final val entries // io.github.aftrolle.ffmpegkmp.ffplay/FFplayOutputPreference.entries|#static{}entries[0]
+        final fun <get-entries>(): kotlin.enums/EnumEntries<io.github.aftrolle.ffmpegkmp.ffplay/FFplayOutputPreference> // io.github.aftrolle.ffmpegkmp.ffplay/FFplayOutputPreference.entries.<get-entries>|<get-entries>#static(){}[0]
+
+    final fun valueOf(kotlin/String): io.github.aftrolle.ffmpegkmp.ffplay/FFplayOutputPreference // io.github.aftrolle.ffmpegkmp.ffplay/FFplayOutputPreference.valueOf|valueOf#static(kotlin.String){}[0]
+    final fun values(): kotlin/Array<io.github.aftrolle.ffmpegkmp.ffplay/FFplayOutputPreference> // io.github.aftrolle.ffmpegkmp.ffplay/FFplayOutputPreference.values|values#static(){}[0]
+}
+
+final enum class io.github.aftrolle.ffmpegkmp.ffplay/FFplayRendererKind : kotlin/Enum<io.github.aftrolle.ffmpegkmp.ffplay/FFplayRendererKind> { // io.github.aftrolle.ffmpegkmp.ffplay/FFplayRendererKind|null[0]
+    enum entry COMPOSE_CANVAS // io.github.aftrolle.ffmpegkmp.ffplay/FFplayRendererKind.COMPOSE_CANVAS|null[0]
+    enum entry NATIVE_SURFACE // io.github.aftrolle.ffmpegkmp.ffplay/FFplayRendererKind.NATIVE_SURFACE|null[0]
+
+    final val entries // io.github.aftrolle.ffmpegkmp.ffplay/FFplayRendererKind.entries|#static{}entries[0]
+        final fun <get-entries>(): kotlin.enums/EnumEntries<io.github.aftrolle.ffmpegkmp.ffplay/FFplayRendererKind> // io.github.aftrolle.ffmpegkmp.ffplay/FFplayRendererKind.entries.<get-entries>|<get-entries>#static(){}[0]
+
+    final fun valueOf(kotlin/String): io.github.aftrolle.ffmpegkmp.ffplay/FFplayRendererKind // io.github.aftrolle.ffmpegkmp.ffplay/FFplayRendererKind.valueOf|valueOf#static(kotlin.String){}[0]
+    final fun values(): kotlin/Array<io.github.aftrolle.ffmpegkmp.ffplay/FFplayRendererKind> // io.github.aftrolle.ffmpegkmp.ffplay/FFplayRendererKind.values|values#static(){}[0]
+}
+
+final enum class io.github.aftrolle.ffmpegkmp.ffplay/FFplayState : kotlin/Enum<io.github.aftrolle.ffmpegkmp.ffplay/FFplayState> { // io.github.aftrolle.ffmpegkmp.ffplay/FFplayState|null[0]
+    enum entry CLOSED // io.github.aftrolle.ffmpegkmp.ffplay/FFplayState.CLOSED|null[0]
+    enum entry ENDED // io.github.aftrolle.ffmpegkmp.ffplay/FFplayState.ENDED|null[0]
+    enum entry FAILED // io.github.aftrolle.ffmpegkmp.ffplay/FFplayState.FAILED|null[0]
+    enum entry IDLE // io.github.aftrolle.ffmpegkmp.ffplay/FFplayState.IDLE|null[0]
+    enum entry PAUSED // io.github.aftrolle.ffmpegkmp.ffplay/FFplayState.PAUSED|null[0]
+    enum entry PLAYING // io.github.aftrolle.ffmpegkmp.ffplay/FFplayState.PLAYING|null[0]
+    enum entry PREPARING // io.github.aftrolle.ffmpegkmp.ffplay/FFplayState.PREPARING|null[0]
+    enum entry READY // io.github.aftrolle.ffmpegkmp.ffplay/FFplayState.READY|null[0]
+    enum entry SEEKING // io.github.aftrolle.ffmpegkmp.ffplay/FFplayState.SEEKING|null[0]
+    enum entry STOPPED // io.github.aftrolle.ffmpegkmp.ffplay/FFplayState.STOPPED|null[0]
+    enum entry WAITING_FOR_OUTPUT // io.github.aftrolle.ffmpegkmp.ffplay/FFplayState.WAITING_FOR_OUTPUT|null[0]
+
+    final val entries // io.github.aftrolle.ffmpegkmp.ffplay/FFplayState.entries|#static{}entries[0]
+        final fun <get-entries>(): kotlin.enums/EnumEntries<io.github.aftrolle.ffmpegkmp.ffplay/FFplayState> // io.github.aftrolle.ffmpegkmp.ffplay/FFplayState.entries.<get-entries>|<get-entries>#static(){}[0]
+
+    final fun valueOf(kotlin/String): io.github.aftrolle.ffmpegkmp.ffplay/FFplayState // io.github.aftrolle.ffmpegkmp.ffplay/FFplayState.valueOf|valueOf#static(kotlin.String){}[0]
+    final fun values(): kotlin/Array<io.github.aftrolle.ffmpegkmp.ffplay/FFplayState> // io.github.aftrolle.ffmpegkmp.ffplay/FFplayState.values|values#static(){}[0]
+}
+
+abstract fun interface io.github.aftrolle.ffmpegkmp.ffplay/FFplayClock { // io.github.aftrolle.ffmpegkmp.ffplay/FFplayClock|null[0]
+    abstract fun positionAt(kotlin.time/Duration): kotlin.time/Duration // io.github.aftrolle.ffmpegkmp.ffplay/FFplayClock.positionAt|positionAt(kotlin.time.Duration){}[0]
+}
+
+sealed interface io.github.aftrolle.ffmpegkmp.ffplay/FFplayEvent { // io.github.aftrolle.ffmpegkmp.ffplay/FFplayEvent|null[0]
+    abstract val message // io.github.aftrolle.ffmpegkmp.ffplay/FFplayEvent.message|{}message[0]
+        abstract fun <get-message>(): kotlin/String // io.github.aftrolle.ffmpegkmp.ffplay/FFplayEvent.message.<get-message>|<get-message>(){}[0]
+
+    final class CaughtUp : io.github.aftrolle.ffmpegkmp.ffplay/FFplayEvent { // io.github.aftrolle.ffmpegkmp.ffplay/FFplayEvent.CaughtUp|null[0]
+        constructor <init>(kotlin/String, kotlin.time/Duration) // io.github.aftrolle.ffmpegkmp.ffplay/FFplayEvent.CaughtUp.<init>|<init>(kotlin.String;kotlin.time.Duration){}[0]
+
+        final val message // io.github.aftrolle.ffmpegkmp.ffplay/FFplayEvent.CaughtUp.message|{}message[0]
+            final fun <get-message>(): kotlin/String // io.github.aftrolle.ffmpegkmp.ffplay/FFplayEvent.CaughtUp.message.<get-message>|<get-message>(){}[0]
+        final val position // io.github.aftrolle.ffmpegkmp.ffplay/FFplayEvent.CaughtUp.position|{}position[0]
+            final fun <get-position>(): kotlin.time/Duration // io.github.aftrolle.ffmpegkmp.ffplay/FFplayEvent.CaughtUp.position.<get-position>|<get-position>(){}[0]
+
+        final fun component1(): kotlin/String // io.github.aftrolle.ffmpegkmp.ffplay/FFplayEvent.CaughtUp.component1|component1(){}[0]
+        final fun component2(): kotlin.time/Duration // io.github.aftrolle.ffmpegkmp.ffplay/FFplayEvent.CaughtUp.component2|component2(){}[0]
+        final fun copy(kotlin/String = ..., kotlin.time/Duration = ...): io.github.aftrolle.ffmpegkmp.ffplay/FFplayEvent.CaughtUp // io.github.aftrolle.ffmpegkmp.ffplay/FFplayEvent.CaughtUp.copy|copy(kotlin.String;kotlin.time.Duration){}[0]
+        final fun equals(kotlin/Any?): kotlin/Boolean // io.github.aftrolle.ffmpegkmp.ffplay/FFplayEvent.CaughtUp.equals|equals(kotlin.Any?){}[0]
+        final fun hashCode(): kotlin/Int // io.github.aftrolle.ffmpegkmp.ffplay/FFplayEvent.CaughtUp.hashCode|hashCode(){}[0]
+        final fun toString(): kotlin/String // io.github.aftrolle.ffmpegkmp.ffplay/FFplayEvent.CaughtUp.toString|toString(){}[0]
+    }
+
+    final class DecoderFallback : io.github.aftrolle.ffmpegkmp.ffplay/FFplayEvent { // io.github.aftrolle.ffmpegkmp.ffplay/FFplayEvent.DecoderFallback|null[0]
+        constructor <init>(kotlin/String, io.github.aftrolle.ffmpegkmp.codec/DecoderFallbackReason = ...) // io.github.aftrolle.ffmpegkmp.ffplay/FFplayEvent.DecoderFallback.<init>|<init>(kotlin.String;io.github.aftrolle.ffmpegkmp.codec.DecoderFallbackReason){}[0]
+
+        final val message // io.github.aftrolle.ffmpegkmp.ffplay/FFplayEvent.DecoderFallback.message|{}message[0]
+            final fun <get-message>(): kotlin/String // io.github.aftrolle.ffmpegkmp.ffplay/FFplayEvent.DecoderFallback.message.<get-message>|<get-message>(){}[0]
+        final val reason // io.github.aftrolle.ffmpegkmp.ffplay/FFplayEvent.DecoderFallback.reason|{}reason[0]
+            final fun <get-reason>(): io.github.aftrolle.ffmpegkmp.codec/DecoderFallbackReason // io.github.aftrolle.ffmpegkmp.ffplay/FFplayEvent.DecoderFallback.reason.<get-reason>|<get-reason>(){}[0]
+
+        final fun component1(): kotlin/String // io.github.aftrolle.ffmpegkmp.ffplay/FFplayEvent.DecoderFallback.component1|component1(){}[0]
+        final fun component2(): io.github.aftrolle.ffmpegkmp.codec/DecoderFallbackReason // io.github.aftrolle.ffmpegkmp.ffplay/FFplayEvent.DecoderFallback.component2|component2(){}[0]
+        final fun copy(kotlin/String = ..., io.github.aftrolle.ffmpegkmp.codec/DecoderFallbackReason = ...): io.github.aftrolle.ffmpegkmp.ffplay/FFplayEvent.DecoderFallback // io.github.aftrolle.ffmpegkmp.ffplay/FFplayEvent.DecoderFallback.copy|copy(kotlin.String;io.github.aftrolle.ffmpegkmp.codec.DecoderFallbackReason){}[0]
+        final fun equals(kotlin/Any?): kotlin/Boolean // io.github.aftrolle.ffmpegkmp.ffplay/FFplayEvent.DecoderFallback.equals|equals(kotlin.Any?){}[0]
+        final fun hashCode(): kotlin/Int // io.github.aftrolle.ffmpegkmp.ffplay/FFplayEvent.DecoderFallback.hashCode|hashCode(){}[0]
+        final fun toString(): kotlin/String // io.github.aftrolle.ffmpegkmp.ffplay/FFplayEvent.DecoderFallback.toString|toString(){}[0]
+    }
+
+    final class Fatal : io.github.aftrolle.ffmpegkmp.ffplay/FFplayEvent { // io.github.aftrolle.ffmpegkmp.ffplay/FFplayEvent.Fatal|null[0]
+        constructor <init>(kotlin/String, kotlin/Throwable? = ...) // io.github.aftrolle.ffmpegkmp.ffplay/FFplayEvent.Fatal.<init>|<init>(kotlin.String;kotlin.Throwable?){}[0]
+
+        final val cause // io.github.aftrolle.ffmpegkmp.ffplay/FFplayEvent.Fatal.cause|{}cause[0]
+            final fun <get-cause>(): kotlin/Throwable? // io.github.aftrolle.ffmpegkmp.ffplay/FFplayEvent.Fatal.cause.<get-cause>|<get-cause>(){}[0]
+        final val message // io.github.aftrolle.ffmpegkmp.ffplay/FFplayEvent.Fatal.message|{}message[0]
+            final fun <get-message>(): kotlin/String // io.github.aftrolle.ffmpegkmp.ffplay/FFplayEvent.Fatal.message.<get-message>|<get-message>(){}[0]
+
+        final fun component1(): kotlin/String // io.github.aftrolle.ffmpegkmp.ffplay/FFplayEvent.Fatal.component1|component1(){}[0]
+        final fun component2(): kotlin/Throwable? // io.github.aftrolle.ffmpegkmp.ffplay/FFplayEvent.Fatal.component2|component2(){}[0]
+        final fun copy(kotlin/String = ..., kotlin/Throwable? = ...): io.github.aftrolle.ffmpegkmp.ffplay/FFplayEvent.Fatal // io.github.aftrolle.ffmpegkmp.ffplay/FFplayEvent.Fatal.copy|copy(kotlin.String;kotlin.Throwable?){}[0]
+        final fun equals(kotlin/Any?): kotlin/Boolean // io.github.aftrolle.ffmpegkmp.ffplay/FFplayEvent.Fatal.equals|equals(kotlin.Any?){}[0]
+        final fun hashCode(): kotlin/Int // io.github.aftrolle.ffmpegkmp.ffplay/FFplayEvent.Fatal.hashCode|hashCode(){}[0]
+        final fun toString(): kotlin/String // io.github.aftrolle.ffmpegkmp.ffplay/FFplayEvent.Fatal.toString|toString(){}[0]
+    }
+
+    final class ProtectionRequired : io.github.aftrolle.ffmpegkmp.ffplay/FFplayEvent { // io.github.aftrolle.ffmpegkmp.ffplay/FFplayEvent.ProtectionRequired|null[0]
+        constructor <init>(kotlin/String) // io.github.aftrolle.ffmpegkmp.ffplay/FFplayEvent.ProtectionRequired.<init>|<init>(kotlin.String){}[0]
+
+        final val message // io.github.aftrolle.ffmpegkmp.ffplay/FFplayEvent.ProtectionRequired.message|{}message[0]
+            final fun <get-message>(): kotlin/String // io.github.aftrolle.ffmpegkmp.ffplay/FFplayEvent.ProtectionRequired.message.<get-message>|<get-message>(){}[0]
+
+        final fun component1(): kotlin/String // io.github.aftrolle.ffmpegkmp.ffplay/FFplayEvent.ProtectionRequired.component1|component1(){}[0]
+        final fun copy(kotlin/String = ...): io.github.aftrolle.ffmpegkmp.ffplay/FFplayEvent.ProtectionRequired // io.github.aftrolle.ffmpegkmp.ffplay/FFplayEvent.ProtectionRequired.copy|copy(kotlin.String){}[0]
+        final fun equals(kotlin/Any?): kotlin/Boolean // io.github.aftrolle.ffmpegkmp.ffplay/FFplayEvent.ProtectionRequired.equals|equals(kotlin.Any?){}[0]
+        final fun hashCode(): kotlin/Int // io.github.aftrolle.ffmpegkmp.ffplay/FFplayEvent.ProtectionRequired.hashCode|hashCode(){}[0]
+        final fun toString(): kotlin/String // io.github.aftrolle.ffmpegkmp.ffplay/FFplayEvent.ProtectionRequired.toString|toString(){}[0]
+    }
+
+    final class RendererFallback : io.github.aftrolle.ffmpegkmp.ffplay/FFplayEvent { // io.github.aftrolle.ffmpegkmp.ffplay/FFplayEvent.RendererFallback|null[0]
+        constructor <init>(kotlin/String) // io.github.aftrolle.ffmpegkmp.ffplay/FFplayEvent.RendererFallback.<init>|<init>(kotlin.String){}[0]
+
+        final val message // io.github.aftrolle.ffmpegkmp.ffplay/FFplayEvent.RendererFallback.message|{}message[0]
+            final fun <get-message>(): kotlin/String // io.github.aftrolle.ffmpegkmp.ffplay/FFplayEvent.RendererFallback.message.<get-message>|<get-message>(){}[0]
+
+        final fun component1(): kotlin/String // io.github.aftrolle.ffmpegkmp.ffplay/FFplayEvent.RendererFallback.component1|component1(){}[0]
+        final fun copy(kotlin/String = ...): io.github.aftrolle.ffmpegkmp.ffplay/FFplayEvent.RendererFallback // io.github.aftrolle.ffmpegkmp.ffplay/FFplayEvent.RendererFallback.copy|copy(kotlin.String){}[0]
+        final fun equals(kotlin/Any?): kotlin/Boolean // io.github.aftrolle.ffmpegkmp.ffplay/FFplayEvent.RendererFallback.equals|equals(kotlin.Any?){}[0]
+        final fun hashCode(): kotlin/Int // io.github.aftrolle.ffmpegkmp.ffplay/FFplayEvent.RendererFallback.hashCode|hashCode(){}[0]
+        final fun toString(): kotlin/String // io.github.aftrolle.ffmpegkmp.ffplay/FFplayEvent.RendererFallback.toString|toString(){}[0]
+    }
+
+    final class SurfaceLost : io.github.aftrolle.ffmpegkmp.ffplay/FFplayEvent { // io.github.aftrolle.ffmpegkmp.ffplay/FFplayEvent.SurfaceLost|null[0]
+        constructor <init>(kotlin/String) // io.github.aftrolle.ffmpegkmp.ffplay/FFplayEvent.SurfaceLost.<init>|<init>(kotlin.String){}[0]
+
+        final val message // io.github.aftrolle.ffmpegkmp.ffplay/FFplayEvent.SurfaceLost.message|{}message[0]
+            final fun <get-message>(): kotlin/String // io.github.aftrolle.ffmpegkmp.ffplay/FFplayEvent.SurfaceLost.message.<get-message>|<get-message>(){}[0]
+
+        final fun component1(): kotlin/String // io.github.aftrolle.ffmpegkmp.ffplay/FFplayEvent.SurfaceLost.component1|component1(){}[0]
+        final fun copy(kotlin/String = ...): io.github.aftrolle.ffmpegkmp.ffplay/FFplayEvent.SurfaceLost // io.github.aftrolle.ffmpegkmp.ffplay/FFplayEvent.SurfaceLost.copy|copy(kotlin.String){}[0]
+        final fun equals(kotlin/Any?): kotlin/Boolean // io.github.aftrolle.ffmpegkmp.ffplay/FFplayEvent.SurfaceLost.equals|equals(kotlin.Any?){}[0]
+        final fun hashCode(): kotlin/Int // io.github.aftrolle.ffmpegkmp.ffplay/FFplayEvent.SurfaceLost.hashCode|hashCode(){}[0]
+        final fun toString(): kotlin/String // io.github.aftrolle.ffmpegkmp.ffplay/FFplayEvent.SurfaceLost.toString|toString(){}[0]
+    }
+
+    final class Warning : io.github.aftrolle.ffmpegkmp.ffplay/FFplayEvent { // io.github.aftrolle.ffmpegkmp.ffplay/FFplayEvent.Warning|null[0]
+        constructor <init>(kotlin/String) // io.github.aftrolle.ffmpegkmp.ffplay/FFplayEvent.Warning.<init>|<init>(kotlin.String){}[0]
+
+        final val message // io.github.aftrolle.ffmpegkmp.ffplay/FFplayEvent.Warning.message|{}message[0]
+            final fun <get-message>(): kotlin/String // io.github.aftrolle.ffmpegkmp.ffplay/FFplayEvent.Warning.message.<get-message>|<get-message>(){}[0]
+
+        final fun component1(): kotlin/String // io.github.aftrolle.ffmpegkmp.ffplay/FFplayEvent.Warning.component1|component1(){}[0]
+        final fun copy(kotlin/String = ...): io.github.aftrolle.ffmpegkmp.ffplay/FFplayEvent.Warning // io.github.aftrolle.ffmpegkmp.ffplay/FFplayEvent.Warning.copy|copy(kotlin.String){}[0]
+        final fun equals(kotlin/Any?): kotlin/Boolean // io.github.aftrolle.ffmpegkmp.ffplay/FFplayEvent.Warning.equals|equals(kotlin.Any?){}[0]
+        final fun hashCode(): kotlin/Int // io.github.aftrolle.ffmpegkmp.ffplay/FFplayEvent.Warning.hashCode|hashCode(){}[0]
+        final fun toString(): kotlin/String // io.github.aftrolle.ffmpegkmp.ffplay/FFplayEvent.Warning.toString|toString(){}[0]
+    }
+}
+
+final class <#A: kotlin/Any?> io.github.aftrolle.ffmpegkmp.ffplay/ComposeFrameRenderer : kotlin/AutoCloseable { // io.github.aftrolle.ffmpegkmp.ffplay/ComposeFrameRenderer|null[0]
+    constructor <init>(io.github.aftrolle.ffmpegkmp.codec/VideoTrack, androidx.compose.ui.unit/Density = ..., kotlin/Function3<#A, androidx.compose.runtime/Composer, kotlin/Int, kotlin/Unit>) // io.github.aftrolle.ffmpegkmp.ffplay/ComposeFrameRenderer.<init>|<init>(io.github.aftrolle.ffmpegkmp.codec.VideoTrack;androidx.compose.ui.unit.Density;kotlin.Function3<1:0,androidx.compose.runtime.Composer,kotlin.Int,kotlin.Unit>){}[0]
+    constructor <init>(kotlin/Int, kotlin/Int, io.github.aftrolle.ffmpegkmp.codec/FrameFormat = ..., androidx.compose.ui.unit/Density = ..., kotlin/Function3<#A, androidx.compose.runtime/Composer, kotlin/Int, kotlin/Unit>) // io.github.aftrolle.ffmpegkmp.ffplay/ComposeFrameRenderer.<init>|<init>(kotlin.Int;kotlin.Int;io.github.aftrolle.ffmpegkmp.codec.FrameFormat;androidx.compose.ui.unit.Density;kotlin.Function3<1:0,androidx.compose.runtime.Composer,kotlin.Int,kotlin.Unit>){}[0]
+
+    final val density // io.github.aftrolle.ffmpegkmp.ffplay/ComposeFrameRenderer.density|{}density[0]
+        final fun <get-density>(): androidx.compose.ui.unit/Density // io.github.aftrolle.ffmpegkmp.ffplay/ComposeFrameRenderer.density.<get-density>|<get-density>(){}[0]
+    final val format // io.github.aftrolle.ffmpegkmp.ffplay/ComposeFrameRenderer.format|{}format[0]
+        final fun <get-format>(): io.github.aftrolle.ffmpegkmp.codec/FrameFormat // io.github.aftrolle.ffmpegkmp.ffplay/ComposeFrameRenderer.format.<get-format>|<get-format>(){}[0]
+    final val height // io.github.aftrolle.ffmpegkmp.ffplay/ComposeFrameRenderer.height|{}height[0]
+        final fun <get-height>(): kotlin/Int // io.github.aftrolle.ffmpegkmp.ffplay/ComposeFrameRenderer.height.<get-height>|<get-height>(){}[0]
+    final val width // io.github.aftrolle.ffmpegkmp.ffplay/ComposeFrameRenderer.width|{}width[0]
+        final fun <get-width>(): kotlin/Int // io.github.aftrolle.ffmpegkmp.ffplay/ComposeFrameRenderer.width.<get-width>|<get-width>(){}[0]
+
+    final fun close() // io.github.aftrolle.ffmpegkmp.ffplay/ComposeFrameRenderer.close|close(){}[0]
+    final suspend fun render(kotlin.time/Duration, #A): io.github.aftrolle.ffmpegkmp.codec/VideoFrame // io.github.aftrolle.ffmpegkmp.ffplay/ComposeFrameRenderer.render|render(kotlin.time.Duration;1:0){}[0]
+}
+
+final class io.github.aftrolle.ffmpegkmp.ffplay/FFplayConfiguration { // io.github.aftrolle.ffmpegkmp.ffplay/FFplayConfiguration|null[0]
+    constructor <init>(io.github.aftrolle.ffmpegkmp.codec/CodecSelection = ..., io.github.aftrolle.ffmpegkmp.ffplay/FFplayOutputPreference = ..., io.github.aftrolle.ffmpegkmp.ffplay/FFplayHdrPolicy = ..., kotlin/Boolean = ..., io.github.aftrolle.ffmpegkmp.codec/DecoderThreads = ..., kotlin.time/Duration = ..., kotlin/Int = ..., kotlin/Int = ..., kotlin.time/Duration = ...) // io.github.aftrolle.ffmpegkmp.ffplay/FFplayConfiguration.<init>|<init>(io.github.aftrolle.ffmpegkmp.codec.CodecSelection;io.github.aftrolle.ffmpegkmp.ffplay.FFplayOutputPreference;io.github.aftrolle.ffmpegkmp.ffplay.FFplayHdrPolicy;kotlin.Boolean;io.github.aftrolle.ffmpegkmp.codec.DecoderThreads;kotlin.time.Duration;kotlin.Int;kotlin.Int;kotlin.time.Duration){}[0]
+
+    final val audio // io.github.aftrolle.ffmpegkmp.ffplay/FFplayConfiguration.audio|{}audio[0]
+        final fun <get-audio>(): kotlin/Boolean // io.github.aftrolle.ffmpegkmp.ffplay/FFplayConfiguration.audio.<get-audio>|<get-audio>(){}[0]
+    final val canvasFrames // io.github.aftrolle.ffmpegkmp.ffplay/FFplayConfiguration.canvasFrames|{}canvasFrames[0]
+        final fun <get-canvasFrames>(): kotlin/Int // io.github.aftrolle.ffmpegkmp.ffplay/FFplayConfiguration.canvasFrames.<get-canvasFrames>|<get-canvasFrames>(){}[0]
+    final val catchUpLag // io.github.aftrolle.ffmpegkmp.ffplay/FFplayConfiguration.catchUpLag|{}catchUpLag[0]
+        final fun <get-catchUpLag>(): kotlin.time/Duration // io.github.aftrolle.ffmpegkmp.ffplay/FFplayConfiguration.catchUpLag.<get-catchUpLag>|<get-catchUpLag>(){}[0]
+    final val decoder // io.github.aftrolle.ffmpegkmp.ffplay/FFplayConfiguration.decoder|{}decoder[0]
+        final fun <get-decoder>(): io.github.aftrolle.ffmpegkmp.codec/CodecSelection // io.github.aftrolle.ffmpegkmp.ffplay/FFplayConfiguration.decoder.<get-decoder>|<get-decoder>(){}[0]
+    final val decoderIdleRelease // io.github.aftrolle.ffmpegkmp.ffplay/FFplayConfiguration.decoderIdleRelease|{}decoderIdleRelease[0]
+        final fun <get-decoderIdleRelease>(): kotlin.time/Duration // io.github.aftrolle.ffmpegkmp.ffplay/FFplayConfiguration.decoderIdleRelease.<get-decoderIdleRelease>|<get-decoderIdleRelease>(){}[0]
+    final val frameQueueSize // io.github.aftrolle.ffmpegkmp.ffplay/FFplayConfiguration.frameQueueSize|{}frameQueueSize[0]
+        final fun <get-frameQueueSize>(): kotlin/Int // io.github.aftrolle.ffmpegkmp.ffplay/FFplayConfiguration.frameQueueSize.<get-frameQueueSize>|<get-frameQueueSize>(){}[0]
+    final val hdrPolicy // io.github.aftrolle.ffmpegkmp.ffplay/FFplayConfiguration.hdrPolicy|{}hdrPolicy[0]
+        final fun <get-hdrPolicy>(): io.github.aftrolle.ffmpegkmp.ffplay/FFplayHdrPolicy // io.github.aftrolle.ffmpegkmp.ffplay/FFplayConfiguration.hdrPolicy.<get-hdrPolicy>|<get-hdrPolicy>(){}[0]
+    final val outputPreference // io.github.aftrolle.ffmpegkmp.ffplay/FFplayConfiguration.outputPreference|{}outputPreference[0]
+        final fun <get-outputPreference>(): io.github.aftrolle.ffmpegkmp.ffplay/FFplayOutputPreference // io.github.aftrolle.ffmpegkmp.ffplay/FFplayConfiguration.outputPreference.<get-outputPreference>|<get-outputPreference>(){}[0]
+    final val threads // io.github.aftrolle.ffmpegkmp.ffplay/FFplayConfiguration.threads|{}threads[0]
+        final fun <get-threads>(): io.github.aftrolle.ffmpegkmp.codec/DecoderThreads // io.github.aftrolle.ffmpegkmp.ffplay/FFplayConfiguration.threads.<get-threads>|<get-threads>(){}[0]
+
+    final fun component1(): io.github.aftrolle.ffmpegkmp.codec/CodecSelection // io.github.aftrolle.ffmpegkmp.ffplay/FFplayConfiguration.component1|component1(){}[0]
+    final fun component2(): io.github.aftrolle.ffmpegkmp.ffplay/FFplayOutputPreference // io.github.aftrolle.ffmpegkmp.ffplay/FFplayConfiguration.component2|component2(){}[0]
+    final fun component3(): io.github.aftrolle.ffmpegkmp.ffplay/FFplayHdrPolicy // io.github.aftrolle.ffmpegkmp.ffplay/FFplayConfiguration.component3|component3(){}[0]
+    final fun component4(): kotlin/Boolean // io.github.aftrolle.ffmpegkmp.ffplay/FFplayConfiguration.component4|component4(){}[0]
+    final fun component5(): io.github.aftrolle.ffmpegkmp.codec/DecoderThreads // io.github.aftrolle.ffmpegkmp.ffplay/FFplayConfiguration.component5|component5(){}[0]
+    final fun component6(): kotlin.time/Duration // io.github.aftrolle.ffmpegkmp.ffplay/FFplayConfiguration.component6|component6(){}[0]
+    final fun component7(): kotlin/Int // io.github.aftrolle.ffmpegkmp.ffplay/FFplayConfiguration.component7|component7(){}[0]
+    final fun component8(): kotlin/Int // io.github.aftrolle.ffmpegkmp.ffplay/FFplayConfiguration.component8|component8(){}[0]
+    final fun component9(): kotlin.time/Duration // io.github.aftrolle.ffmpegkmp.ffplay/FFplayConfiguration.component9|component9(){}[0]
+    final fun copy(io.github.aftrolle.ffmpegkmp.codec/CodecSelection = ..., io.github.aftrolle.ffmpegkmp.ffplay/FFplayOutputPreference = ..., io.github.aftrolle.ffmpegkmp.ffplay/FFplayHdrPolicy = ..., kotlin/Boolean = ..., io.github.aftrolle.ffmpegkmp.codec/DecoderThreads = ..., kotlin.time/Duration = ..., kotlin/Int = ..., kotlin/Int = ..., kotlin.time/Duration = ...): io.github.aftrolle.ffmpegkmp.ffplay/FFplayConfiguration // io.github.aftrolle.ffmpegkmp.ffplay/FFplayConfiguration.copy|copy(io.github.aftrolle.ffmpegkmp.codec.CodecSelection;io.github.aftrolle.ffmpegkmp.ffplay.FFplayOutputPreference;io.github.aftrolle.ffmpegkmp.ffplay.FFplayHdrPolicy;kotlin.Boolean;io.github.aftrolle.ffmpegkmp.codec.DecoderThreads;kotlin.time.Duration;kotlin.Int;kotlin.Int;kotlin.time.Duration){}[0]
+    final fun equals(kotlin/Any?): kotlin/Boolean // io.github.aftrolle.ffmpegkmp.ffplay/FFplayConfiguration.equals|equals(kotlin.Any?){}[0]
+    final fun hashCode(): kotlin/Int // io.github.aftrolle.ffmpegkmp.ffplay/FFplayConfiguration.hashCode|hashCode(){}[0]
+    final fun toString(): kotlin/String // io.github.aftrolle.ffmpegkmp.ffplay/FFplayConfiguration.toString|toString(){}[0]
+}
+
+final class io.github.aftrolle.ffmpegkmp.ffplay/FFplayFailure { // io.github.aftrolle.ffmpegkmp.ffplay/FFplayFailure|null[0]
+    constructor <init>(kotlin/String, kotlin/Throwable? = ...) // io.github.aftrolle.ffmpegkmp.ffplay/FFplayFailure.<init>|<init>(kotlin.String;kotlin.Throwable?){}[0]
+
+    final val cause // io.github.aftrolle.ffmpegkmp.ffplay/FFplayFailure.cause|{}cause[0]
+        final fun <get-cause>(): kotlin/Throwable? // io.github.aftrolle.ffmpegkmp.ffplay/FFplayFailure.cause.<get-cause>|<get-cause>(){}[0]
+    final val message // io.github.aftrolle.ffmpegkmp.ffplay/FFplayFailure.message|{}message[0]
+        final fun <get-message>(): kotlin/String // io.github.aftrolle.ffmpegkmp.ffplay/FFplayFailure.message.<get-message>|<get-message>(){}[0]
+
+    final fun component1(): kotlin/String // io.github.aftrolle.ffmpegkmp.ffplay/FFplayFailure.component1|component1(){}[0]
+    final fun component2(): kotlin/Throwable? // io.github.aftrolle.ffmpegkmp.ffplay/FFplayFailure.component2|component2(){}[0]
+    final fun copy(kotlin/String = ..., kotlin/Throwable? = ...): io.github.aftrolle.ffmpegkmp.ffplay/FFplayFailure // io.github.aftrolle.ffmpegkmp.ffplay/FFplayFailure.copy|copy(kotlin.String;kotlin.Throwable?){}[0]
+    final fun equals(kotlin/Any?): kotlin/Boolean // io.github.aftrolle.ffmpegkmp.ffplay/FFplayFailure.equals|equals(kotlin.Any?){}[0]
+    final fun hashCode(): kotlin/Int // io.github.aftrolle.ffmpegkmp.ffplay/FFplayFailure.hashCode|hashCode(){}[0]
+    final fun toString(): kotlin/String // io.github.aftrolle.ffmpegkmp.ffplay/FFplayFailure.toString|toString(){}[0]
+}
+
+final class io.github.aftrolle.ffmpegkmp.ffplay/FFplayOutputInfo { // io.github.aftrolle.ffmpegkmp.ffplay/FFplayOutputInfo|null[0]
+    constructor <init>(io.github.aftrolle.ffmpegkmp.codec/DecoderKind, io.github.aftrolle.ffmpegkmp.ffplay/FFplayRendererKind, kotlin/Boolean, io.github.aftrolle.ffmpegkmp.codec/ColorPrimaries? = ..., io.github.aftrolle.ffmpegkmp.codec/ColorPrimaries? = ..., io.github.aftrolle.ffmpegkmp.ffplay/FFplayHdrResult = ..., kotlin/Boolean = ..., io.github.aftrolle.ffmpegkmp.codec/DecoderFallbackReason? = ...) // io.github.aftrolle.ffmpegkmp.ffplay/FFplayOutputInfo.<init>|<init>(io.github.aftrolle.ffmpegkmp.codec.DecoderKind;io.github.aftrolle.ffmpegkmp.ffplay.FFplayRendererKind;kotlin.Boolean;io.github.aftrolle.ffmpegkmp.codec.ColorPrimaries?;io.github.aftrolle.ffmpegkmp.codec.ColorPrimaries?;io.github.aftrolle.ffmpegkmp.ffplay.FFplayHdrResult;kotlin.Boolean;io.github.aftrolle.ffmpegkmp.codec.DecoderFallbackReason?){}[0]
+
+    final val decoder // io.github.aftrolle.ffmpegkmp.ffplay/FFplayOutputInfo.decoder|{}decoder[0]
+        final fun <get-decoder>(): io.github.aftrolle.ffmpegkmp.codec/DecoderKind // io.github.aftrolle.ffmpegkmp.ffplay/FFplayOutputInfo.decoder.<get-decoder>|<get-decoder>(){}[0]
+    final val decoderFallback // io.github.aftrolle.ffmpegkmp.ffplay/FFplayOutputInfo.decoderFallback|{}decoderFallback[0]
+        final fun <get-decoderFallback>(): io.github.aftrolle.ffmpegkmp.codec/DecoderFallbackReason? // io.github.aftrolle.ffmpegkmp.ffplay/FFplayOutputInfo.decoderFallback.<get-decoderFallback>|<get-decoderFallback>(){}[0]
+    final val hdrResult // io.github.aftrolle.ffmpegkmp.ffplay/FFplayOutputInfo.hdrResult|{}hdrResult[0]
+        final fun <get-hdrResult>(): io.github.aftrolle.ffmpegkmp.ffplay/FFplayHdrResult // io.github.aftrolle.ffmpegkmp.ffplay/FFplayOutputInfo.hdrResult.<get-hdrResult>|<get-hdrResult>(){}[0]
+    final val outputPrimaries // io.github.aftrolle.ffmpegkmp.ffplay/FFplayOutputInfo.outputPrimaries|{}outputPrimaries[0]
+        final fun <get-outputPrimaries>(): io.github.aftrolle.ffmpegkmp.codec/ColorPrimaries? // io.github.aftrolle.ffmpegkmp.ffplay/FFplayOutputInfo.outputPrimaries.<get-outputPrimaries>|<get-outputPrimaries>(){}[0]
+    final val renderer // io.github.aftrolle.ffmpegkmp.ffplay/FFplayOutputInfo.renderer|{}renderer[0]
+        final fun <get-renderer>(): io.github.aftrolle.ffmpegkmp.ffplay/FFplayRendererKind // io.github.aftrolle.ffmpegkmp.ffplay/FFplayOutputInfo.renderer.<get-renderer>|<get-renderer>(){}[0]
+    final val securePath // io.github.aftrolle.ffmpegkmp.ffplay/FFplayOutputInfo.securePath|{}securePath[0]
+        final fun <get-securePath>(): kotlin/Boolean // io.github.aftrolle.ffmpegkmp.ffplay/FFplayOutputInfo.securePath.<get-securePath>|<get-securePath>(){}[0]
+    final val sourcePrimaries // io.github.aftrolle.ffmpegkmp.ffplay/FFplayOutputInfo.sourcePrimaries|{}sourcePrimaries[0]
+        final fun <get-sourcePrimaries>(): io.github.aftrolle.ffmpegkmp.codec/ColorPrimaries? // io.github.aftrolle.ffmpegkmp.ffplay/FFplayOutputInfo.sourcePrimaries.<get-sourcePrimaries>|<get-sourcePrimaries>(){}[0]
+    final val zeroCopy // io.github.aftrolle.ffmpegkmp.ffplay/FFplayOutputInfo.zeroCopy|{}zeroCopy[0]
+        final fun <get-zeroCopy>(): kotlin/Boolean // io.github.aftrolle.ffmpegkmp.ffplay/FFplayOutputInfo.zeroCopy.<get-zeroCopy>|<get-zeroCopy>(){}[0]
+
+    final fun component1(): io.github.aftrolle.ffmpegkmp.codec/DecoderKind // io.github.aftrolle.ffmpegkmp.ffplay/FFplayOutputInfo.component1|component1(){}[0]
+    final fun component2(): io.github.aftrolle.ffmpegkmp.ffplay/FFplayRendererKind // io.github.aftrolle.ffmpegkmp.ffplay/FFplayOutputInfo.component2|component2(){}[0]
+    final fun component3(): kotlin/Boolean // io.github.aftrolle.ffmpegkmp.ffplay/FFplayOutputInfo.component3|component3(){}[0]
+    final fun component4(): io.github.aftrolle.ffmpegkmp.codec/ColorPrimaries? // io.github.aftrolle.ffmpegkmp.ffplay/FFplayOutputInfo.component4|component4(){}[0]
+    final fun component5(): io.github.aftrolle.ffmpegkmp.codec/ColorPrimaries? // io.github.aftrolle.ffmpegkmp.ffplay/FFplayOutputInfo.component5|component5(){}[0]
+    final fun component6(): io.github.aftrolle.ffmpegkmp.ffplay/FFplayHdrResult // io.github.aftrolle.ffmpegkmp.ffplay/FFplayOutputInfo.component6|component6(){}[0]
+    final fun component7(): kotlin/Boolean // io.github.aftrolle.ffmpegkmp.ffplay/FFplayOutputInfo.component7|component7(){}[0]
+    final fun component8(): io.github.aftrolle.ffmpegkmp.codec/DecoderFallbackReason? // io.github.aftrolle.ffmpegkmp.ffplay/FFplayOutputInfo.component8|component8(){}[0]
+    final fun copy(io.github.aftrolle.ffmpegkmp.codec/DecoderKind = ..., io.github.aftrolle.ffmpegkmp.ffplay/FFplayRendererKind = ..., kotlin/Boolean = ..., io.github.aftrolle.ffmpegkmp.codec/ColorPrimaries? = ..., io.github.aftrolle.ffmpegkmp.codec/ColorPrimaries? = ..., io.github.aftrolle.ffmpegkmp.ffplay/FFplayHdrResult = ..., kotlin/Boolean = ..., io.github.aftrolle.ffmpegkmp.codec/DecoderFallbackReason? = ...): io.github.aftrolle.ffmpegkmp.ffplay/FFplayOutputInfo // io.github.aftrolle.ffmpegkmp.ffplay/FFplayOutputInfo.copy|copy(io.github.aftrolle.ffmpegkmp.codec.DecoderKind;io.github.aftrolle.ffmpegkmp.ffplay.FFplayRendererKind;kotlin.Boolean;io.github.aftrolle.ffmpegkmp.codec.ColorPrimaries?;io.github.aftrolle.ffmpegkmp.codec.ColorPrimaries?;io.github.aftrolle.ffmpegkmp.ffplay.FFplayHdrResult;kotlin.Boolean;io.github.aftrolle.ffmpegkmp.codec.DecoderFallbackReason?){}[0]
+    final fun equals(kotlin/Any?): kotlin/Boolean // io.github.aftrolle.ffmpegkmp.ffplay/FFplayOutputInfo.equals|equals(kotlin.Any?){}[0]
+    final fun hashCode(): kotlin/Int // io.github.aftrolle.ffmpegkmp.ffplay/FFplayOutputInfo.hashCode|hashCode(){}[0]
+    final fun toString(): kotlin/String // io.github.aftrolle.ffmpegkmp.ffplay/FFplayOutputInfo.toString|toString(){}[0]
+}
+
+final class io.github.aftrolle.ffmpegkmp.ffplay/FFplayPlayer : kotlin/AutoCloseable { // io.github.aftrolle.ffmpegkmp.ffplay/FFplayPlayer|null[0]
+    constructor <init>(io.github.aftrolle.ffmpegkmp.ffplay/FFplayConfiguration = ...) // io.github.aftrolle.ffmpegkmp.ffplay/FFplayPlayer.<init>|<init>(io.github.aftrolle.ffmpegkmp.ffplay.FFplayConfiguration){}[0]
+
+    final val audio // io.github.aftrolle.ffmpegkmp.ffplay/FFplayPlayer.audio|{}audio[0]
+        final fun <get-audio>(): kotlinx.coroutines.flow/StateFlow<io.github.aftrolle.ffmpegkmp.player/AudioMixControls> // io.github.aftrolle.ffmpegkmp.ffplay/FFplayPlayer.audio.<get-audio>|<get-audio>(){}[0]
+    final val configuration // io.github.aftrolle.ffmpegkmp.ffplay/FFplayPlayer.configuration|{}configuration[0]
+        final fun <get-configuration>(): io.github.aftrolle.ffmpegkmp.ffplay/FFplayConfiguration // io.github.aftrolle.ffmpegkmp.ffplay/FFplayPlayer.configuration.<get-configuration>|<get-configuration>(){}[0]
+    final val events // io.github.aftrolle.ffmpegkmp.ffplay/FFplayPlayer.events|{}events[0]
+        final fun <get-events>(): kotlinx.coroutines.flow/Flow<io.github.aftrolle.ffmpegkmp.ffplay/FFplayEvent> // io.github.aftrolle.ffmpegkmp.ffplay/FFplayPlayer.events.<get-events>|<get-events>(){}[0]
+    final val snapshot // io.github.aftrolle.ffmpegkmp.ffplay/FFplayPlayer.snapshot|{}snapshot[0]
+        final fun <get-snapshot>(): kotlinx.coroutines.flow/StateFlow<io.github.aftrolle.ffmpegkmp.ffplay/FFplaySnapshot> // io.github.aftrolle.ffmpegkmp.ffplay/FFplayPlayer.snapshot.<get-snapshot>|<get-snapshot>(){}[0]
+
+    final fun close() // io.github.aftrolle.ffmpegkmp.ffplay/FFplayPlayer.close|close(){}[0]
+    final fun follow(io.github.aftrolle.ffmpegkmp.ffplay/FFplayClock?) // io.github.aftrolle.ffmpegkmp.ffplay/FFplayPlayer.follow|follow(io.github.aftrolle.ffmpegkmp.ffplay.FFplayClock?){}[0]
+    final fun pause() // io.github.aftrolle.ffmpegkmp.ffplay/FFplayPlayer.pause|pause(){}[0]
+    final fun play() // io.github.aftrolle.ffmpegkmp.ffplay/FFplayPlayer.play|play(){}[0]
+    final fun seekTo(kotlin.time/Duration) // io.github.aftrolle.ffmpegkmp.ffplay/FFplayPlayer.seekTo|seekTo(kotlin.time.Duration){}[0]
+    final fun stop() // io.github.aftrolle.ffmpegkmp.ffplay/FFplayPlayer.stop|stop(){}[0]
+    final suspend fun prepare(io.github.aftrolle.ffmpegkmp.core/MediaSource, io.github.aftrolle.ffmpegkmp.ffplay/FFplayContentProtection = ...) // io.github.aftrolle.ffmpegkmp.ffplay/FFplayPlayer.prepare|prepare(io.github.aftrolle.ffmpegkmp.core.MediaSource;io.github.aftrolle.ffmpegkmp.ffplay.FFplayContentProtection){}[0]
+}
+
+final class io.github.aftrolle.ffmpegkmp.ffplay/FFplaySnapshot { // io.github.aftrolle.ffmpegkmp.ffplay/FFplaySnapshot|null[0]
+    constructor <init>(io.github.aftrolle.ffmpegkmp.ffplay/FFplayState = ..., kotlin.time/Duration = ..., kotlin.time/Duration? = ..., kotlin/Boolean = ..., io.github.aftrolle.ffmpegkmp.codec/VideoInfo? = ..., io.github.aftrolle.ffmpegkmp.ffplay/FFplayOutputInfo? = ..., kotlin/Long = ..., io.github.aftrolle.ffmpegkmp.ffplay/FFplayFailure? = ...) // io.github.aftrolle.ffmpegkmp.ffplay/FFplaySnapshot.<init>|<init>(io.github.aftrolle.ffmpegkmp.ffplay.FFplayState;kotlin.time.Duration;kotlin.time.Duration?;kotlin.Boolean;io.github.aftrolle.ffmpegkmp.codec.VideoInfo?;io.github.aftrolle.ffmpegkmp.ffplay.FFplayOutputInfo?;kotlin.Long;io.github.aftrolle.ffmpegkmp.ffplay.FFplayFailure?){}[0]
+
+    final val droppedFrames // io.github.aftrolle.ffmpegkmp.ffplay/FFplaySnapshot.droppedFrames|{}droppedFrames[0]
+        final fun <get-droppedFrames>(): kotlin/Long // io.github.aftrolle.ffmpegkmp.ffplay/FFplaySnapshot.droppedFrames.<get-droppedFrames>|<get-droppedFrames>(){}[0]
+    final val duration // io.github.aftrolle.ffmpegkmp.ffplay/FFplaySnapshot.duration|{}duration[0]
+        final fun <get-duration>(): kotlin.time/Duration? // io.github.aftrolle.ffmpegkmp.ffplay/FFplaySnapshot.duration.<get-duration>|<get-duration>(){}[0]
+    final val failure // io.github.aftrolle.ffmpegkmp.ffplay/FFplaySnapshot.failure|{}failure[0]
+        final fun <get-failure>(): io.github.aftrolle.ffmpegkmp.ffplay/FFplayFailure? // io.github.aftrolle.ffmpegkmp.ffplay/FFplaySnapshot.failure.<get-failure>|<get-failure>(){}[0]
+    final val output // io.github.aftrolle.ffmpegkmp.ffplay/FFplaySnapshot.output|{}output[0]
+        final fun <get-output>(): io.github.aftrolle.ffmpegkmp.ffplay/FFplayOutputInfo? // io.github.aftrolle.ffmpegkmp.ffplay/FFplaySnapshot.output.<get-output>|<get-output>(){}[0]
+    final val position // io.github.aftrolle.ffmpegkmp.ffplay/FFplaySnapshot.position|{}position[0]
+        final fun <get-position>(): kotlin.time/Duration // io.github.aftrolle.ffmpegkmp.ffplay/FFplaySnapshot.position.<get-position>|<get-position>(){}[0]
+    final val seekable // io.github.aftrolle.ffmpegkmp.ffplay/FFplaySnapshot.seekable|{}seekable[0]
+        final fun <get-seekable>(): kotlin/Boolean // io.github.aftrolle.ffmpegkmp.ffplay/FFplaySnapshot.seekable.<get-seekable>|<get-seekable>(){}[0]
+    final val state // io.github.aftrolle.ffmpegkmp.ffplay/FFplaySnapshot.state|{}state[0]
+        final fun <get-state>(): io.github.aftrolle.ffmpegkmp.ffplay/FFplayState // io.github.aftrolle.ffmpegkmp.ffplay/FFplaySnapshot.state.<get-state>|<get-state>(){}[0]
+    final val video // io.github.aftrolle.ffmpegkmp.ffplay/FFplaySnapshot.video|{}video[0]
+        final fun <get-video>(): io.github.aftrolle.ffmpegkmp.codec/VideoInfo? // io.github.aftrolle.ffmpegkmp.ffplay/FFplaySnapshot.video.<get-video>|<get-video>(){}[0]
+
+    final fun component1(): io.github.aftrolle.ffmpegkmp.ffplay/FFplayState // io.github.aftrolle.ffmpegkmp.ffplay/FFplaySnapshot.component1|component1(){}[0]
+    final fun component2(): kotlin.time/Duration // io.github.aftrolle.ffmpegkmp.ffplay/FFplaySnapshot.component2|component2(){}[0]
+    final fun component3(): kotlin.time/Duration? // io.github.aftrolle.ffmpegkmp.ffplay/FFplaySnapshot.component3|component3(){}[0]
+    final fun component4(): kotlin/Boolean // io.github.aftrolle.ffmpegkmp.ffplay/FFplaySnapshot.component4|component4(){}[0]
+    final fun component5(): io.github.aftrolle.ffmpegkmp.codec/VideoInfo? // io.github.aftrolle.ffmpegkmp.ffplay/FFplaySnapshot.component5|component5(){}[0]
+    final fun component6(): io.github.aftrolle.ffmpegkmp.ffplay/FFplayOutputInfo? // io.github.aftrolle.ffmpegkmp.ffplay/FFplaySnapshot.component6|component6(){}[0]
+    final fun component7(): kotlin/Long // io.github.aftrolle.ffmpegkmp.ffplay/FFplaySnapshot.component7|component7(){}[0]
+    final fun component8(): io.github.aftrolle.ffmpegkmp.ffplay/FFplayFailure? // io.github.aftrolle.ffmpegkmp.ffplay/FFplaySnapshot.component8|component8(){}[0]
+    final fun copy(io.github.aftrolle.ffmpegkmp.ffplay/FFplayState = ..., kotlin.time/Duration = ..., kotlin.time/Duration? = ..., kotlin/Boolean = ..., io.github.aftrolle.ffmpegkmp.codec/VideoInfo? = ..., io.github.aftrolle.ffmpegkmp.ffplay/FFplayOutputInfo? = ..., kotlin/Long = ..., io.github.aftrolle.ffmpegkmp.ffplay/FFplayFailure? = ...): io.github.aftrolle.ffmpegkmp.ffplay/FFplaySnapshot // io.github.aftrolle.ffmpegkmp.ffplay/FFplaySnapshot.copy|copy(io.github.aftrolle.ffmpegkmp.ffplay.FFplayState;kotlin.time.Duration;kotlin.time.Duration?;kotlin.Boolean;io.github.aftrolle.ffmpegkmp.codec.VideoInfo?;io.github.aftrolle.ffmpegkmp.ffplay.FFplayOutputInfo?;kotlin.Long;io.github.aftrolle.ffmpegkmp.ffplay.FFplayFailure?){}[0]
+    final fun equals(kotlin/Any?): kotlin/Boolean // io.github.aftrolle.ffmpegkmp.ffplay/FFplaySnapshot.equals|equals(kotlin.Any?){}[0]
+    final fun hashCode(): kotlin/Int // io.github.aftrolle.ffmpegkmp.ffplay/FFplaySnapshot.hashCode|hashCode(){}[0]
+    final fun toString(): kotlin/String // io.github.aftrolle.ffmpegkmp.ffplay/FFplaySnapshot.toString|toString(){}[0]
+}
+
+final class io.github.aftrolle.ffmpegkmp.ffplay/FrameImage : kotlin/AutoCloseable { // io.github.aftrolle.ffmpegkmp.ffplay/FrameImage|null[0]
+    constructor <init>() // io.github.aftrolle.ffmpegkmp.ffplay/FrameImage.<init>|<init>(){}[0]
+
+    final val displaySize // io.github.aftrolle.ffmpegkmp.ffplay/FrameImage.displaySize|{}displaySize[0]
+        final fun <get-displaySize>(): androidx.compose.ui.geometry/Size // io.github.aftrolle.ffmpegkmp.ffplay/FrameImage.displaySize.<get-displaySize>|<get-displaySize>(){}[0]
+
+    final var targetSize // io.github.aftrolle.ffmpegkmp.ffplay/FrameImage.targetSize|{}targetSize[0]
+        final fun <get-targetSize>(): androidx.compose.ui.unit/IntSize? // io.github.aftrolle.ffmpegkmp.ffplay/FrameImage.targetSize.<get-targetSize>|<get-targetSize>(){}[0]
+        final fun <set-targetSize>(androidx.compose.ui.unit/IntSize?) // io.github.aftrolle.ffmpegkmp.ffplay/FrameImage.targetSize.<set-targetSize>|<set-targetSize>(androidx.compose.ui.unit.IntSize?){}[0]
+
+    final fun close() // io.github.aftrolle.ffmpegkmp.ffplay/FrameImage.close|close(){}[0]
+    final fun update(io.github.aftrolle.ffmpegkmp.codec/VideoFrame) // io.github.aftrolle.ffmpegkmp.ffplay/FrameImage.update|update(io.github.aftrolle.ffmpegkmp.codec.VideoFrame){}[0]
+}
+
+final val io.github.aftrolle.ffmpegkmp.ffplay/io_github_aftrolle_ffmpegkmp_ffplay_ComposeFrameRenderer$stableprop // io.github.aftrolle.ffmpegkmp.ffplay/io_github_aftrolle_ffmpegkmp_ffplay_ComposeFrameRenderer$stableprop|#static{}io_github_aftrolle_ffmpegkmp_ffplay_ComposeFrameRenderer$stableprop[0]
+final val io.github.aftrolle.ffmpegkmp.ffplay/io_github_aftrolle_ffmpegkmp_ffplay_FFplayConfiguration$stableprop // io.github.aftrolle.ffmpegkmp.ffplay/io_github_aftrolle_ffmpegkmp_ffplay_FFplayConfiguration$stableprop|#static{}io_github_aftrolle_ffmpegkmp_ffplay_FFplayConfiguration$stableprop[0]
+final val io.github.aftrolle.ffmpegkmp.ffplay/io_github_aftrolle_ffmpegkmp_ffplay_FFplayEvent_CaughtUp$stableprop // io.github.aftrolle.ffmpegkmp.ffplay/io_github_aftrolle_ffmpegkmp_ffplay_FFplayEvent_CaughtUp$stableprop|#static{}io_github_aftrolle_ffmpegkmp_ffplay_FFplayEvent_CaughtUp$stableprop[0]
+final val io.github.aftrolle.ffmpegkmp.ffplay/io_github_aftrolle_ffmpegkmp_ffplay_FFplayEvent_DecoderFallback$stableprop // io.github.aftrolle.ffmpegkmp.ffplay/io_github_aftrolle_ffmpegkmp_ffplay_FFplayEvent_DecoderFallback$stableprop|#static{}io_github_aftrolle_ffmpegkmp_ffplay_FFplayEvent_DecoderFallback$stableprop[0]
+final val io.github.aftrolle.ffmpegkmp.ffplay/io_github_aftrolle_ffmpegkmp_ffplay_FFplayEvent_Fatal$stableprop // io.github.aftrolle.ffmpegkmp.ffplay/io_github_aftrolle_ffmpegkmp_ffplay_FFplayEvent_Fatal$stableprop|#static{}io_github_aftrolle_ffmpegkmp_ffplay_FFplayEvent_Fatal$stableprop[0]
+final val io.github.aftrolle.ffmpegkmp.ffplay/io_github_aftrolle_ffmpegkmp_ffplay_FFplayEvent_ProtectionRequired$stableprop // io.github.aftrolle.ffmpegkmp.ffplay/io_github_aftrolle_ffmpegkmp_ffplay_FFplayEvent_ProtectionRequired$stableprop|#static{}io_github_aftrolle_ffmpegkmp_ffplay_FFplayEvent_ProtectionRequired$stableprop[0]
+final val io.github.aftrolle.ffmpegkmp.ffplay/io_github_aftrolle_ffmpegkmp_ffplay_FFplayEvent_RendererFallback$stableprop // io.github.aftrolle.ffmpegkmp.ffplay/io_github_aftrolle_ffmpegkmp_ffplay_FFplayEvent_RendererFallback$stableprop|#static{}io_github_aftrolle_ffmpegkmp_ffplay_FFplayEvent_RendererFallback$stableprop[0]
+final val io.github.aftrolle.ffmpegkmp.ffplay/io_github_aftrolle_ffmpegkmp_ffplay_FFplayEvent_SurfaceLost$stableprop // io.github.aftrolle.ffmpegkmp.ffplay/io_github_aftrolle_ffmpegkmp_ffplay_FFplayEvent_SurfaceLost$stableprop|#static{}io_github_aftrolle_ffmpegkmp_ffplay_FFplayEvent_SurfaceLost$stableprop[0]
+final val io.github.aftrolle.ffmpegkmp.ffplay/io_github_aftrolle_ffmpegkmp_ffplay_FFplayEvent_Warning$stableprop // io.github.aftrolle.ffmpegkmp.ffplay/io_github_aftrolle_ffmpegkmp_ffplay_FFplayEvent_Warning$stableprop|#static{}io_github_aftrolle_ffmpegkmp_ffplay_FFplayEvent_Warning$stableprop[0]
+final val io.github.aftrolle.ffmpegkmp.ffplay/io_github_aftrolle_ffmpegkmp_ffplay_FFplayFailure$stableprop // io.github.aftrolle.ffmpegkmp.ffplay/io_github_aftrolle_ffmpegkmp_ffplay_FFplayFailure$stableprop|#static{}io_github_aftrolle_ffmpegkmp_ffplay_FFplayFailure$stableprop[0]
+final val io.github.aftrolle.ffmpegkmp.ffplay/io_github_aftrolle_ffmpegkmp_ffplay_FFplayOutputInfo$stableprop // io.github.aftrolle.ffmpegkmp.ffplay/io_github_aftrolle_ffmpegkmp_ffplay_FFplayOutputInfo$stableprop|#static{}io_github_aftrolle_ffmpegkmp_ffplay_FFplayOutputInfo$stableprop[0]
+final val io.github.aftrolle.ffmpegkmp.ffplay/io_github_aftrolle_ffmpegkmp_ffplay_FFplayPlayer$stableprop // io.github.aftrolle.ffmpegkmp.ffplay/io_github_aftrolle_ffmpegkmp_ffplay_FFplayPlayer$stableprop|#static{}io_github_aftrolle_ffmpegkmp_ffplay_FFplayPlayer$stableprop[0]
+final val io.github.aftrolle.ffmpegkmp.ffplay/io_github_aftrolle_ffmpegkmp_ffplay_FFplaySnapshot$stableprop // io.github.aftrolle.ffmpegkmp.ffplay/io_github_aftrolle_ffmpegkmp_ffplay_FFplaySnapshot$stableprop|#static{}io_github_aftrolle_ffmpegkmp_ffplay_FFplaySnapshot$stableprop[0]
+final val io.github.aftrolle.ffmpegkmp.ffplay/io_github_aftrolle_ffmpegkmp_ffplay_FrameImage$stableprop // io.github.aftrolle.ffmpegkmp.ffplay/io_github_aftrolle_ffmpegkmp_ffplay_FrameImage$stableprop|#static{}io_github_aftrolle_ffmpegkmp_ffplay_FrameImage$stableprop[0]
+
+final fun (androidx.compose.ui.graphics.drawscope/DrawScope).io.github.aftrolle.ffmpegkmp.ffplay/drawFrameImage(io.github.aftrolle.ffmpegkmp.ffplay/FrameImage, androidx.compose.ui.geometry/Offset = ..., androidx.compose.ui.geometry/Size = ...) // io.github.aftrolle.ffmpegkmp.ffplay/drawFrameImage|drawFrameImage@androidx.compose.ui.graphics.drawscope.DrawScope(io.github.aftrolle.ffmpegkmp.ffplay.FrameImage;androidx.compose.ui.geometry.Offset;androidx.compose.ui.geometry.Size){}[0]
+final fun (io.github.aftrolle.ffmpegkmp.codec/VideoFrame).io.github.aftrolle.ffmpegkmp.ffplay/toImageBitmap(): androidx.compose.ui.graphics/ImageBitmap // io.github.aftrolle.ffmpegkmp.ffplay/toImageBitmap|toImageBitmap@io.github.aftrolle.ffmpegkmp.codec.VideoFrame(){}[0]
+final fun io.github.aftrolle.ffmpegkmp.ffplay/FFplaySurface(io.github.aftrolle.ffmpegkmp.ffplay/FFplayPlayer, androidx.compose.ui/Modifier?, androidx.compose.ui.layout/ContentScale?, androidx.compose.ui.graphics/Color, androidx.compose.ui.unit/IntSize?, androidx.compose.runtime/Composer?, kotlin/Int, kotlin/Int) // io.github.aftrolle.ffmpegkmp.ffplay/FFplaySurface|FFplaySurface(io.github.aftrolle.ffmpegkmp.ffplay.FFplayPlayer;androidx.compose.ui.Modifier?;androidx.compose.ui.layout.ContentScale?;androidx.compose.ui.graphics.Color;androidx.compose.ui.unit.IntSize?;androidx.compose.runtime.Composer?;kotlin.Int;kotlin.Int){}[0]
+final fun io.github.aftrolle.ffmpegkmp.ffplay/io_github_aftrolle_ffmpegkmp_ffplay_ComposeFrameRenderer$stableprop_getter(): kotlin/Int // io.github.aftrolle.ffmpegkmp.ffplay/io_github_aftrolle_ffmpegkmp_ffplay_ComposeFrameRenderer$stableprop_getter|io_github_aftrolle_ffmpegkmp_ffplay_ComposeFrameRenderer$stableprop_getter(){}[0]
+final fun io.github.aftrolle.ffmpegkmp.ffplay/io_github_aftrolle_ffmpegkmp_ffplay_FFplayConfiguration$stableprop_getter(): kotlin/Int // io.github.aftrolle.ffmpegkmp.ffplay/io_github_aftrolle_ffmpegkmp_ffplay_FFplayConfiguration$stableprop_getter|io_github_aftrolle_ffmpegkmp_ffplay_FFplayConfiguration$stableprop_getter(){}[0]
+final fun io.github.aftrolle.ffmpegkmp.ffplay/io_github_aftrolle_ffmpegkmp_ffplay_FFplayEvent_CaughtUp$stableprop_getter(): kotlin/Int // io.github.aftrolle.ffmpegkmp.ffplay/io_github_aftrolle_ffmpegkmp_ffplay_FFplayEvent_CaughtUp$stableprop_getter|io_github_aftrolle_ffmpegkmp_ffplay_FFplayEvent_CaughtUp$stableprop_getter(){}[0]
+final fun io.github.aftrolle.ffmpegkmp.ffplay/io_github_aftrolle_ffmpegkmp_ffplay_FFplayEvent_DecoderFallback$stableprop_getter(): kotlin/Int // io.github.aftrolle.ffmpegkmp.ffplay/io_github_aftrolle_ffmpegkmp_ffplay_FFplayEvent_DecoderFallback$stableprop_getter|io_github_aftrolle_ffmpegkmp_ffplay_FFplayEvent_DecoderFallback$stableprop_getter(){}[0]
+final fun io.github.aftrolle.ffmpegkmp.ffplay/io_github_aftrolle_ffmpegkmp_ffplay_FFplayEvent_Fatal$stableprop_getter(): kotlin/Int // io.github.aftrolle.ffmpegkmp.ffplay/io_github_aftrolle_ffmpegkmp_ffplay_FFplayEvent_Fatal$stableprop_getter|io_github_aftrolle_ffmpegkmp_ffplay_FFplayEvent_Fatal$stableprop_getter(){}[0]
+final fun io.github.aftrolle.ffmpegkmp.ffplay/io_github_aftrolle_ffmpegkmp_ffplay_FFplayEvent_ProtectionRequired$stableprop_getter(): kotlin/Int // io.github.aftrolle.ffmpegkmp.ffplay/io_github_aftrolle_ffmpegkmp_ffplay_FFplayEvent_ProtectionRequired$stableprop_getter|io_github_aftrolle_ffmpegkmp_ffplay_FFplayEvent_ProtectionRequired$stableprop_getter(){}[0]
+final fun io.github.aftrolle.ffmpegkmp.ffplay/io_github_aftrolle_ffmpegkmp_ffplay_FFplayEvent_RendererFallback$stableprop_getter(): kotlin/Int // io.github.aftrolle.ffmpegkmp.ffplay/io_github_aftrolle_ffmpegkmp_ffplay_FFplayEvent_RendererFallback$stableprop_getter|io_github_aftrolle_ffmpegkmp_ffplay_FFplayEvent_RendererFallback$stableprop_getter(){}[0]
+final fun io.github.aftrolle.ffmpegkmp.ffplay/io_github_aftrolle_ffmpegkmp_ffplay_FFplayEvent_SurfaceLost$stableprop_getter(): kotlin/Int // io.github.aftrolle.ffmpegkmp.ffplay/io_github_aftrolle_ffmpegkmp_ffplay_FFplayEvent_SurfaceLost$stableprop_getter|io_github_aftrolle_ffmpegkmp_ffplay_FFplayEvent_SurfaceLost$stableprop_getter(){}[0]
+final fun io.github.aftrolle.ffmpegkmp.ffplay/io_github_aftrolle_ffmpegkmp_ffplay_FFplayEvent_Warning$stableprop_getter(): kotlin/Int // io.github.aftrolle.ffmpegkmp.ffplay/io_github_aftrolle_ffmpegkmp_ffplay_FFplayEvent_Warning$stableprop_getter|io_github_aftrolle_ffmpegkmp_ffplay_FFplayEvent_Warning$stableprop_getter(){}[0]
+final fun io.github.aftrolle.ffmpegkmp.ffplay/io_github_aftrolle_ffmpegkmp_ffplay_FFplayFailure$stableprop_getter(): kotlin/Int // io.github.aftrolle.ffmpegkmp.ffplay/io_github_aftrolle_ffmpegkmp_ffplay_FFplayFailure$stableprop_getter|io_github_aftrolle_ffmpegkmp_ffplay_FFplayFailure$stableprop_getter(){}[0]
+final fun io.github.aftrolle.ffmpegkmp.ffplay/io_github_aftrolle_ffmpegkmp_ffplay_FFplayOutputInfo$stableprop_getter(): kotlin/Int // io.github.aftrolle.ffmpegkmp.ffplay/io_github_aftrolle_ffmpegkmp_ffplay_FFplayOutputInfo$stableprop_getter|io_github_aftrolle_ffmpegkmp_ffplay_FFplayOutputInfo$stableprop_getter(){}[0]
+final fun io.github.aftrolle.ffmpegkmp.ffplay/io_github_aftrolle_ffmpegkmp_ffplay_FFplayPlayer$stableprop_getter(): kotlin/Int // io.github.aftrolle.ffmpegkmp.ffplay/io_github_aftrolle_ffmpegkmp_ffplay_FFplayPlayer$stableprop_getter|io_github_aftrolle_ffmpegkmp_ffplay_FFplayPlayer$stableprop_getter(){}[0]
+final fun io.github.aftrolle.ffmpegkmp.ffplay/io_github_aftrolle_ffmpegkmp_ffplay_FFplaySnapshot$stableprop_getter(): kotlin/Int // io.github.aftrolle.ffmpegkmp.ffplay/io_github_aftrolle_ffmpegkmp_ffplay_FFplaySnapshot$stableprop_getter|io_github_aftrolle_ffmpegkmp_ffplay_FFplaySnapshot$stableprop_getter(){}[0]
+final fun io.github.aftrolle.ffmpegkmp.ffplay/io_github_aftrolle_ffmpegkmp_ffplay_FrameImage$stableprop_getter(): kotlin/Int // io.github.aftrolle.ffmpegkmp.ffplay/io_github_aftrolle_ffmpegkmp_ffplay_FrameImage$stableprop_getter|io_github_aftrolle_ffmpegkmp_ffplay_FrameImage$stableprop_getter(){}[0]
+final fun io.github.aftrolle.ffmpegkmp.ffplay/rememberFFplayPlayer(io.github.aftrolle.ffmpegkmp.ffplay/FFplayConfiguration?, androidx.compose.runtime/Composer?, kotlin/Int, kotlin/Int): io.github.aftrolle.ffmpegkmp.ffplay/FFplayPlayer // io.github.aftrolle.ffmpegkmp.ffplay/rememberFFplayPlayer|rememberFFplayPlayer(io.github.aftrolle.ffmpegkmp.ffplay.FFplayConfiguration?;androidx.compose.runtime.Composer?;kotlin.Int;kotlin.Int){}[0]

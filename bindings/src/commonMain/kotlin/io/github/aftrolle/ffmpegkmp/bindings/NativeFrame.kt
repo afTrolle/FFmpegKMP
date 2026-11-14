@@ -61,6 +61,17 @@ public interface NativeFrame : AutoCloseable {
     public fun convertInto(target: NativeFrame)
 
     /**
+     * A new frame of this one shown upright, as FFmpeg's autorotate turns and mirrors it by its
+     * display matrix, then cut to the upright rectangle at ([cropX], [cropY]), [cropWidth] x
+     * [cropHeight] (0 x 0 for all of it), through libavfilter (`ffmpegkmp_frame_upright`). A frame
+     * without a display matrix is turned clockwise by [fallbackClockwiseQuarterTurns] (0 to 3).
+     * It shares no memory with this frame. RGBA8 and BGRA8 frames in memory only; the browser has
+     * none.
+     */
+    public fun upright(fallbackClockwiseQuarterTurns: Int, cropX: Int, cropY: Int, cropWidth: Int, cropHeight: Int): NativeFrame =
+        throw UnsupportedOperationException("This frame cannot be turned upright")
+
+    /**
      * Runs [block] with the address and row bytes of a packed, single-plane frame's pixels,
      * writable in place until it returns, for drawing into: the frame must hold the only
      * reference to its memory, as a fresh [allocateNativeFrame] one does.
@@ -76,9 +87,22 @@ public interface NativeFrame : AutoCloseable {
 @InternalFFmpegKmpApi
 public expect fun allocateNativeFrame(format: NativeFrameFormat, width: Int, height: Int): NativeFrame
 
-/** Pixel memory the bridge allocated for frames: pool buffers, converter intermediates and hardware downloads. */
+/**
+ * Pixel memory the bridge allocated for frames: pool buffers, converter intermediates and hardware
+ * downloads, counted as they are made ([buffers], [bytes]). [ringBuffers] and [ringBytes] are the
+ * decoders' rings' memory buffers allocated now, which go down as they are freed; a
+ * CVPixelBufferPool's buffers are CoreVideo's and not among them. [gamutMaps] counts the gamut maps
+ * the converter sampled from swscale for its HDR-to-SDR tone map, one per pair of primaries and SDR
+ * curve, however many sizes it converts into.
+ */
 @InternalFFmpegKmpApi
-public data class NativeFrameStatistics(val buffers: Long, val bytes: Long)
+public data class NativeFrameStatistics(
+    val buffers: Long,
+    val bytes: Long,
+    val ringBuffers: Long = 0,
+    val ringBytes: Long = 0,
+    val gamutMaps: Long = 0,
+)
 
 /** The bridge's allocation counters over the process's life; zero where the platform has no bridge. */
 @InternalFFmpegKmpApi

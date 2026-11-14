@@ -17,6 +17,7 @@ import io.github.aftrolle.ffmpegkmp.bindings.NativePlayerSource
 import io.github.aftrolle.ffmpegkmp.bindings.NativePlatformVideoFrame
 import io.github.aftrolle.ffmpegkmp.bindings.NativePlatformVideoFrameKind
 import io.github.aftrolle.ffmpegkmp.bindings.NativeVideoFrame
+import io.github.aftrolle.ffmpegkmp.bindings.NativeVideoFrameSink
 import io.github.aftrolle.ffmpegkmp.bindings.NativePlayerError
 import io.github.aftrolle.ffmpegkmp.bindings.createInMemoryPlayerBridge
 import io.github.aftrolle.ffmpegkmp.codec.VideoFrame
@@ -300,7 +301,7 @@ private class FrameBridgeHarness {
 private class ControllablePlayerBridge(
     configuration: NativePlayerConfiguration,
     update: (NativePlayerSnapshot) -> Unit,
-    private val frame: (NativeVideoFrame) -> Unit,
+    private val frame: NativeVideoFrameSink,
     private val platformFrame: (NativePlatformVideoFrame) -> Boolean,
 ) : NativePlayerBridge {
     private val delegate = createInMemoryPlayerBridge(configuration, update)
@@ -314,8 +315,20 @@ private class ControllablePlayerBridge(
         frameSizes += width to height
     }
 
+    private var tokens = 0L
+
+    /** Prepares a frame decoded under [serial] and presents it at once, as a preview does. */
     fun emitFrame(serial: UInt) {
-        frame(NativeVideoFrame(frame = PixelFreeFrame(), width = 2, height = 2, presentationTimeUs = 0, queueSerial = serial))
+        val token = ++tokens
+        val prepared = NativeVideoFrame(
+            frame = PixelFreeFrame(),
+            width = 2,
+            height = 2,
+            presentationTimeUs = 0,
+            queueSerial = serial,
+            token = token,
+        )
+        if (frame.prepare(prepared)) frame.present(token)
     }
 
     fun emitPlatformFrame(serial: UInt): Boolean = platformFrame(

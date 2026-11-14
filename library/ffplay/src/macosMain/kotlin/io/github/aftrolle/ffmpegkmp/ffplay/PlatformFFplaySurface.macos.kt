@@ -13,5 +13,5 @@ internal actual fun PlatformFFplaySurface(
     modifier: Modifier,
     contentScale: ContentScale,
     backgroundColor: Color,
-    resolution: IntSize?,
-) = ComposeCanvasFFplaySurface(player, modifier, contentScale, backgroundColor, resolution)
+    targetSize: IntSize?,
+) = ComposeCanvasFFplaySurface(player, modifier, contentScale, backgroundColor, targetSize)

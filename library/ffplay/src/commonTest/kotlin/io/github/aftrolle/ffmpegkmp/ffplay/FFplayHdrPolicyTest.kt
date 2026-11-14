@@ -39,7 +39,7 @@ class FFplayHdrPolicyTest {
         assertFalse(negotiated.last().zeroCopy)
         assertTrue(negotiated.last().toneMapHdrToSdr)
         assertEquals(FFplayHdrResult.TONE_MAPPED, player.snapshot.value.output?.hdrResult)
-        assertEquals(ColorPrimaries.BT709, player.snapshot.value.output?.outputColorSpace)
+        assertEquals(ColorPrimaries.BT709, player.snapshot.value.output?.outputPrimaries)
         player.close()
     }
 
@@ -48,7 +48,7 @@ class FFplayHdrPolicyTest {
         val (player, _) = hdrPlayer(
             FFplayConfiguration(
                 hdrPolicy = FFplayHdrPolicy.FORCE_SDR,
-                decoderPreference = CodecPreference.REQUIRE_HARDWARE,
+                decoder = CodecPreference.REQUIRE_HARDWARE,
             ),
         )
         player.attachOutput(HdrSurface())

@@ -1,0 +1,51 @@
+// Klib ABI Dump
+// Targets: [iosArm64, iosSimulatorArm64, js, macosArm64, tvosArm64, tvosSimulatorArm64, wasmJs, watchosArm64, watchosDeviceArm64, watchosSimulatorArm64]
+// Rendering settings:
+// - Signature version: 2
+// - Show manifest properties: true
+// - Show declarations: true
+
+// Library unique name: <io.github.aftrolle.ffmpegkmp:ffmpeg>
+final class io.github.aftrolle.ffmpegkmp.ffmpeg/FFmpegClient : io.github.aftrolle.ffmpegkmp.core/CommandClient { // io.github.aftrolle.ffmpegkmp.ffmpeg/FFmpegClient|null[0]
+    constructor <init>(io.github.aftrolle.ffmpegkmp.core/CommandRuntimeLimits = ...) // io.github.aftrolle.ffmpegkmp.ffmpeg/FFmpegClient.<init>|<init>(io.github.aftrolle.ffmpegkmp.core.CommandRuntimeLimits){}[0]
+
+    final fun enqueue(io.github.aftrolle.ffmpegkmp.ffmpeg/FFmpegCommand, io.github.aftrolle.ffmpegkmp.core/CommandIo = ...): io.github.aftrolle.ffmpegkmp.core/ExecutionSession<io.github.aftrolle.ffmpegkmp.core/ExecutionResult> // io.github.aftrolle.ffmpegkmp.ffmpeg/FFmpegClient.enqueue|enqueue(io.github.aftrolle.ffmpegkmp.ffmpeg.FFmpegCommand;io.github.aftrolle.ffmpegkmp.core.CommandIo){}[0]
+    final suspend fun execute(io.github.aftrolle.ffmpegkmp.ffmpeg/FFmpegCommand, io.github.aftrolle.ffmpegkmp.core/CommandIo = ...): io.github.aftrolle.ffmpegkmp.core/ExecutionResult // io.github.aftrolle.ffmpegkmp.ffmpeg/FFmpegClient.execute|execute(io.github.aftrolle.ffmpegkmp.ffmpeg.FFmpegCommand;io.github.aftrolle.ffmpegkmp.core.CommandIo){}[0]
+}
+
+final class io.github.aftrolle.ffmpegkmp.ffmpeg/FFmpegCommand { // io.github.aftrolle.ffmpegkmp.ffmpeg/FFmpegCommand|null[0]
+    final val arguments // io.github.aftrolle.ffmpegkmp.ffmpeg/FFmpegCommand.arguments|{}arguments[0]
+        final fun <get-arguments>(): kotlin.collections/List<kotlin/String> // io.github.aftrolle.ffmpegkmp.ffmpeg/FFmpegCommand.arguments.<get-arguments>|<get-arguments>(){}[0]
+
+    final class Builder { // io.github.aftrolle.ffmpegkmp.ffmpeg/FFmpegCommand.Builder|null[0]
+        constructor <init>() // io.github.aftrolle.ffmpegkmp.ffmpeg/FFmpegCommand.Builder.<init>|<init>(){}[0]
+
+        final fun argument(kotlin/String) // io.github.aftrolle.ffmpegkmp.ffmpeg/FFmpegCommand.Builder.argument|argument(kotlin.String){}[0]
+        final fun arguments(kotlin/Array<out kotlin/String>...) // io.github.aftrolle.ffmpegkmp.ffmpeg/FFmpegCommand.Builder.arguments|arguments(kotlin.Array<out|kotlin.String>...){}[0]
+        final fun audioBitrate(kotlin/String, kotlin/Int? = ...) // io.github.aftrolle.ffmpegkmp.ffmpeg/FFmpegCommand.Builder.audioBitrate|audioBitrate(kotlin.String;kotlin.Int?){}[0]
+        final fun audioChannels(kotlin/Int, kotlin/Int? = ...) // io.github.aftrolle.ffmpegkmp.ffmpeg/FFmpegCommand.Builder.audioChannels|audioChannels(kotlin.Int;kotlin.Int?){}[0]
+        final fun audioCodec(kotlin/String, kotlin/String? = ...) // io.github.aftrolle.ffmpegkmp.ffmpeg/FFmpegCommand.Builder.audioCodec|audioCodec(kotlin.String;kotlin.String?){}[0]
+        final fun audioFilter(kotlin/String) // io.github.aftrolle.ffmpegkmp.ffmpeg/FFmpegCommand.Builder.audioFilter|audioFilter(kotlin.String){}[0]
+        final fun audioLevel(io.github.aftrolle.ffmpegkmp.core/AudioLevel, kotlin/Int? = ...) // io.github.aftrolle.ffmpegkmp.ffmpeg/FFmpegCommand.Builder.audioLevel|audioLevel(io.github.aftrolle.ffmpegkmp.core.AudioLevel;kotlin.Int?){}[0]
+        final fun audioSampleRate(kotlin/Int, kotlin/Int? = ...) // io.github.aftrolle.ffmpegkmp.ffmpeg/FFmpegCommand.Builder.audioSampleRate|audioSampleRate(kotlin.Int;kotlin.Int?){}[0]
+        final fun codec(kotlin/String, kotlin/String? = ...) // io.github.aftrolle.ffmpegkmp.ffmpeg/FFmpegCommand.Builder.codec|codec(kotlin.String;kotlin.String?){}[0]
+        final fun complexFilter(kotlin/String) // io.github.aftrolle.ffmpegkmp.ffmpeg/FFmpegCommand.Builder.complexFilter|complexFilter(kotlin.String){}[0]
+        final fun disableAudio() // io.github.aftrolle.ffmpegkmp.ffmpeg/FFmpegCommand.Builder.disableAudio|disableAudio(){}[0]
+        final fun flag(kotlin/String) // io.github.aftrolle.ffmpegkmp.ffmpeg/FFmpegCommand.Builder.flag|flag(kotlin.String){}[0]
+        final fun input(kotlin/String, kotlin/String? = ...) // io.github.aftrolle.ffmpegkmp.ffmpeg/FFmpegCommand.Builder.input|input(kotlin.String;kotlin.String?){}[0]
+        final fun map(kotlin/String) // io.github.aftrolle.ffmpegkmp.ffmpeg/FFmpegCommand.Builder.map|map(kotlin.String){}[0]
+        final fun mapAudio(kotlin/Int = ..., kotlin/Int? = ..., kotlin/Boolean = ...) // io.github.aftrolle.ffmpegkmp.ffmpeg/FFmpegCommand.Builder.mapAudio|mapAudio(kotlin.Int;kotlin.Int?;kotlin.Boolean){}[0]
+        final fun metadata(kotlin/String, kotlin/String, kotlin/String? = ...) // io.github.aftrolle.ffmpegkmp.ffmpeg/FFmpegCommand.Builder.metadata|metadata(kotlin.String;kotlin.String;kotlin.String?){}[0]
+        final fun option(kotlin/String, kotlin/String) // io.github.aftrolle.ffmpegkmp.ffmpeg/FFmpegCommand.Builder.option|option(kotlin.String;kotlin.String){}[0]
+        final fun output(kotlin/String, kotlin/String? = ...) // io.github.aftrolle.ffmpegkmp.ffmpeg/FFmpegCommand.Builder.output|output(kotlin.String;kotlin.String?){}[0]
+        final fun overwrite(kotlin/Boolean = ...) // io.github.aftrolle.ffmpegkmp.ffmpeg/FFmpegCommand.Builder.overwrite|overwrite(kotlin.Boolean){}[0]
+        final fun videoCodec(kotlin/String, kotlin/String? = ...) // io.github.aftrolle.ffmpegkmp.ffmpeg/FFmpegCommand.Builder.videoCodec|videoCodec(kotlin.String;kotlin.String?){}[0]
+        final fun videoFilter(kotlin/String) // io.github.aftrolle.ffmpegkmp.ffmpeg/FFmpegCommand.Builder.videoFilter|videoFilter(kotlin.String){}[0]
+    }
+
+    final object Companion { // io.github.aftrolle.ffmpegkmp.ffmpeg/FFmpegCommand.Companion|null[0]
+        final fun invoke(kotlin/Function1<io.github.aftrolle.ffmpegkmp.ffmpeg/FFmpegCommand.Builder, kotlin/Unit>): io.github.aftrolle.ffmpegkmp.ffmpeg/FFmpegCommand // io.github.aftrolle.ffmpegkmp.ffmpeg/FFmpegCommand.Companion.invoke|invoke(kotlin.Function1<io.github.aftrolle.ffmpegkmp.ffmpeg.FFmpegCommand.Builder,kotlin.Unit>){}[0]
+    }
+}
+
+final fun (io.github.aftrolle.ffmpegkmp.core/AudioLevel).io.github.aftrolle.ffmpegkmp.ffmpeg/toFilter(): kotlin/String // io.github.aftrolle.ffmpegkmp.ffmpeg/toFilter|toFilter@io.github.aftrolle.ffmpegkmp.core.AudioLevel(){}[0]

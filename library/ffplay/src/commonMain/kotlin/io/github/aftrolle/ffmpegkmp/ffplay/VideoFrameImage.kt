@@ -60,9 +60,10 @@ internal interface GpuFrameWraps : AutoCloseable {
 
     /**
      * A new image of [frame]'s whole buffer, which shows the frame while it is open, without a copy.
-     * It stays valid until two more have been made, and is closed with the wraps.
+     * It stays valid until two more have been made, and is closed with the wraps. With [toneMap], a
+     * PQ or HLG frame is drawn tone mapped on an SDR canvas instead of as linear light.
      */
-    fun wrap(frame: VideoFrame): GpuImage
+    fun wrap(frame: VideoFrame, toneMap: SdrToneMap? = null): GpuImage
 }
 
 /**
@@ -70,7 +71,7 @@ internal interface GpuFrameWraps : AutoCloseable {
  * [ColorTransfer.HLG] ones are the signal's codes as they are, which [drawCodedImage] turns into
  * light, and any other is a plain image.
  */
-internal class GpuImage(val image: ImageBitmap, val transfer: ColorTransfer)
+internal class GpuImage(val image: ImageBitmap, val transfer: ColorTransfer, val toneMap: SdrToneMap? = null)
 
 /** Android's `HardwareBuffer` wraps; elsewhere no frame lies in GPU memory, and wrapping fails. */
 internal expect fun gpuFrameWraps(): GpuFrameWraps
@@ -81,7 +82,8 @@ internal expect fun DrawScope.checkDrawsGpuImages()
 /**
  * Draws [source] of a [GpuImage] whose [transfer] is PQ or HLG, as [drawUpright] draws a plain one
  * into [dstSize] at [dstOffset], as linear light on the canvas's scale, 1.0 at 203 nits, which a canvas
- * that holds values above 1.0 shows in full.
+ * that holds values above 1.0 shows in full; with [toneMap], tone mapped to sRGB as the CPU converter
+ * does, for an SDR canvas.
  */
 internal expect fun DrawScope.drawCodedImage(
     image: ImageBitmap,
@@ -89,6 +91,7 @@ internal expect fun DrawScope.drawCodedImage(
     dstOffset: IntOffset,
     dstSize: IntSize,
     transfer: ColorTransfer,
+    toneMap: SdrToneMap?,
 )
 
 /**

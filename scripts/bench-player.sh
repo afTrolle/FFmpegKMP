@@ -12,7 +12,12 @@
 # The audio mode adds an AAC track to the clips and opens the audio engine (native-build/bridge/ffmpegkmp_player.c) after
 # each prepare, with and without the player's input hint.
 #
-#   scripts/bench-player.sh [transitions|parallel|audio|all]
+# The pacing mode plays the 1080p and 2160p clips in real time into an output that only counts, at 1, 2, 4 and 8 decoder
+# threads and the automatic count (0), and prints per run the frames presented and dropped, how late they reached the
+# output against the player's schedule (median, p95, max), how evenly they came, and the peak RSS. It is the quick
+# regression check for the player's frame timing; it is not part of "all".
+#
+#   scripts/bench-player.sh [transitions|parallel|audio|pacing|all]
 set -euo pipefail
 
 root="$(cd "$(dirname "$0")/.." && pwd)"
@@ -63,6 +68,14 @@ fi
 if [[ "$mode" == audio || "$mode" == all ]]; then
   for clip in h264-1080p-aac.mp4 h264-2160p-10s-aac.mp4 hevc-2160p-pq-10s-aac.mp4 h264-2160p-10s-aac.ts; do
     run audio "$clip" SOFTWARE
+  done
+fi
+if [[ "$mode" == pacing ]]; then
+  # Each run in a process of its own, so its peak RSS is its own.
+  for clip in h264-1080p.mp4 h264-2160p-10s.mp4 hevc-2160p-pq-10s.mp4; do
+    for threads in 0 1 2 4 8; do
+      run pacing "$clip" SOFTWARE "$threads" 10
+    done
   done
 fi
 if [[ "$mode" == parallel || "$mode" == all ]]; then

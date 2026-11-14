@@ -51,9 +51,9 @@ The root task selects a profile with `-Pffmpegkmp.profile=min`, `standard`, or
 `buildFfmpegStandardWasm32`.
 
 Use `-Pffmpegkmp.jobs=<count>` to limit native make parallelism. Android uses
-NDK `30.0.15729638` (r30 beta 2) by default. Override its location with
+NDK `30.0.16248370` (r30) by default. Override its location with
 `-Pffmpegkmp.android.ndkDir=/absolute/path/to/ndk` when it is not installed
-under the Android SDK's normal `ndk/30.0.15729638` directory.
+under the Android SDK's normal `ndk/30.0.16248370` directory.
 
 ## Profiles and configuration
 
@@ -145,7 +145,7 @@ ignored outputs rather than Maven publications.
 ### Android
 
 Android builds API 24 shared `libav*.so` libraries for `armeabi-v7a`,
-`arm64-v8a`, `x86`, and `x86_64` with NDK `30.0.15729638` (r30 beta 2).
+`arm64-v8a`, `x86`, and `x86_64` with NDK `30.0.16248370` (r30).
 `standard` and `full` enable
 JNI and MediaCodec decode and encode; `min` explicitly disables both.
 

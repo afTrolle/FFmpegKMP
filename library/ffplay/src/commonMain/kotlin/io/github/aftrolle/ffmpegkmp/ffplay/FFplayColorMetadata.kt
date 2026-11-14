@@ -5,8 +5,8 @@ import io.github.aftrolle.ffmpegkmp.codec.ColorPrimaries
 import io.github.aftrolle.ffmpegkmp.codec.VideoInfo
 
 internal data class FFplayColorDecision(
-    val sourceColorSpace: ColorPrimaries?,
-    val outputColorSpace: ColorPrimaries?,
+    val sourcePrimaries: ColorPrimaries?,
+    val outputPrimaries: ColorPrimaries?,
     val hdrResult: FFplayHdrResult,
 )
 
@@ -16,18 +16,18 @@ internal fun decideColorOutput(
     policy: FFplayHdrPolicy,
 ): FFplayColorDecision {
     if (video == null) return FFplayColorDecision(null, null, FFplayHdrResult.NOT_HDR)
-    val sourceColorSpace = video.color.primaries
+    val sourcePrimaries = video.color.primaries
     if (!video.color.isHdr) {
-        val output = sourceColorSpace.takeIf(capabilities.colorSpaces::contains) ?: ColorPrimaries.BT709
-        return FFplayColorDecision(sourceColorSpace, output, FFplayHdrResult.NOT_HDR)
+        val output = sourcePrimaries.takeIf(capabilities.colorSpaces::contains) ?: ColorPrimaries.BT709
+        return FFplayColorDecision(sourcePrimaries, output, FFplayHdrResult.NOT_HDR)
     }
     val preservesTransfer = video.color.transfer in capabilities.hdrTransfers
-    val preservesColorSpace = sourceColorSpace in capabilities.colorSpaces
+    val preservesColorSpace = sourcePrimaries in capabilities.colorSpaces
     return when {
         policy == FFplayHdrPolicy.PRESERVE_OR_TONE_MAP && preservesTransfer && preservesColorSpace ->
-            FFplayColorDecision(sourceColorSpace, sourceColorSpace, FFplayHdrResult.PRESERVED)
+            FFplayColorDecision(sourcePrimaries, sourcePrimaries, FFplayHdrResult.PRESERVED)
         capabilities.toneMapHdrToSdr ->
-            FFplayColorDecision(sourceColorSpace, ColorPrimaries.BT709, FFplayHdrResult.TONE_MAPPED)
-        else -> FFplayColorDecision(sourceColorSpace, ColorPrimaries.BT709, FFplayHdrResult.UNSUPPORTED)
+            FFplayColorDecision(sourcePrimaries, ColorPrimaries.BT709, FFplayHdrResult.TONE_MAPPED)
+        else -> FFplayColorDecision(sourcePrimaries, ColorPrimaries.BT709, FFplayHdrResult.UNSUPPORTED)
     }
 }

@@ -17,12 +17,13 @@ import io.github.aftrolle.ffmpegkmp.bindings.generated.bridge.ffplaykmp_state_ca
 import io.github.aftrolle.ffmpegkmp.bindings.generated.bridge.ffplaykmp_video_frame
 import io.github.aftrolle.ffmpegkmp.bindings.generated.bridge.ffplaykmp_video_frame_callback
 import io.github.aftrolle.ffmpegkmp.bindings.generated.bridge.global.bridge
+import org.bytedeco.javacpp.BytePointer
 import org.bytedeco.javacpp.Pointer
 
 internal fun createJavaCppPlayerBridge(
     configuration: NativePlayerConfiguration,
     update: (NativePlayerSnapshot) -> Unit,
-    frame: (NativeVideoFrame) -> Unit,
+    frame: NativeVideoFrameSink,
     platformFrame: (NativePlatformVideoFrame) -> Boolean = { false },
     platformOutputTarget: (ffplaykmp_player, Any?, Boolean) -> Int = { _, target, _ ->
         if (target == null) 0 else NativePlayerError.UNSUPPORTED
@@ -40,7 +41,7 @@ private class JavaCppPlayerEngine(
     guard: NativeHandleGuard,
     configuration: NativePlayerConfiguration,
     private val update: (NativePlayerSnapshot) -> Unit,
-    private val frame: (NativeVideoFrame) -> Unit,
+    private val frame: NativeVideoFrameSink,
     private val platformFrame: (NativePlatformVideoFrame) -> Boolean,
     private val platformOutputTarget: (ffplaykmp_player, Any?, Boolean) -> Int,
 ) : PlayerEngineCalls {
@@ -60,21 +61,33 @@ private class JavaCppPlayerEngine(
             }
         }
         frameCallback = object : ffplaykmp_video_frame_callback() {
-            override fun call(opaque: Pointer?, nativeFrame: ffplaykmp_video_frame?) {
-                if (nativeFrame == null || !guard.isOpen) return
-                // The frame is borrowed for the callback; the receiver gets a reference of its own.
-                val retained = nativeFrame.frame()?.takeUnless(ffmpegkmp_frame::isNull)
-                    ?.let(bridge::ffmpegkmp_frame_ref)
-                    .toNativeFrame() ?: return
-                frame(
-                    NativeVideoFrame(
-                        frame = retained,
-                        width = nativeFrame.width(),
-                        height = nativeFrame.height(),
-                        presentationTimeUs = nativeFrame.presentation_time_us(),
-                        queueSerial = nativeFrame.queue_serial().toUInt(),
-                    ),
-                )
+            override fun call(opaque: Pointer?, nativeFrame: ffplaykmp_video_frame?): Int {
+                if (nativeFrame == null) return 0
+                // A throw would abort the process from the player's thread, as it does on Kotlin/Native.
+                return runCatching {
+                    dispatchVideoFrame(
+                        frame,
+                        nativeFrame.event(),
+                        nativeFrame.token(),
+                        guard.isOpen,
+                        nativeFrame.display_time_us(),
+                    ) {
+                        // The frame is borrowed for the callback; the receiver gets a reference of its own.
+                        nativeFrame.frame()?.takeUnless(ffmpegkmp_frame::isNull)
+                            ?.let(bridge::ffmpegkmp_frame_ref)
+                            .toNativeFrame()
+                            ?.let { retained ->
+                                NativeVideoFrame(
+                                    frame = retained,
+                                    width = nativeFrame.width(),
+                                    height = nativeFrame.height(),
+                                    presentationTimeUs = nativeFrame.presentation_time_us(),
+                                    queueSerial = nativeFrame.queue_serial().toUInt(),
+                                    token = nativeFrame.token(),
+                                )
+                            }
+                    }
+                }.getOrDefault(0)
             }
         }
         platformFrameCallback = object : ffplaykmp_platform_video_frame_callback() {
@@ -105,8 +118,20 @@ private class JavaCppPlayerEngine(
         bridge.ffplaykmp_configuration_default(nativeConfiguration)
         nativeConfiguration.decoder_preference(configuration.decoderPreference.ordinal)
         nativeConfiguration.decoder_threads(configuration.decoderThreads)
+        nativeConfiguration.decoder_thread_type(configuration.decoderThreadType)
         nativeConfiguration.codec_release_delay_us(configuration.codecReleaseDelayUs)
-        player = bridge.ffplaykmp_player_create(nativeConfiguration, stateCallback, null)
+        nativeConfiguration.frame_queue_size(configuration.frameQueueSize)
+        nativeConfiguration.catch_up_lag_us(configuration.catchUpLagUs)
+        // Kept until the call returns: the player copies the name and the options it keeps.
+        val decoderName = configuration.decoderName?.let { BytePointer(it, Charsets.UTF_8) }
+        val decoderOptions = packCodecOptions(configuration.decoderOptions)
+            .takeIf(ByteArray::isNotEmpty)?.let { BytePointer(*it) }
+        decoderName?.let(nativeConfiguration::decoder_name)
+        decoderOptions?.let { nativeConfiguration.decoder_options(it).decoder_options_size(it.capacity().toInt()) }
+        val created = bridge.ffplaykmp_player_create(nativeConfiguration, stateCallback, null)
+        decoderName?.close()
+        decoderOptions?.close()
+        player = created
             ?: run {
                 nativeConfiguration.close()
                 ioCallback.close()
@@ -158,6 +183,10 @@ private class JavaCppPlayerEngine(
     override fun stop(): Int = bridge.ffplaykmp_player_stop(player)
     override fun cancel() = bridge.ffplaykmp_player_cancel(player)
     override fun setMasterClock(mediaTimeUs: Long) = bridge.ffplaykmp_player_set_master_clock(player, mediaTimeUs)
+    override fun refresh(nowUs: Long, leadUs: Long): Long = bridge.ffplaykmp_player_refresh(player, nowUs, leadUs)
+    override fun refreshAt(nowUs: Long, leadUs: Long, positionNs: Long): Long =
+        bridge.ffplaykmp_player_refresh_at(player, nowUs, leadUs, positionNs)
+    override fun clockNowUs(): Long = bridge.ffplaykmp_clock_now_us()
 
     override fun snapshot(): NativePlayerSnapshot {
         val nativeSnapshot = ffplaykmp_snapshot()
@@ -210,6 +239,7 @@ internal fun ffplaykmp_snapshot.toNativeSnapshot(): NativePlayerSnapshot = nativ
     videoHeight = video_height(),
     activeDecoder = active_decoder(),
     droppedFrames = dropped_frames(),
+    catchUps = catch_ups(),
     pixelFormat = pixel_format(),
     pixelFormatName = bridge.ffplaykmp_pixel_format_name(pixel_format())?.getString(),
     bitDepth = bit_depth(),
@@ -235,6 +265,7 @@ internal fun ffplaykmp_snapshot.toNativeSnapshot(): NativePlayerSnapshot = nativ
     maxContentLightLevel = max_content_light_level(),
     maxFrameAverageLightLevel = max_frame_average_light_level(),
     decoderFallback = decoder_fallback(),
+    errorMessage = error_message().string,
 )
 
 @InternalFFmpegKmpApi

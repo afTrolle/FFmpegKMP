@@ -18,7 +18,10 @@ import io.github.aftrolle.ffmpegkmp.player.AudioMixControls
 import io.github.aftrolle.ffmpegkmp.player.AudioPlayer
 import io.github.aftrolle.ffmpegkmp.player.PlaybackState
 import io.github.aftrolle.ffmpegkmp.player.setLevel
+import kotlin.concurrent.atomics.AtomicBoolean
+import kotlin.concurrent.atomics.AtomicInt
 import kotlin.concurrent.atomics.AtomicReference
+import kotlin.concurrent.atomics.incrementAndFetch
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.TimeMark
@@ -68,6 +71,18 @@ internal class FFplayAudio(
     private val pendingSeek = AtomicReference<PendingSeek?>(null)
     private var clockJob: Job? = null
 
+    /**
+     * While a followed clock drives the audio ([follow]) instead of the engine's transitions; the
+     * follower's state, touched only by the one coroutine that follows, and by [stopFollowing].
+     */
+    private val followingClock = AtomicBoolean(false)
+    private var followPlaying = false
+    private var followSeekFrameTime: Duration? = null
+
+    /** Audible positions reported since the audio's last seek, while it plays: the audio has settled once there are two. */
+    private val positionsSinceSeek = AtomicInt(0)
+    private var lastReported: Duration? = null
+
     /** Opens audio for [source] without attaching it; failures become warnings. */
     suspend fun load(source: MediaSource): FFplayAudioOutput? {
         val opened = try {
@@ -94,12 +109,19 @@ internal class FFplayAudio(
         current.store(audio)
         applyLatest({ masterLevel.value }, audio::setLevel)
         mutableMix.value = SourceMix(audio)
+        lastReported = null
         clockJob = scope.launch {
             combine(audio.state, audio.position) { state, position -> state to position }
-                .collect { (state, position) -> if (state == PlaybackState.PLAYING) reportClock(position) }
+                .collect { (state, position) ->
+                    if (state != PlaybackState.PLAYING) return@collect
+                    if (position != lastReported) positionsSinceSeek.incrementAndFetch()
+                    lastReported = position
+                    reportClock(position)
+                }
         }
         lastEngineState.store(null)
-        followEngine(snapshot)
+        followPlaying = false
+        if (!followingClock.load()) followEngine(snapshot)
     }
 
     /**
@@ -108,6 +130,7 @@ internal class FFplayAudio(
      */
     fun followEngine(snapshot: FFplaySnapshot) {
         val audio = current.load() ?: return
+        if (followingClock.load()) return
         val previous = lastEngineState.exchange(snapshot.state)
         if (previous == snapshot.state) return
         when (snapshot.state) {
@@ -135,6 +158,67 @@ internal class FFplayAudio(
         return position.inWholeMicroseconds
     }
 
+    /** Hands the audio to a followed clock ([follow]) instead of the engine's transitions; paused until the clock says. */
+    fun startFollowing() {
+        if (followingClock.exchange(true)) return
+        followPlaying = false
+        followSeekFrameTime = null
+        current.load()?.pause()
+    }
+
+    /** Hands the audio back to the engine's transitions, bringing it to [snapshot]. */
+    fun stopFollowing(snapshot: FFplaySnapshot) {
+        if (!followingClock.exchange(false)) return
+        followPlaying = false
+        lastEngineState.store(null)
+        followEngine(snapshot)
+    }
+
+    /**
+     * Moves the audio with a followed clock's [sample], from the one coroutine that follows. It
+     * starts, from the clock's position, once the clock is [audible] (advancing at about real time,
+     * inside the clip), pauses once it is not, and keeps doing what it does while that is not known
+     * yet (null), as right after a jump. A [jumped] clock seeks audio that plays. Audio that drifted
+     * more than [FOLLOW_DRIFT] from the clock is sought back to it, but only once it has played on
+     * from its last seek and [FOLLOW_RESYNC_COOLDOWN] of frame time after it, so a seek still landing,
+     * or an output slow to start, is not sought again.
+     */
+    fun follow(sample: FFplayClockSample, audible: Boolean?, jumped: Boolean) {
+        val audio = current.load() ?: return
+        if (!followingClock.load()) return
+        if (audible == false) {
+            if (followPlaying) {
+                followPlaying = false
+                audio.pause()
+            }
+            return
+        }
+        if (!followPlaying) {
+            if (audible == true) {
+                followPlaying = true
+                followSeek(audio, sample)
+                audio.play()
+            }
+            return
+        }
+        if (jumped) return followSeek(audio, sample)
+        val settled = positionsSinceSeek.load() >= 2
+        val cooled = followSeekFrameTime?.let { sample.frameTime - it >= FOLLOW_RESYNC_COOLDOWN } ?: true
+        if (settled && cooled && (audio.position.value - sample.position).absoluteValue > FOLLOW_DRIFT) followSeek(audio, sample)
+    }
+
+    /** No sample for [FOLLOW_AUDIO_WATCHDOG]: the clock is not being asked, so nothing is being shown either. */
+    fun followLost() {
+        if (!followingClock.load() || !followPlaying) return
+        followPlaying = false
+        current.load()?.pause()
+    }
+
+    private fun followSeek(audio: FFplayAudioOutput, sample: FFplayClockSample) {
+        followSeekFrameTime = sample.frameTime
+        seekAudio(audio, sample.position)
+    }
+
     /** Releases the source's audio; the master level carries over to the next source. */
     fun close() {
         clockJob?.cancel()
@@ -146,6 +230,7 @@ internal class FFplayAudio(
 
     private fun seekAudio(audio: FFplayAudioOutput, position: Duration) {
         pendingSeek.store(PendingSeek(position, TimeSource.Monotonic.markNow()))
+        positionsSinceSeek.store(0)
         audio.seekTo(position)
     }
 
@@ -167,6 +252,12 @@ internal class FFplayAudio(
         /** Right after a seek the audio reports the target itself; much further away is stale. */
         val SEEK_WINDOW = 250.milliseconds
         val SEEK_TIMEOUT = 1_000.milliseconds
+
+        /** How far audio may drift from a followed clock before it is sought back: about where lip sync is noticed. */
+        val FOLLOW_DRIFT = 100.milliseconds
+
+        /** How long, in the clock's frame time, the audio plays on from a seek before it may be sought back to the clock again. */
+        val FOLLOW_RESYNC_COOLDOWN = 1_000.milliseconds
     }
 }
 

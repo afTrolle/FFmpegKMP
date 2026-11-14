@@ -23,12 +23,9 @@
 /* How far before a target a re-seek starts when the first seek landed after it. */
 #define FFMPEGKMP_SEEK_BACKOFF_NS 1000000000LL
 #define FFMPEGKMP_SEEK_ATTEMPTS 8
-/* How long MediaCodec waits on a codec that neither takes input nor outputs a frame before
- * returning EAGAIN, so the decode loop gets to check its deadline and abort (FFmpegKMP's FFmpeg
- * overlay). */
-#define FFMPEGKMP_MEDIACODEC_WAIT_US "50000"
-/* Frames a decoder's pool holds per layout and size: the caller's, the one decoded ahead, and one so the
- * caller can keep the previous frame while taking the next. A fourth waits for one of them to close. */
+/* Frames a decoder's pool holds per layout and size unless set_frame_ring says otherwise: the caller's, the
+ * one decoded ahead, and one so the caller can keep the previous frame while taking the next. One more
+ * waits for one of them to close. */
 #define FFMPEGKMP_DECODER_RING 3
 
 struct ffmpegkmp_video_decoder {
@@ -36,6 +33,14 @@ struct ffmpegkmp_video_decoder {
     int32_t output;
     int32_t preference;
     int32_t threads;
+    /* FF_THREAD_FRAME and FF_THREAD_SLICE bits; 0, FFmpeg's default of both, unless set_thread_type says otherwise. */
+    int32_t thread_type;
+    /* The decoder to open by FFmpeg's name, alone, and its packed AVOptions; NULL for `preference`'s. */
+    char *decoder_name;
+    char *decoder_options;
+    int32_t decoder_options_size;
+    /* Why a named decoder did not open; empty otherwise. */
+    char error[256];
     ffplaykmp_io_host host;
     ffplaykmp_input input;
     ffplaykmp_video_codec codec;
@@ -216,7 +221,7 @@ static int ffmpegkmp_decode_next(ffmpegkmp_video_decoder *decoder, AVFrame *fram
                 ffmpegkmp_discard(frame);
                 continue;
             }
-            if (decoder->preference == FFPLAYKMP_DECODER_REQUIRE_HARDWARE &&
+            if (!decoder->decoder_name && decoder->preference == FFPLAYKMP_DECODER_REQUIRE_HARDWARE &&
                     !ffplaykmp_video_codec_frame_is_hardware(&decoder->codec, frame)) {
                 ffmpegkmp_discard(frame);
                 return FFPLAYKMP_ERROR_UNSUPPORTED;
@@ -316,7 +321,7 @@ static int ffmpegkmp_covers(const ffmpegkmp_video_decoder *decoder, int64_t targ
 
 static int ffmpegkmp_advance_to(ffmpegkmp_video_decoder *decoder, int64_t target) {
     int result = 0;
-    while (result >= 0 && decoder->has_next && decoder->next->pts <= target)
+    while (result >= 0 && decoder->has_next && ffplaykmp_frame_reached(decoder->next->pts, target))
         result = ffmpegkmp_shift(decoder);
     return result;
 }
@@ -372,10 +377,7 @@ static int ffmpegkmp_seek_is_shorter(const ffmpegkmp_video_decoder *decoder, int
 }
 
 static int64_t ffmpegkmp_stream_time(const ffmpegkmp_video_decoder *decoder, int64_t position_ns) {
-    int64_t offset = av_rescale_q_rnd(
-            position_ns, FFMPEGKMP_NANOSECONDS, decoder->time_base,
-            AV_ROUND_NEAR_INF | AV_ROUND_PASS_MINMAX);
-    return decoder->origin > 0 && offset > INT64_MAX - decoder->origin ? INT64_MAX : decoder->origin + offset;
+    return ffplaykmp_stream_time(decoder->origin, decoder->time_base, position_ns);
 }
 
 static int ffmpegkmp_position(ffmpegkmp_video_decoder *decoder, int64_t position_ns, int seek) {
@@ -616,6 +618,7 @@ ffmpegkmp_video_decoder *ffmpegkmp_video_decoder_create(
     }
     decoder->preference = decoder_preference;
     decoder->threads = decoder_threads;
+    decoder->thread_type = 0;
     decoder->host.callback = io_callback;
     decoder->host.opaque = io_opaque;
     decoder->host.interrupted = ffmpegkmp_decoder_interrupted;
@@ -628,7 +631,7 @@ ffmpegkmp_video_decoder *ffmpegkmp_video_decoder_create(
     decoder->current = av_frame_alloc();
     decoder->next = av_frame_alloc();
     /* One video's threads are a budget: the converter works within the decoder's count. */
-    decoder->converter = ffmpegkmp_converter_alloc(ffplaykmp_decoder_thread_count(decoder_threads));
+    decoder->converter = ffmpegkmp_converter_alloc(decoder_threads);
     decoder->pool = ffmpegkmp_frame_pool_alloc(FFMPEGKMP_DECODER_RING);
     if (!decoder->packet || !decoder->current || !decoder->next || !decoder->converter || !decoder->pool) {
         ffmpegkmp_video_decoder_destroy(decoder);
@@ -662,15 +665,87 @@ int ffmpegkmp_video_decoder_set_android_surface(
 }
 #endif
 
-/*
- * Opens the decoder `preference` asks for. Under AUTO, one the hardware
- * decoder budget has no place for opens in software instead. Records why a
- * wanted hardware decoder is not the one open, as a player reports it.
- */
-static int ffmpegkmp_open_codec(ffmpegkmp_video_decoder *decoder, int preference) {
+int ffmpegkmp_video_decoder_set_thread_type(ffmpegkmp_video_decoder *decoder, int32_t thread_type) {
+    if (!decoder || thread_type <= 0 || (thread_type & ~(FF_THREAD_FRAME | FF_THREAD_SLICE)))
+        return FFPLAYKMP_ERROR_INVALID_ARGUMENT;
+    if (decoder->started || decoder->input.format)
+        return FFPLAYKMP_ERROR_INVALID_STATE;
+    decoder->thread_type = thread_type;
+    return 0;
+}
+
+int ffmpegkmp_video_decoder_set_frame_ring(ffmpegkmp_video_decoder *decoder, int32_t frames) {
+    ffmpegkmp_frame_pool *pool;
+    if (!decoder || frames < 2)
+        return FFPLAYKMP_ERROR_INVALID_ARGUMENT;
+    if (decoder->started || decoder->input.format)
+        return FFPLAYKMP_ERROR_INVALID_STATE;
+    if (!(pool = ffmpegkmp_frame_pool_alloc(frames)))
+        return AVERROR(ENOMEM);
+    ffmpegkmp_frame_pool_free(decoder->pool);
+    decoder->pool = pool;
+    return 0;
+}
+
+int ffmpegkmp_video_decoder_set_named_decoder(
+        ffmpegkmp_video_decoder *decoder,
+        const char *name,
+        const char *options,
+        int32_t options_size) {
+    char *kept_name;
+    char *kept_options = NULL;
+    int result;
+    if (!decoder || !name || !*name)
+        return FFPLAYKMP_ERROR_INVALID_ARGUMENT;
+    if (decoder->started || decoder->input.format)
+        return FFPLAYKMP_ERROR_INVALID_STATE;
+    if ((result = ffmpegkmp_codec_options_check(options, options_size, decoder->error, sizeof(decoder->error))) < 0)
+        return result;
+    if (!(kept_name = av_strdup(name)) ||
+            (options_size > 0 && !(kept_options = av_memdup(options, options_size)))) {
+        av_free(kept_name);
+        return AVERROR(ENOMEM);
+    }
+    av_free(decoder->decoder_name);
+    av_free(decoder->decoder_options);
+    decoder->decoder_name = kept_name;
+    decoder->decoder_options = kept_options;
+    decoder->decoder_options_size = options_size > 0 ? options_size : 0;
+    return 0;
+}
+
+const char *ffmpegkmp_video_decoder_error(const ffmpegkmp_video_decoder *decoder) {
+    return decoder ? decoder->error : "";
+}
+
+/* Opens the decoder named at creation, alone: no fallback, and the reason in `error` when it does not open. */
+static int ffmpegkmp_open_named_codec(ffmpegkmp_video_decoder *decoder) {
     void *surface = NULL;
-    AVDictionary *options = NULL;
-    int hardware = preference != FFPLAYKMP_DECODER_SOFTWARE;
+    AVDictionary *hardware_options = NULL;
+    int result;
+#if defined(__ANDROID__)
+    if (decoder->output == FFMPEGKMP_VIDEO_OUTPUT_SURFACE)
+        surface = decoder->android_surface;
+#endif
+    if ((result = ffplaykmp_mediacodec_wait_options(&hardware_options)) < 0)
+        return result;
+    result = ffplaykmp_video_codec_open_named(
+            &decoder->codec, decoder->input.format, decoder->stream_index, decoder->decoder_name,
+            decoder->decoder_options, decoder->decoder_options_size, decoder->threads, decoder->thread_type,
+            surface, hardware_options, decoder->error, sizeof(decoder->error));
+    av_dict_free(&hardware_options);
+    return result;
+}
+
+/*
+ * Opens the decoder the preference asks for, as ffplaykmp_video_codec_open_preferred falls back;
+ * `earlier` is FAILED for the software retry after a hardware decoder failed to decode. Records
+ * why a wanted hardware decoder is not the one open, as a player reports it.
+ */
+static int ffmpegkmp_open_codec(ffmpegkmp_video_decoder *decoder, ffplaykmp_decoder_fallback earlier) {
+    void *surface = NULL;
+    AVDictionary *hardware_options = NULL;
+    int hardware_wanted = 1;
     int result;
 #if defined(__ANDROID__)
     /* MediaCodec renders into the Surface, or for MEMORY output decodes into memory (ByteBuffer
@@ -679,21 +754,17 @@ static int ffmpegkmp_open_codec(ffmpegkmp_video_decoder *decoder, int preference
     if (decoder->output == FFMPEGKMP_VIDEO_OUTPUT_SURFACE)
         surface = decoder->android_surface;
     else if (decoder->info.bit_depth > 8)
-        hardware = 0;
-    if (hardware &&
-            (result = av_dict_set(&options, "ffmpegkmp_wait_timeout", FFMPEGKMP_MEDIACODEC_WAIT_US, 0)) < 0)
-        return result;
+        hardware_wanted = 0;
 #endif
-    result = ffplaykmp_video_codec_open(
-            &decoder->codec, decoder->input.format, decoder->stream_index, hardware,
-            preference == FFPLAYKMP_DECODER_REQUIRE_HARDWARE, decoder->threads, FF_THREAD_SLICE, surface, &options);
-    av_dict_free(&options);
-    if (result == FFPLAYKMP_ERROR_BUSY && preference == FFPLAYKMP_DECODER_AUTO) {
-        ffplaykmp_video_codec_close(&decoder->codec);
-        decoder->info.decoder_fallback = FFPLAYKMP_DECODER_FALLBACK_BUDGET;
-        return ffmpegkmp_open_codec(decoder, FFPLAYKMP_DECODER_SOFTWARE);
-    }
-    if (result >= 0 && preference == FFPLAYKMP_DECODER_AUTO && !decoder->codec.hardware)
+    if ((result = ffplaykmp_mediacodec_wait_options(&hardware_options)) < 0)
+        return result;
+    result = ffplaykmp_video_codec_open_preferred(
+            &decoder->codec, decoder->input.format, decoder->stream_index, decoder->preference,
+            hardware_wanted, earlier, decoder->threads, decoder->thread_type, surface, hardware_options,
+            &decoder->info.decoder_fallback);
+    av_dict_free(&hardware_options);
+    /* A deep source in memory is a host without a hardware decoder for it, as AUTO reports it. */
+    if (result >= 0 && !hardware_wanted && decoder->preference == FFPLAYKMP_DECODER_AUTO)
         decoder->info.decoder_fallback = FFPLAYKMP_DECODER_FALLBACK_UNSUPPORTED;
     return result;
 }
@@ -712,10 +783,12 @@ int ffmpegkmp_video_decoder_start(ffmpegkmp_video_decoder *decoder) {
         return result;
     result = ffmpegkmp_open_stream(decoder);
     if (result >= 0)
-        result = ffmpegkmp_open_codec(decoder, decoder->preference);
+        result = decoder->decoder_name
+                ? ffmpegkmp_open_named_codec(decoder)
+                : ffmpegkmp_open_codec(decoder, FFPLAYKMP_DECODER_FALLBACK_NONE);
     if (result >= 0)
         result = ffmpegkmp_prime(decoder);
-    if (result < 0 && decoder->codec.hardware && decoder->first_pts == AV_NOPTS_VALUE &&
+    if (result < 0 && decoder->codec.hardware && decoder->first_pts == AV_NOPTS_VALUE && !decoder->decoder_name &&
             decoder->preference == FFPLAYKMP_DECODER_AUTO && !atomic_load(&decoder->aborted)) {
         /* Rewind by reopening: the failed attempt may have consumed packets. A hardware
          * decoder that stalled gets a software one with a deadline of its own. */
@@ -724,10 +797,9 @@ int ffmpegkmp_video_decoder_start(ffmpegkmp_video_decoder *decoder) {
         ffplaykmp_close_input(&decoder->input);
         atomic_store(&decoder->timed_out, 0);
         ffmpegkmp_arm_deadline(decoder);
-        decoder->info.decoder_fallback = FFPLAYKMP_DECODER_FALLBACK_FAILED;
         result = ffmpegkmp_open_stream(decoder);
         if (result >= 0)
-            result = ffmpegkmp_open_codec(decoder, FFPLAYKMP_DECODER_SOFTWARE);
+            result = ffmpegkmp_open_codec(decoder, FFPLAYKMP_DECODER_FALLBACK_FAILED);
         if (result >= 0)
             result = ffmpegkmp_prime(decoder);
     }
@@ -757,6 +829,29 @@ int ffmpegkmp_video_decoder_seek(ffmpegkmp_video_decoder *decoder, int64_t posit
     if ((result = ffmpegkmp_begin_call(decoder)) < 0)
         return result;
     return ffmpegkmp_end_call(decoder, ffmpegkmp_position(decoder, position_ns, 1));
+}
+
+int ffmpegkmp_video_decoder_set_size(ffmpegkmp_video_decoder *decoder, int32_t width, int32_t height) {
+    int result;
+    /* The sizes create takes: none, or both positive, and only with a memory format. */
+    if (!decoder || width < 0 || height < 0 || (width > 0) != (height > 0) ||
+            (width > 0 && !decoder->has_memory_format))
+        return FFPLAYKMP_ERROR_INVALID_ARGUMENT;
+    if ((result = ffmpegkmp_begin_call(decoder)) < 0)
+        return result;
+    if (width != decoder->width || height != decoder->height) {
+        decoder->width = width;
+        decoder->height = height;
+        /* Frames are converted as they are handed out, so the next frame_at converts the current frame again at
+         * the new size, without decoding. The old size's ring goes, so a decoder resized again and again holds one
+         * size's: frames the caller still has keep their memory until they close, and a resize back allocates
+         * again. The pool's other memory, a hardware frame's download, is made again by the next conversion. */
+        ffmpegkmp_frame_unref(decoder->presented);
+        decoder->presented = NULL;
+        decoder->presented_serial = 0;
+        ffmpegkmp_frame_pool_trim(decoder->pool);
+    }
+    return ffmpegkmp_end_call(decoder, 0);
 }
 
 int ffmpegkmp_video_decoder_frame_at(
@@ -811,5 +906,7 @@ void ffmpegkmp_video_decoder_destroy(ffmpegkmp_video_decoder *decoder) {
     ffplaykmp_android_release_global(decoder->android_vm, decoder->android_surface);
 #endif
     av_free(decoder->url);
+    av_free(decoder->decoder_name);
+    av_free(decoder->decoder_options);
     free(decoder);
 }

@@ -2,11 +2,13 @@
 # Tests the bridge's frame converter (native-build/bridge/ffplaykmp_core.c) on macOS arm64, against
 # the FFmpeg build the macosArm64 native build leaves in native-build/apple/out/standard/macosArm64:
 # the decoder's outputs against the golden references in the video-decoder fixtures, then the
-# encode-direction round trip (linear F16 to P010 PQ and HLG and back).
+# encode-direction round trip (linear F16 to P010 PQ and HLG and back), and the tone map's gamut maps:
+# how many it keeps and how far they stray from swscale's own mapping.
 #
-#   scripts/test-converter.sh [check|record]
+#   scripts/test-converter.sh [check|record|bench]
 #
 # record rewrites the references from the current implementation; only do that for a deliberate change.
+# bench times the HDR tone map into RGBA8 at one size and at a new size each frame.
 set -euo pipefail
 
 root="$(cd "$(dirname "$0")/.." && pwd)"
@@ -31,4 +33,4 @@ clang -O2 -std=c11 -w -DFFMPEGKMP_PIXEL_BUFFER=1 \
   -framework CoreServices -framework AudioToolbox -framework Security -lz -lbz2 -liconv -lm \
   -o "$work/converter_test"
 
-"$work/converter_test" "$fixtures" "$fixtures/golden" "$mode"
+"$work/converter_test" "$fixtures" "$fixtures/golden" "$mode" "$root/library/core/src/commonTest/resources"

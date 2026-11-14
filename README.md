@@ -137,6 +137,33 @@ player.state.collect { /* PAUSED, PLAYING, ENDED, FAILED, CLOSED */ }
 On iOS, set the app's `AVAudioSession` category before playing; the player
 leaves it unchanged.
 
+### Video: decoding, playback and export
+
+`codec` decodes frame-accurately (`VideoDecoder`) and encodes (`MediaWriter`);
+`ffplay` plays on a Compose surface. Both open FFmpeg's decoders and encoders
+directly, and take FFmpeg's own vocabulary where the typed API stops:
+
+```kotlin
+// A poster: one frame, upright, tone mapped, cut to the box.
+val poster = VideoDecoder.extractFrame(MediaSource("clip.mp4"), 2.seconds, FrameSize(256, 256), FrameScale.CROP)
+
+// An open decoder changes size without reopening.
+decoder.resize(FrameSize(640, 360))
+
+// Exactly one encoder, as `ffmpeg -c:v h264_mediacodec -codec_name …` opens it, with no fallback.
+val config = VideoEncoderConfig(1920, 1080, FrameRate(30),
+    encoder = NamedCodec("h264_mediacodec", mapOf("codec_name" to "c2.android.avc.encoder")))
+
+// Several players on one timeline: each shows the frame for the position its clock gives.
+player.follow { frameTime -> (timeline.positionAt(frameTime) - clipStart).coerceAtLeast(Duration.ZERO) }
+```
+
+The player decodes ahead into a bounded queue (`FFplayConfiguration.frameQueueSize`)
+and shows frames with a port of ffplay's `video_refresh`; on Android 14 and later
+its Compose Canvas draws hardware-decoded frames from GPU memory. See the
+[`codec`](library/codec/README.md) and [`ffplay`](library/ffplay/README.md) READMEs,
+and [Migrating to 0.6](docs/migrating-to-0.6.md) for what changed.
+
 The optional `filters` artifact includes color-managed HDR mappings for HDR10
 BT.2020/PQ output. Android runtime builds expose P010 to MediaCodec encoders;
 callers must still select HEVC Main10 HDR10 only on Android 13+ devices whose
@@ -158,7 +185,7 @@ codecs advertise P010 and the HDR10 profile.
 `codec` holds the Compose-free frame model (`VideoFrame`, `FrameFormat`),
 frame-accurate decoding (`VideoDecoder`, through WebCodecs in the browser), encoding
 (`MediaWriter`, SDR only in the browser), and the decoder and stream types
-(`CodecPreference`, `DecoderThreads`, `VideoInfo`, …) that `ffplay` builds on.
+(`CodecSelection`, `DecoderThreads`, `VideoInfo`, …) that `ffplay` builds on.
 The media source every decoder and player opens, `MediaSource`, is in `core`.
 
 `ffplay` excludes tvOS and watchOS because Compose UI artifacts are not
@@ -263,6 +290,8 @@ ignored local outputs and are never part of a Maven publication.
 - [Contributing](docs/contributing.md)
 - [Maven Central publishing](docs/publishing.md)
 - [Using FFmpegKMP in an application](docs/consuming.md)
+- [Migrating to 0.6](docs/migrating-to-0.6.md)
+- [Changelog](CHANGELOG.md)
 - [Architecture](docs/architecture.md)
 - [Native builds](docs/native-builds.md)
 - [Binding generation](docs/bindings.md)

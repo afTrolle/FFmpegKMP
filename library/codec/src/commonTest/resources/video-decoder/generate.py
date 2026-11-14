@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 """Regenerates the VideoDecoder fixtures in this directory.
 
-Usage: FFMPEG=/path/to/ffmpeg python3 generate.py [hdr | hdr-large | hdr-gradient | hdr-patches | hlg-large]
+Usage: FFMPEG=/path/to/ffmpeg python3 generate.py [hdr | hdr-large | hdr-gradient | hdr-patches | hlg-large | anamorphic | orientations | ntsc]
 
 With `hdr`, only hdr10-pq.mp4, hlg.mp4, hdr10-pq-large.mp4, hdr10-pq-gradient.mp4, hdr10-pq-patches.mp4
 and hlg-large.mp4 are regenerated; with one of the other words, only that clip.
@@ -269,8 +269,48 @@ def main():
         short = os.path.join(work, "short.mp4")
         mpeg4(short, "-framerate", "30", "-i", frames, "-frames:v", "30")
         run("-display_rotation", "90", "-i", short, "-c", "copy", os.path.join(out, "rotated-90.mp4"))
+        anamorphic(out, work)
+        orientations(out, work)
+        ntsc(out, work)
 
         hdr(out, work)
+
+
+def ntsc(out, work):
+    # cfr-2997.mp4: two seconds at 30000/1001 fps in a 1/90000 time base, frames 3003 ticks apart, so frame times
+    # are not whole microseconds; the tests of a player following a clock compare its frames with frameAt's there.
+    for index in range(60):
+        numbered_frame(os.path.join(work, f"n{index:04d}.png"), index)
+    mpeg4(os.path.join(out, "cfr-2997.mp4"), "-framerate", "30000/1001", "-i", os.path.join(work, "n%04d.png"),
+          "-frames:v", "60", "-video_track_timescale", "90000")
+
+
+def orientations(out, work):
+    # The other display matrices FFmpeg's tools turn upright: quarter and half turns, and mirrored ones.
+    for index in range(30):
+        numbered_frame(os.path.join(work, f"o{index:04d}.png"), index)
+    short = os.path.join(work, "orientations.mp4")
+    mpeg4(short, "-framerate", "30", "-i", os.path.join(work, "o%04d.png"), "-frames:v", "30")
+    for name, matrix in (
+        ("rotated-180", ("-display_rotation", "180")),
+        ("rotated-270", ("-display_rotation", "270")),
+        ("hflip", ("-display_hflip",)),
+        ("rotated-90-hflip", ("-display_rotation", "90", "-display_hflip")),
+        ("rotated-270-hflip", ("-display_rotation", "270", "-display_hflip")),
+        ("vflip", ("-display_vflip",)),
+    ):
+        run(*matrix, "-i", short, "-c", "copy", os.path.join(out, f"{name}.mp4"))
+    # HDR and a rotation together: the HDR10 clip turned as rotated-90.mp4 is.
+    run("-display_rotation", "90", "-i", os.path.join(out, "hdr10-pq.mp4"), "-c", "copy",
+        os.path.join(out, "hdr10-pq-rotated-90.mp4"))
+
+
+def anamorphic(out, work):
+    # Pixels twice as wide as tall, in the MPEG-4 bitstream itself: 96x64 coded, shown as 192x64.
+    for index in range(30):
+        numbered_frame(os.path.join(work, f"a{index:04d}.png"), index)
+    mpeg4(os.path.join(out, "anamorphic-2x1.mp4"), "-framerate", "30", "-i", os.path.join(work, "a%04d.png"),
+          "-frames:v", "30", "-vf", "setsar=2")
 
 
 def hdr(out, work):
@@ -362,7 +402,7 @@ def hlg_large(out, work):
 
 if __name__ == "__main__":
     steps = {"hdr": hdr, "hdr-large": hdr_large, "hdr-gradient": hdr_gradient, "hdr-patches": hdr_patches,
-             "hlg-large": hlg_large}
+             "hlg-large": hlg_large, "anamorphic": anamorphic, "orientations": orientations, "ntsc": ntsc}
     if sys.argv[1:] and sys.argv[1] in steps and len(sys.argv) == 2:
         with tempfile.TemporaryDirectory() as scratch:
             step = steps[sys.argv[1]]

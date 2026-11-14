@@ -23,7 +23,7 @@ public actual class DecoderThread actual constructor(name: String) {
     }
 
     // Kotlin/Native cannot interrupt a thread blocked in a host read.
-    public actual fun interrupt() = Unit
+    public actual fun interrupt(): Unit = Unit
 
     public actual fun finish(bound: Duration, block: () -> Unit) {
         val done = submit { block() }

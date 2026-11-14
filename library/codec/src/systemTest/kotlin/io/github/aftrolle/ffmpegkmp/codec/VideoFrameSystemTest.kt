@@ -128,6 +128,19 @@ class VideoFrameSystemTest {
     }
 
     @Test
+    fun aRingOfFiveLetsTheCallerHoldFiveFramesAndRefusesTheSixth() = runBlocking<Unit> {
+        decoder("cfr-24.mp4", VideoOutput.Memory(FrameFormat.Rgba8), ringSize = 5).use { decoder ->
+            val open = (0 until 5).map { index -> decoder.frameAt(1.seconds / 24 * index) }
+            val failure = assertFailsWith<IllegalStateException> {
+                withContext(Dispatchers.Default) { decoder.frameAt(1.seconds / 24 * 5) }
+            }
+            assertContains(failure.message.orEmpty(), "holds every frame")
+            open.forEachIndexed { index, frame -> frame.use { assertEquals(index, it.number()) } }
+            decoder.frameAt(1.seconds / 24 * 5).use { assertEquals(5, it.number()) }
+        }
+    }
+
+    @Test
     fun aFourthFrameWhileTheCallerHoldsTheRingFailsAtOnceAndTheDecoderGoesOnOnceOneCloses() = runBlocking<Unit> {
         decoder("cfr-24.mp4", VideoOutput.Memory(FrameFormat.Rgba8)).use { decoder ->
             val open = (0 until 3).map { index -> decoder.frameAt(1.seconds / 24 * index) }
@@ -137,7 +150,7 @@ class VideoFrameSystemTest {
             }
             val took = asked.elapsedNow()
             println("The fourth frame failed after $took: ${failure.message}")
-            assertContains(failure.message.orEmpty(), "holds all 3")
+            assertContains(failure.message.orEmpty(), "holds every frame")
             assertTrue(took < 2.seconds, "failed after $took, well before the 10 s timeout")
             open.first().close()
             decoder.frameAt(1.seconds / 24 * 3).use { assertEquals(3, it.number()) }
@@ -228,10 +241,12 @@ class VideoFrameSystemTest {
         name: String,
         output: VideoOutput = VideoOutput.Memory(),
         timeout: Duration = 10.seconds,
+        ringSize: Int = 3,
     ): VideoDecoder = VideoDecoder.open(
         MediaSource(name, CommandIo { input(name, Buffer().write(readVideoDecoderFixture(name))) }),
         output,
         CodecPreference.SOFTWARE,
         timeout,
+        ringSize = ringSize,
     )
 }

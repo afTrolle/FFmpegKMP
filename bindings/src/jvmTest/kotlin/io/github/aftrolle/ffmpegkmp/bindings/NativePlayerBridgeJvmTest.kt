@@ -12,6 +12,7 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertNotEquals
 import kotlin.test.assertNotNull
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import okio.Buffer
 import okio.FileHandle
@@ -20,7 +21,7 @@ class NativePlayerBridgeJvmTest {
     @Test
     fun generatedBindingsDriveTheCompiledNativePlayer() {
         val updates = CopyOnWriteArrayList<NativePlayerSnapshot>()
-        createPlatformPlayerBridge(NativePlayerConfiguration(), updates::add).use { bridge ->
+        refreshedPlayerBridge(NativePlayerConfiguration(), updates::add).use { bridge ->
             assertEquals(0, bridge.prepare(clearVideoSource()))
             val preparedSerial = bridge.snapshot().queueSerial
             assertEquals(0, bridge.setOutput(NativePlayerOutputCapabilities()))
@@ -35,8 +36,8 @@ class NativePlayerBridgeJvmTest {
 
     @Test
     fun compiledPlayersAreIndependentAndEnforceSecureOutput() {
-        createPlatformPlayerBridge(NativePlayerConfiguration(), update = {}).use { first ->
-            createPlatformPlayerBridge(NativePlayerConfiguration(), update = {}).use { second ->
+        refreshedPlayerBridge(NativePlayerConfiguration(), update = {}).use { first ->
+            refreshedPlayerBridge(NativePlayerConfiguration(), update = {}).use { second ->
                 assertEquals(0, first.prepare(clearVideoSource(requireSecurePath = true)))
                 assertEquals(0, second.prepare(clearVideoSource()))
 
@@ -51,7 +52,7 @@ class NativePlayerBridgeJvmTest {
     @Test
     fun compiledPlayerDecodesMountedVideoIntoARealPreviewFrame() {
         val frames = mutableListOf<NativeVideoFrame>()
-        createPlatformPlayerBridge(
+        refreshedPlayerBridge(
             NativePlayerConfiguration(NativePlayerDecoderPreference.SOFTWARE),
             update = {},
             frame = frames::add,
@@ -82,7 +83,7 @@ class NativePlayerBridgeJvmTest {
     fun videoToolboxDecodeCanDownloadIntoTheDesktopSoftwareRenderer() {
         if (!System.getProperty("os.name").contains("Mac", ignoreCase = true)) return
         val frames = mutableListOf<NativeVideoFrame>()
-        createPlatformPlayerBridge(
+        refreshedPlayerBridge(
             NativePlayerConfiguration(NativePlayerDecoderPreference.REQUIRE_HARDWARE),
             update = {},
             frame = frames::add,
@@ -114,7 +115,7 @@ class NativePlayerBridgeJvmTest {
     fun autoDecoderFallsBackWhenVideoToolboxCannotProduceAFrame() {
         if (!System.getProperty("os.name").contains("Mac", ignoreCase = true)) return
         val frames = mutableListOf<NativeVideoFrame>()
-        createPlatformPlayerBridge(
+        refreshedPlayerBridge(
             NativePlayerConfiguration(NativePlayerDecoderPreference.AUTO, codecReleaseDelayUs = KEEP),
             update = {},
             frame = frames::add,
@@ -148,7 +149,7 @@ class NativePlayerBridgeJvmTest {
         val bitmap = allocateNativeFrame(NativeFrameFormat(RGBA8, BT709, SRGB, RGB, FULL), 64, 64)
         val converted = AtomicInteger()
         val played = CountDownLatch(12)
-        createPlatformPlayerBridge(
+        refreshedPlayerBridge(
             NativePlayerConfiguration(NativePlayerDecoderPreference.AUTO),
             update = {},
             frame = { frame ->
@@ -179,7 +180,7 @@ class NativePlayerBridgeJvmTest {
     @Test
     fun theCodecIsKeptAcrossSeeksPausePlayAndOutputs() {
         val played = CountDownLatch(3)
-        createPlatformPlayerBridge(
+        refreshedPlayerBridge(
             NativePlayerConfiguration(NativePlayerDecoderPreference.SOFTWARE, codecReleaseDelayUs = KEEP),
             update = {},
             frame = { frame ->
@@ -218,7 +219,7 @@ class NativePlayerBridgeJvmTest {
     @Test
     fun anIdlePlayerReleasesItsCodecAfterTheDelay() {
         val frames = CopyOnWriteArrayList<NativeVideoFrame>()
-        createPlatformPlayerBridge(
+        refreshedPlayerBridge(
             NativePlayerConfiguration(NativePlayerDecoderPreference.SOFTWARE, codecReleaseDelayUs = 500_000),
             update = {},
             frame = frames::add,
@@ -265,7 +266,7 @@ class NativePlayerBridgeJvmTest {
     @Test
     fun aZeroDelayReleasesTheCodecAfterEachDecode() {
         val frames = CopyOnWriteArrayList<NativeVideoFrame>()
-        createPlatformPlayerBridge(
+        refreshedPlayerBridge(
             NativePlayerConfiguration(NativePlayerDecoderPreference.SOFTWARE, codecReleaseDelayUs = 0),
             update = {},
             frame = frames::add,
@@ -301,7 +302,7 @@ class NativePlayerBridgeJvmTest {
     @Test
     fun aForwardScrubDecodesEachFrameOnce() {
         val frames = CopyOnWriteArrayList<NativeVideoFrame>()
-        createPlatformPlayerBridge(
+        refreshedPlayerBridge(
             NativePlayerConfiguration(NativePlayerDecoderPreference.SOFTWARE, codecReleaseDelayUs = KEEP),
             update = {},
             frame = frames::add,
@@ -346,7 +347,7 @@ class NativePlayerBridgeJvmTest {
             requireSecurePath = false,
         )
         val played = CountDownLatch(3)
-        createPlatformPlayerBridge(
+        refreshedPlayerBridge(
             NativePlayerConfiguration(NativePlayerDecoderPreference.SOFTWARE),
             update = {},
             frame = { frame ->
@@ -383,18 +384,32 @@ class NativePlayerBridgeJvmTest {
         }
     }
 
+    /**
+     * Every decode, previews and playback alike, runs on the player's session thread, which prepares
+     * each frame as it decodes it; playback presents the frames on the thread that refreshes the
+     * player, and a preview presents its frame at once, on the session thread.
+     */
     @Test
     fun everyDecodeRunsOnThePlayersSessionThread() {
-        val decodingThreads = CopyOnWriteArrayList<Thread>()
+        val preparing = CopyOnWriteArrayList<Thread>()
+        val presenting = CopyOnWriteArrayList<Thread>()
         val played = CountDownLatch(8)
-        createPlatformPlayerBridge(
-            NativePlayerConfiguration(NativePlayerDecoderPreference.SOFTWARE),
-            update = {},
-            frame = { frame ->
-                decodingThreads += Thread.currentThread()
+        val sink = object : NativeVideoFrameSink {
+            override fun prepare(frame: NativeVideoFrame): Boolean {
+                preparing += Thread.currentThread()
                 frame.frame.close()
+                return true
+            }
+
+            override fun present(token: Long) {
+                presenting += Thread.currentThread()
                 played.countDown()
-            },
+            }
+
+            override fun release(token: Long) = Unit
+        }
+        RefreshedPlayerBridge(
+            createPlatformPlayerBridge(NativePlayerConfiguration(NativePlayerDecoderPreference.SOFTWARE), update = {}, frame = sink),
         ).use { bridge ->
             assertEquals(0, bridge.setOutput(NativePlayerOutputCapabilities()))
             assertEquals(0, bridge.prepare(clearVideoSource()))
@@ -405,14 +420,19 @@ class NativePlayerBridgeJvmTest {
             assertEquals(0, bridge.seek(700_000))
 
             // Previews and playback share one thread, so a codec kept between them stays on it.
-            assertEquals(1, decodingThreads.distinct().size, "frames came from ${decodingThreads.distinct()}")
-            assertNotEquals(Thread.currentThread(), decodingThreads.first())
+            val session = preparing.distinct().single()
+            assertNotEquals(Thread.currentThread(), session)
+            assertNotEquals(bridge.refreshThread, session)
+            // The prepare's preview and the two seeks' came from the session thread, the played ones from the refresh thread.
+            assertEquals(setOf(session, bridge.refreshThread), presenting.toSet())
+            assertEquals(List(3) { session }, presenting.take(3))
+            assertEquals(session, presenting.last(), "the paused seek's preview")
         }
     }
 
     @Test
     fun seeksFromTwoThreadsEndWhenThePlayerIsCancelledAndClosed() {
-        val bridge = createPlatformPlayerBridge(
+        val bridge = refreshedPlayerBridge(
             NativePlayerConfiguration(NativePlayerDecoderPreference.SOFTWARE),
             update = {},
             frame = { it.frame.close() },
@@ -449,7 +469,7 @@ class NativePlayerBridgeJvmTest {
     @Test
     fun aSeekShowsTheFrameOnScreenAtTheTarget() {
         val frames = mutableListOf<NativeVideoFrame>()
-        createPlatformPlayerBridge(
+        refreshedPlayerBridge(
             NativePlayerConfiguration(NativePlayerDecoderPreference.SOFTWARE),
             update = {},
             frame = frames::add,
@@ -476,7 +496,7 @@ class NativePlayerBridgeJvmTest {
         val frames = CopyOnWriteArrayList<NativeVideoFrame>()
         val updates = CopyOnWriteArrayList<NativePlayerSnapshot>()
         val scheduledFrames = CountDownLatch(4)
-        createPlatformPlayerBridge(
+        refreshedPlayerBridge(
             NativePlayerConfiguration(NativePlayerDecoderPreference.SOFTWARE),
             update = updates::add,
             frame = { frame ->
@@ -500,17 +520,24 @@ class NativePlayerBridgeJvmTest {
         }
     }
 
+    /**
+     * A presenter slower than a frame interval does not slow the player down: each refresh shows
+     * the newest frame due, drops the ones that fell due meanwhile and counts them, and playback
+     * reaches the end of the input.
+     */
     @Test
     fun compiledPlayerDropsLateFramesAndReportsThem() {
         val ended = CountDownLatch(1)
         val updates = CopyOnWriteArrayList<NativePlayerSnapshot>()
-        createPlatformPlayerBridge(
+        val presented = CopyOnWriteArrayList<Long>()
+        refreshedPlayerBridge(
             NativePlayerConfiguration(NativePlayerDecoderPreference.SOFTWARE),
             update = { snapshot ->
                 updates += snapshot
                 if (snapshot.state == NativePlayerState.ENDED) ended.countDown()
             },
             frame = {
+                presented += it.presentationTimeUs
                 // Simulate a renderer that takes longer than a video-frame interval.
                 Thread.sleep(120)
                 it.frame.close()
@@ -518,18 +545,23 @@ class NativePlayerBridgeJvmTest {
         ).use { bridge ->
             assertEquals(0, bridge.setOutput(NativePlayerOutputCapabilities()))
             assertEquals(0, bridge.prepare(clearVideoSource()))
+            presented.clear()
             assertEquals(0, bridge.play())
 
             assertTrue(ended.await(5, TimeUnit.SECONDS), "Expected playback to reach EOF")
-            assertTrue(bridge.snapshot().droppedFrames > 0)
+            val dropped = bridge.snapshot().droppedFrames
+            assertTrue(dropped > 0)
             assertTrue(updates.any { it.droppedFrames > 0 })
+            // Every frame after the preview was either shown, in order, or dropped.
+            assertEquals(presented.sorted(), presented)
+            assertEquals(24L, presented.size + dropped, "frames shown $presented and dropped $dropped")
         }
     }
 
     @Test
     fun protectedSourceNeverEmitsCpuReadableFrames() {
         val frames = mutableListOf<NativeVideoFrame>()
-        createPlatformPlayerBridge(
+        refreshedPlayerBridge(
             NativePlayerConfiguration(),
             update = {},
             frame = frames::add,
@@ -552,7 +584,7 @@ class NativePlayerBridgeJvmTest {
 
     @Test
     fun prepareInspectsMountedInputBeforeAnOutputIsAttached() {
-        createPlatformPlayerBridge(NativePlayerConfiguration(), update = {}).use { bridge ->
+        refreshedPlayerBridge(NativePlayerConfiguration(), update = {}).use { bridge ->
             assertEquals(0, bridge.prepare(clearVideoSource()))
             assertEquals(NativePlayerState.WAITING_FOR_OUTPUT, bridge.snapshot().state)
             assertTrue(bridge.snapshot().videoWidth > 0)
@@ -583,7 +615,7 @@ class NativePlayerBridgeJvmTest {
             ExpectedColor("hdr10-pq.mp4", 9, 16, 9),
             ExpectedColor("hdr-hlg.mp4", 9, 18, 9),
         ).forEach { expected ->
-            createPlatformPlayerBridge(NativePlayerConfiguration(), update = {}).use { bridge ->
+            refreshedPlayerBridge(NativePlayerConfiguration(), update = {}).use { bridge ->
                 assertEquals(0, bridge.prepare(videoSource(expected.resource)))
                 val video = requireNotNull(bridge.snapshot().videoInfo)
                 assertEquals(expected.primaries, video.colorPrimaries, expected.resource)
@@ -632,7 +664,7 @@ class NativePlayerBridgeJvmTest {
     @Test
     fun prepareRejectsAnInvalidMountedSourceWithoutWaitingForOutput() {
         val source = Buffer().writeUtf8("not a media container")
-        createPlatformPlayerBridge(NativePlayerConfiguration(), update = {}).use { bridge ->
+        refreshedPlayerBridge(NativePlayerConfiguration(), update = {}).use { bridge ->
             assertTrue(
                 bridge.prepare(
                     NativePlayerSource(
@@ -647,10 +679,37 @@ class NativePlayerBridgeJvmTest {
         }
     }
 
+    /**
+     * A named decoder's options reach it: skip_frame=all makes mpeg2video, which plays this fixture
+     * otherwise, decode nothing. That decode failure fails the prepare with the named decoder's
+     * reason, and no other decoder decodes in its place. A later command that fails does not carry
+     * that reason.
+     */
+    @Test
+    fun aNamedDecoderThatDecodesNothingFailsWithItsReasonAndNoOtherDecoder() {
+        val frames = CopyOnWriteArrayList<NativeVideoFrame>()
+        refreshedPlayerBridge(
+            NativePlayerConfiguration(decoderName = "mpeg2video", decoderOptions = mapOf("skip_frame" to "all")),
+            update = {},
+            frame = frames::add,
+        ).use { bridge ->
+            assertEquals(0, bridge.setOutput(NativePlayerOutputCapabilities()))
+            assertTrue(bridge.prepare(clearVideoSource()) < 0)
+            assertEquals(NativePlayerState.FAILED, bridge.snapshot().state)
+            assertTrue(frames.isEmpty(), "frames from another decoder: ${frames.size}")
+            val reason = bridge.snapshot().errorMessage.orEmpty()
+            assertTrue("decoder mpeg2video failed" in reason, reason)
+
+            assertTrue(bridge.seek(-1) < 0)
+            assertNull(bridge.snapshot().errorMessage)
+        }
+        frames.closeAll()
+    }
+
     @Test
     fun preparingANewMountedSourceJoinsTheOutgoingPlaybackGeneration() {
         val updates = CopyOnWriteArrayList<NativePlayerSnapshot>()
-        createPlatformPlayerBridge(
+        refreshedPlayerBridge(
             NativePlayerConfiguration(NativePlayerDecoderPreference.SOFTWARE),
             updates::add,
         ).use { bridge ->
@@ -671,7 +730,7 @@ class NativePlayerBridgeJvmTest {
 
     @Test
     fun failedSecurePrepareCannotBeRevivedByReplacingTheOutput() {
-        createPlatformPlayerBridge(NativePlayerConfiguration(), update = {}).use { bridge ->
+        refreshedPlayerBridge(NativePlayerConfiguration(), update = {}).use { bridge ->
             assertEquals(0, bridge.setOutput(NativePlayerOutputCapabilities()))
             assertEquals(NativePlayerError.ACCESS_DENIED, bridge.prepare(clearVideoSource(requireSecurePath = true)))
 
@@ -720,7 +779,7 @@ private fun MutableList<NativeVideoFrame>.closeAll() {
 
 private fun NativePlayerBridgeJvmTest.decodePreview(resourceName: String): NativeFrame {
     val frames = mutableListOf<NativeVideoFrame>()
-    createPlatformPlayerBridge(
+    refreshedPlayerBridge(
         NativePlayerConfiguration(NativePlayerDecoderPreference.SOFTWARE),
         update = {},
         frame = frames::add,

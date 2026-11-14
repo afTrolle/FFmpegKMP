@@ -1,0 +1,168 @@
+// Klib ABI Dump
+// Targets: [iosArm64, iosSimulatorArm64, js, macosArm64, tvosArm64, tvosSimulatorArm64, wasmJs, watchosArm64, watchosDeviceArm64, watchosSimulatorArm64]
+// Rendering settings:
+// - Signature version: 2
+// - Show manifest properties: true
+// - Show declarations: true
+
+// Library unique name: <io.github.aftrolle.ffmpegkmp:player>
+final enum class io.github.aftrolle.ffmpegkmp.player/PlaybackState : kotlin/Enum<io.github.aftrolle.ffmpegkmp.player/PlaybackState> { // io.github.aftrolle.ffmpegkmp.player/PlaybackState|null[0]
+    enum entry CLOSED // io.github.aftrolle.ffmpegkmp.player/PlaybackState.CLOSED|null[0]
+    enum entry ENDED // io.github.aftrolle.ffmpegkmp.player/PlaybackState.ENDED|null[0]
+    enum entry FAILED // io.github.aftrolle.ffmpegkmp.player/PlaybackState.FAILED|null[0]
+    enum entry PAUSED // io.github.aftrolle.ffmpegkmp.player/PlaybackState.PAUSED|null[0]
+    enum entry PLAYING // io.github.aftrolle.ffmpegkmp.player/PlaybackState.PLAYING|null[0]
+
+    final val entries // io.github.aftrolle.ffmpegkmp.player/PlaybackState.entries|#static{}entries[0]
+        final fun <get-entries>(): kotlin.enums/EnumEntries<io.github.aftrolle.ffmpegkmp.player/PlaybackState> // io.github.aftrolle.ffmpegkmp.player/PlaybackState.entries.<get-entries>|<get-entries>#static(){}[0]
+
+    final fun valueOf(kotlin/String): io.github.aftrolle.ffmpegkmp.player/PlaybackState // io.github.aftrolle.ffmpegkmp.player/PlaybackState.valueOf|valueOf#static(kotlin.String){}[0]
+    final fun values(): kotlin/Array<io.github.aftrolle.ffmpegkmp.player/PlaybackState> // io.github.aftrolle.ffmpegkmp.player/PlaybackState.values|values#static(){}[0]
+}
+
+abstract interface io.github.aftrolle.ffmpegkmp.player/AudioMixControls { // io.github.aftrolle.ffmpegkmp.player/AudioMixControls|null[0]
+    abstract val enabledTracks // io.github.aftrolle.ffmpegkmp.player/AudioMixControls.enabledTracks|{}enabledTracks[0]
+        abstract fun <get-enabledTracks>(): kotlinx.coroutines.flow/StateFlow<kotlin.collections/Set<kotlin/Int>> // io.github.aftrolle.ffmpegkmp.player/AudioMixControls.enabledTracks.<get-enabledTracks>|<get-enabledTracks>(){}[0]
+    abstract val level // io.github.aftrolle.ffmpegkmp.player/AudioMixControls.level|{}level[0]
+        abstract fun <get-level>(): kotlinx.coroutines.flow/StateFlow<io.github.aftrolle.ffmpegkmp.core/AudioLevel> // io.github.aftrolle.ffmpegkmp.player/AudioMixControls.level.<get-level>|<get-level>(){}[0]
+    abstract val trackLevels // io.github.aftrolle.ffmpegkmp.player/AudioMixControls.trackLevels|{}trackLevels[0]
+        abstract fun <get-trackLevels>(): kotlinx.coroutines.flow/StateFlow<kotlin.collections/List<io.github.aftrolle.ffmpegkmp.core/AudioLevel>> // io.github.aftrolle.ffmpegkmp.player/AudioMixControls.trackLevels.<get-trackLevels>|<get-trackLevels>(){}[0]
+    abstract val tracks // io.github.aftrolle.ffmpegkmp.player/AudioMixControls.tracks|{}tracks[0]
+        abstract fun <get-tracks>(): kotlin.collections/List<io.github.aftrolle.ffmpegkmp.player/AudioTrackInfo> // io.github.aftrolle.ffmpegkmp.player/AudioMixControls.tracks.<get-tracks>|<get-tracks>(){}[0]
+
+    abstract fun selectTracks(kotlin.collections/Set<kotlin/Int>) // io.github.aftrolle.ffmpegkmp.player/AudioMixControls.selectTracks|selectTracks(kotlin.collections.Set<kotlin.Int>){}[0]
+    abstract fun setTrackEnabled(kotlin/Int, kotlin/Boolean) // io.github.aftrolle.ffmpegkmp.player/AudioMixControls.setTrackEnabled|setTrackEnabled(kotlin.Int;kotlin.Boolean){}[0]
+    abstract fun updateLevel(kotlin/Function1<io.github.aftrolle.ffmpegkmp.core/AudioLevel, io.github.aftrolle.ffmpegkmp.core/AudioLevel>) // io.github.aftrolle.ffmpegkmp.player/AudioMixControls.updateLevel|updateLevel(kotlin.Function1<io.github.aftrolle.ffmpegkmp.core.AudioLevel,io.github.aftrolle.ffmpegkmp.core.AudioLevel>){}[0]
+    abstract fun updateTrackLevel(kotlin/Int, kotlin/Function1<io.github.aftrolle.ffmpegkmp.core/AudioLevel, io.github.aftrolle.ffmpegkmp.core/AudioLevel>) // io.github.aftrolle.ffmpegkmp.player/AudioMixControls.updateTrackLevel|updateTrackLevel(kotlin.Int;kotlin.Function1<io.github.aftrolle.ffmpegkmp.core.AudioLevel,io.github.aftrolle.ffmpegkmp.core.AudioLevel>){}[0]
+}
+
+final class io.github.aftrolle.ffmpegkmp.player/AudioDecoder : io.github.aftrolle.ffmpegkmp.player/AudioMixControls, kotlin/AutoCloseable { // io.github.aftrolle.ffmpegkmp.player/AudioDecoder|null[0]
+    final val duration // io.github.aftrolle.ffmpegkmp.player/AudioDecoder.duration|{}duration[0]
+        final fun <get-duration>(): kotlin.time/Duration? // io.github.aftrolle.ffmpegkmp.player/AudioDecoder.duration.<get-duration>|<get-duration>(){}[0]
+    final val enabledTracks // io.github.aftrolle.ffmpegkmp.player/AudioDecoder.enabledTracks|{}enabledTracks[0]
+        final fun <get-enabledTracks>(): kotlinx.coroutines.flow/StateFlow<kotlin.collections/Set<kotlin/Int>> // io.github.aftrolle.ffmpegkmp.player/AudioDecoder.enabledTracks.<get-enabledTracks>|<get-enabledTracks>(){}[0]
+    final val format // io.github.aftrolle.ffmpegkmp.player/AudioDecoder.format|{}format[0]
+        final fun <get-format>(): io.github.aftrolle.ffmpegkmp.player/PcmFormat // io.github.aftrolle.ffmpegkmp.player/AudioDecoder.format.<get-format>|<get-format>(){}[0]
+    final val level // io.github.aftrolle.ffmpegkmp.player/AudioDecoder.level|{}level[0]
+        final fun <get-level>(): kotlinx.coroutines.flow/StateFlow<io.github.aftrolle.ffmpegkmp.core/AudioLevel> // io.github.aftrolle.ffmpegkmp.player/AudioDecoder.level.<get-level>|<get-level>(){}[0]
+    final val position // io.github.aftrolle.ffmpegkmp.player/AudioDecoder.position|{}position[0]
+        final fun <get-position>(): kotlin.time/Duration // io.github.aftrolle.ffmpegkmp.player/AudioDecoder.position.<get-position>|<get-position>(){}[0]
+    final val trackLevels // io.github.aftrolle.ffmpegkmp.player/AudioDecoder.trackLevels|{}trackLevels[0]
+        final fun <get-trackLevels>(): kotlinx.coroutines.flow/StateFlow<kotlin.collections/List<io.github.aftrolle.ffmpegkmp.core/AudioLevel>> // io.github.aftrolle.ffmpegkmp.player/AudioDecoder.trackLevels.<get-trackLevels>|<get-trackLevels>(){}[0]
+    final val tracks // io.github.aftrolle.ffmpegkmp.player/AudioDecoder.tracks|{}tracks[0]
+        final fun <get-tracks>(): kotlin.collections/List<io.github.aftrolle.ffmpegkmp.player/AudioTrackInfo> // io.github.aftrolle.ffmpegkmp.player/AudioDecoder.tracks.<get-tracks>|<get-tracks>(){}[0]
+
+    final fun close() // io.github.aftrolle.ffmpegkmp.player/AudioDecoder.close|close(){}[0]
+    final fun selectTracks(kotlin.collections/Set<kotlin/Int>) // io.github.aftrolle.ffmpegkmp.player/AudioDecoder.selectTracks|selectTracks(kotlin.collections.Set<kotlin.Int>){}[0]
+    final fun setTrackEnabled(kotlin/Int, kotlin/Boolean) // io.github.aftrolle.ffmpegkmp.player/AudioDecoder.setTrackEnabled|setTrackEnabled(kotlin.Int;kotlin.Boolean){}[0]
+    final fun updateLevel(kotlin/Function1<io.github.aftrolle.ffmpegkmp.core/AudioLevel, io.github.aftrolle.ffmpegkmp.core/AudioLevel>) // io.github.aftrolle.ffmpegkmp.player/AudioDecoder.updateLevel|updateLevel(kotlin.Function1<io.github.aftrolle.ffmpegkmp.core.AudioLevel,io.github.aftrolle.ffmpegkmp.core.AudioLevel>){}[0]
+    final fun updateTrackLevel(kotlin/Int, kotlin/Function1<io.github.aftrolle.ffmpegkmp.core/AudioLevel, io.github.aftrolle.ffmpegkmp.core/AudioLevel>) // io.github.aftrolle.ffmpegkmp.player/AudioDecoder.updateTrackLevel|updateTrackLevel(kotlin.Int;kotlin.Function1<io.github.aftrolle.ffmpegkmp.core.AudioLevel,io.github.aftrolle.ffmpegkmp.core.AudioLevel>){}[0]
+    final suspend fun read(kotlin/FloatArray, kotlin/Int = ..., kotlin/Int = ...): kotlin/Int // io.github.aftrolle.ffmpegkmp.player/AudioDecoder.read|read(kotlin.FloatArray;kotlin.Int;kotlin.Int){}[0]
+    final suspend fun seek(kotlin.time/Duration) // io.github.aftrolle.ffmpegkmp.player/AudioDecoder.seek|seek(kotlin.time.Duration){}[0]
+
+    final object Companion { // io.github.aftrolle.ffmpegkmp.player/AudioDecoder.Companion|null[0]
+        final suspend fun open(io.github.aftrolle.ffmpegkmp.core/MediaSource, io.github.aftrolle.ffmpegkmp.player/PcmFormat = ...): io.github.aftrolle.ffmpegkmp.player/AudioDecoder // io.github.aftrolle.ffmpegkmp.player/AudioDecoder.Companion.open|open(io.github.aftrolle.ffmpegkmp.core.MediaSource;io.github.aftrolle.ffmpegkmp.player.PcmFormat){}[0]
+    }
+}
+
+final class io.github.aftrolle.ffmpegkmp.player/AudioDecodingException : io.github.aftrolle.ffmpegkmp.core/FFmpegKmpException { // io.github.aftrolle.ffmpegkmp.player/AudioDecodingException|null[0]
+    constructor <init>(kotlin/String, kotlin/Throwable? = ...) // io.github.aftrolle.ffmpegkmp.player/AudioDecodingException.<init>|<init>(kotlin.String;kotlin.Throwable?){}[0]
+}
+
+final class io.github.aftrolle.ffmpegkmp.player/AudioPlayer : io.github.aftrolle.ffmpegkmp.player/AudioMixControls, kotlin/AutoCloseable { // io.github.aftrolle.ffmpegkmp.player/AudioPlayer|null[0]
+    final val duration // io.github.aftrolle.ffmpegkmp.player/AudioPlayer.duration|{}duration[0]
+        final fun <get-duration>(): kotlin.time/Duration? // io.github.aftrolle.ffmpegkmp.player/AudioPlayer.duration.<get-duration>|<get-duration>(){}[0]
+    final val enabledTracks // io.github.aftrolle.ffmpegkmp.player/AudioPlayer.enabledTracks|{}enabledTracks[0]
+        final fun <get-enabledTracks>(): kotlinx.coroutines.flow/StateFlow<kotlin.collections/Set<kotlin/Int>> // io.github.aftrolle.ffmpegkmp.player/AudioPlayer.enabledTracks.<get-enabledTracks>|<get-enabledTracks>(){}[0]
+    final val format // io.github.aftrolle.ffmpegkmp.player/AudioPlayer.format|{}format[0]
+        final fun <get-format>(): io.github.aftrolle.ffmpegkmp.player/PcmFormat // io.github.aftrolle.ffmpegkmp.player/AudioPlayer.format.<get-format>|<get-format>(){}[0]
+    final val level // io.github.aftrolle.ffmpegkmp.player/AudioPlayer.level|{}level[0]
+        final fun <get-level>(): kotlinx.coroutines.flow/StateFlow<io.github.aftrolle.ffmpegkmp.core/AudioLevel> // io.github.aftrolle.ffmpegkmp.player/AudioPlayer.level.<get-level>|<get-level>(){}[0]
+    final val position // io.github.aftrolle.ffmpegkmp.player/AudioPlayer.position|{}position[0]
+        final fun <get-position>(): kotlinx.coroutines.flow/StateFlow<kotlin.time/Duration> // io.github.aftrolle.ffmpegkmp.player/AudioPlayer.position.<get-position>|<get-position>(){}[0]
+    final val state // io.github.aftrolle.ffmpegkmp.player/AudioPlayer.state|{}state[0]
+        final fun <get-state>(): kotlinx.coroutines.flow/StateFlow<io.github.aftrolle.ffmpegkmp.player/PlaybackState> // io.github.aftrolle.ffmpegkmp.player/AudioPlayer.state.<get-state>|<get-state>(){}[0]
+    final val trackLevels // io.github.aftrolle.ffmpegkmp.player/AudioPlayer.trackLevels|{}trackLevels[0]
+        final fun <get-trackLevels>(): kotlinx.coroutines.flow/StateFlow<kotlin.collections/List<io.github.aftrolle.ffmpegkmp.core/AudioLevel>> // io.github.aftrolle.ffmpegkmp.player/AudioPlayer.trackLevels.<get-trackLevels>|<get-trackLevels>(){}[0]
+    final val tracks // io.github.aftrolle.ffmpegkmp.player/AudioPlayer.tracks|{}tracks[0]
+        final fun <get-tracks>(): kotlin.collections/List<io.github.aftrolle.ffmpegkmp.player/AudioTrackInfo> // io.github.aftrolle.ffmpegkmp.player/AudioPlayer.tracks.<get-tracks>|<get-tracks>(){}[0]
+
+    final var failure // io.github.aftrolle.ffmpegkmp.player/AudioPlayer.failure|{}failure[0]
+        final fun <get-failure>(): kotlin/Throwable? // io.github.aftrolle.ffmpegkmp.player/AudioPlayer.failure.<get-failure>|<get-failure>(){}[0]
+
+    final fun close() // io.github.aftrolle.ffmpegkmp.player/AudioPlayer.close|close(){}[0]
+    final fun pause() // io.github.aftrolle.ffmpegkmp.player/AudioPlayer.pause|pause(){}[0]
+    final fun play() // io.github.aftrolle.ffmpegkmp.player/AudioPlayer.play|play(){}[0]
+    final fun seekTo(kotlin.time/Duration) // io.github.aftrolle.ffmpegkmp.player/AudioPlayer.seekTo|seekTo(kotlin.time.Duration){}[0]
+    final fun selectTracks(kotlin.collections/Set<kotlin/Int>) // io.github.aftrolle.ffmpegkmp.player/AudioPlayer.selectTracks|selectTracks(kotlin.collections.Set<kotlin.Int>){}[0]
+    final fun setTrackEnabled(kotlin/Int, kotlin/Boolean) // io.github.aftrolle.ffmpegkmp.player/AudioPlayer.setTrackEnabled|setTrackEnabled(kotlin.Int;kotlin.Boolean){}[0]
+    final fun updateLevel(kotlin/Function1<io.github.aftrolle.ffmpegkmp.core/AudioLevel, io.github.aftrolle.ffmpegkmp.core/AudioLevel>) // io.github.aftrolle.ffmpegkmp.player/AudioPlayer.updateLevel|updateLevel(kotlin.Function1<io.github.aftrolle.ffmpegkmp.core.AudioLevel,io.github.aftrolle.ffmpegkmp.core.AudioLevel>){}[0]
+    final fun updateTrackLevel(kotlin/Int, kotlin/Function1<io.github.aftrolle.ffmpegkmp.core/AudioLevel, io.github.aftrolle.ffmpegkmp.core/AudioLevel>) // io.github.aftrolle.ffmpegkmp.player/AudioPlayer.updateTrackLevel|updateTrackLevel(kotlin.Int;kotlin.Function1<io.github.aftrolle.ffmpegkmp.core.AudioLevel,io.github.aftrolle.ffmpegkmp.core.AudioLevel>){}[0]
+
+    final object Companion { // io.github.aftrolle.ffmpegkmp.player/AudioPlayer.Companion|null[0]
+        final suspend fun open(io.github.aftrolle.ffmpegkmp.core/MediaSource, io.github.aftrolle.ffmpegkmp.player/PcmFormat = ...): io.github.aftrolle.ffmpegkmp.player/AudioPlayer // io.github.aftrolle.ffmpegkmp.player/AudioPlayer.Companion.open|open(io.github.aftrolle.ffmpegkmp.core.MediaSource;io.github.aftrolle.ffmpegkmp.player.PcmFormat){}[0]
+    }
+}
+
+final class io.github.aftrolle.ffmpegkmp.player/AudioTrackInfo { // io.github.aftrolle.ffmpegkmp.player/AudioTrackInfo|null[0]
+    constructor <init>(kotlin/Int, kotlin/String, kotlin/String?, kotlin/String?, kotlin/Int, kotlin/Int, kotlin/Boolean, kotlin/Boolean) // io.github.aftrolle.ffmpegkmp.player/AudioTrackInfo.<init>|<init>(kotlin.Int;kotlin.String;kotlin.String?;kotlin.String?;kotlin.Int;kotlin.Int;kotlin.Boolean;kotlin.Boolean){}[0]
+
+    final val channels // io.github.aftrolle.ffmpegkmp.player/AudioTrackInfo.channels|{}channels[0]
+        final fun <get-channels>(): kotlin/Int // io.github.aftrolle.ffmpegkmp.player/AudioTrackInfo.channels.<get-channels>|<get-channels>(){}[0]
+    final val codec // io.github.aftrolle.ffmpegkmp.player/AudioTrackInfo.codec|{}codec[0]
+        final fun <get-codec>(): kotlin/String // io.github.aftrolle.ffmpegkmp.player/AudioTrackInfo.codec.<get-codec>|<get-codec>(){}[0]
+    final val index // io.github.aftrolle.ffmpegkmp.player/AudioTrackInfo.index|{}index[0]
+        final fun <get-index>(): kotlin/Int // io.github.aftrolle.ffmpegkmp.player/AudioTrackInfo.index.<get-index>|<get-index>(){}[0]
+    final val isDecodable // io.github.aftrolle.ffmpegkmp.player/AudioTrackInfo.isDecodable|{}isDecodable[0]
+        final fun <get-isDecodable>(): kotlin/Boolean // io.github.aftrolle.ffmpegkmp.player/AudioTrackInfo.isDecodable.<get-isDecodable>|<get-isDecodable>(){}[0]
+    final val isDefault // io.github.aftrolle.ffmpegkmp.player/AudioTrackInfo.isDefault|{}isDefault[0]
+        final fun <get-isDefault>(): kotlin/Boolean // io.github.aftrolle.ffmpegkmp.player/AudioTrackInfo.isDefault.<get-isDefault>|<get-isDefault>(){}[0]
+    final val language // io.github.aftrolle.ffmpegkmp.player/AudioTrackInfo.language|{}language[0]
+        final fun <get-language>(): kotlin/String? // io.github.aftrolle.ffmpegkmp.player/AudioTrackInfo.language.<get-language>|<get-language>(){}[0]
+    final val sampleRate // io.github.aftrolle.ffmpegkmp.player/AudioTrackInfo.sampleRate|{}sampleRate[0]
+        final fun <get-sampleRate>(): kotlin/Int // io.github.aftrolle.ffmpegkmp.player/AudioTrackInfo.sampleRate.<get-sampleRate>|<get-sampleRate>(){}[0]
+    final val title // io.github.aftrolle.ffmpegkmp.player/AudioTrackInfo.title|{}title[0]
+        final fun <get-title>(): kotlin/String? // io.github.aftrolle.ffmpegkmp.player/AudioTrackInfo.title.<get-title>|<get-title>(){}[0]
+
+    final fun component1(): kotlin/Int // io.github.aftrolle.ffmpegkmp.player/AudioTrackInfo.component1|component1(){}[0]
+    final fun component2(): kotlin/String // io.github.aftrolle.ffmpegkmp.player/AudioTrackInfo.component2|component2(){}[0]
+    final fun component3(): kotlin/String? // io.github.aftrolle.ffmpegkmp.player/AudioTrackInfo.component3|component3(){}[0]
+    final fun component4(): kotlin/String? // io.github.aftrolle.ffmpegkmp.player/AudioTrackInfo.component4|component4(){}[0]
+    final fun component5(): kotlin/Int // io.github.aftrolle.ffmpegkmp.player/AudioTrackInfo.component5|component5(){}[0]
+    final fun component6(): kotlin/Int // io.github.aftrolle.ffmpegkmp.player/AudioTrackInfo.component6|component6(){}[0]
+    final fun component7(): kotlin/Boolean // io.github.aftrolle.ffmpegkmp.player/AudioTrackInfo.component7|component7(){}[0]
+    final fun component8(): kotlin/Boolean // io.github.aftrolle.ffmpegkmp.player/AudioTrackInfo.component8|component8(){}[0]
+    final fun copy(kotlin/Int = ..., kotlin/String = ..., kotlin/String? = ..., kotlin/String? = ..., kotlin/Int = ..., kotlin/Int = ..., kotlin/Boolean = ..., kotlin/Boolean = ...): io.github.aftrolle.ffmpegkmp.player/AudioTrackInfo // io.github.aftrolle.ffmpegkmp.player/AudioTrackInfo.copy|copy(kotlin.Int;kotlin.String;kotlin.String?;kotlin.String?;kotlin.Int;kotlin.Int;kotlin.Boolean;kotlin.Boolean){}[0]
+    final fun equals(kotlin/Any?): kotlin/Boolean // io.github.aftrolle.ffmpegkmp.player/AudioTrackInfo.equals|equals(kotlin.Any?){}[0]
+    final fun hashCode(): kotlin/Int // io.github.aftrolle.ffmpegkmp.player/AudioTrackInfo.hashCode|hashCode(){}[0]
+    final fun toString(): kotlin/String // io.github.aftrolle.ffmpegkmp.player/AudioTrackInfo.toString|toString(){}[0]
+}
+
+final class io.github.aftrolle.ffmpegkmp.player/PcmFormat { // io.github.aftrolle.ffmpegkmp.player/PcmFormat|null[0]
+    constructor <init>(kotlin/Int = ..., kotlin/Int = ...) // io.github.aftrolle.ffmpegkmp.player/PcmFormat.<init>|<init>(kotlin.Int;kotlin.Int){}[0]
+
+    final val channels // io.github.aftrolle.ffmpegkmp.player/PcmFormat.channels|{}channels[0]
+        final fun <get-channels>(): kotlin/Int // io.github.aftrolle.ffmpegkmp.player/PcmFormat.channels.<get-channels>|<get-channels>(){}[0]
+    final val sampleRate // io.github.aftrolle.ffmpegkmp.player/PcmFormat.sampleRate|{}sampleRate[0]
+        final fun <get-sampleRate>(): kotlin/Int // io.github.aftrolle.ffmpegkmp.player/PcmFormat.sampleRate.<get-sampleRate>|<get-sampleRate>(){}[0]
+
+    final fun component1(): kotlin/Int // io.github.aftrolle.ffmpegkmp.player/PcmFormat.component1|component1(){}[0]
+    final fun component2(): kotlin/Int // io.github.aftrolle.ffmpegkmp.player/PcmFormat.component2|component2(){}[0]
+    final fun copy(kotlin/Int = ..., kotlin/Int = ...): io.github.aftrolle.ffmpegkmp.player/PcmFormat // io.github.aftrolle.ffmpegkmp.player/PcmFormat.copy|copy(kotlin.Int;kotlin.Int){}[0]
+    final fun equals(kotlin/Any?): kotlin/Boolean // io.github.aftrolle.ffmpegkmp.player/PcmFormat.equals|equals(kotlin.Any?){}[0]
+    final fun hashCode(): kotlin/Int // io.github.aftrolle.ffmpegkmp.player/PcmFormat.hashCode|hashCode(){}[0]
+    final fun toString(): kotlin/String // io.github.aftrolle.ffmpegkmp.player/PcmFormat.toString|toString(){}[0]
+
+    final object Companion { // io.github.aftrolle.ffmpegkmp.player/PcmFormat.Companion|null[0]
+        final val Default // io.github.aftrolle.ffmpegkmp.player/PcmFormat.Companion.Default|{}Default[0]
+            final fun <get-Default>(): io.github.aftrolle.ffmpegkmp.player/PcmFormat // io.github.aftrolle.ffmpegkmp.player/PcmFormat.Companion.Default.<get-Default>|<get-Default>(){}[0]
+    }
+}
+
+final fun (io.github.aftrolle.ffmpegkmp.player/AudioMixControls).io.github.aftrolle.ffmpegkmp.player/selectTrack(kotlin/Int) // io.github.aftrolle.ffmpegkmp.player/selectTrack|selectTrack@io.github.aftrolle.ffmpegkmp.player.AudioMixControls(kotlin.Int){}[0]
+final fun (io.github.aftrolle.ffmpegkmp.player/AudioMixControls).io.github.aftrolle.ffmpegkmp.player/setLevel(io.github.aftrolle.ffmpegkmp.core/AudioLevel) // io.github.aftrolle.ffmpegkmp.player/setLevel|setLevel@io.github.aftrolle.ffmpegkmp.player.AudioMixControls(io.github.aftrolle.ffmpegkmp.core.AudioLevel){}[0]
+final fun (io.github.aftrolle.ffmpegkmp.player/AudioMixControls).io.github.aftrolle.ffmpegkmp.player/setMuted(kotlin/Boolean) // io.github.aftrolle.ffmpegkmp.player/setMuted|setMuted@io.github.aftrolle.ffmpegkmp.player.AudioMixControls(kotlin.Boolean){}[0]
+final fun (io.github.aftrolle.ffmpegkmp.player/AudioMixControls).io.github.aftrolle.ffmpegkmp.player/setTrackLevel(kotlin/Int, io.github.aftrolle.ffmpegkmp.core/AudioLevel) // io.github.aftrolle.ffmpegkmp.player/setTrackLevel|setTrackLevel@io.github.aftrolle.ffmpegkmp.player.AudioMixControls(kotlin.Int;io.github.aftrolle.ffmpegkmp.core.AudioLevel){}[0]
+final fun (io.github.aftrolle.ffmpegkmp.player/AudioMixControls).io.github.aftrolle.ffmpegkmp.player/setTrackMuted(kotlin/Int, kotlin/Boolean) // io.github.aftrolle.ffmpegkmp.player/setTrackMuted|setTrackMuted@io.github.aftrolle.ffmpegkmp.player.AudioMixControls(kotlin.Int;kotlin.Boolean){}[0]
+final fun (io.github.aftrolle.ffmpegkmp.player/AudioMixControls).io.github.aftrolle.ffmpegkmp.player/setTrackVolume(kotlin/Int, kotlin/Double) // io.github.aftrolle.ffmpegkmp.player/setTrackVolume|setTrackVolume@io.github.aftrolle.ffmpegkmp.player.AudioMixControls(kotlin.Int;kotlin.Double){}[0]
+final fun (io.github.aftrolle.ffmpegkmp.player/AudioMixControls).io.github.aftrolle.ffmpegkmp.player/setVolume(kotlin/Double) // io.github.aftrolle.ffmpegkmp.player/setVolume|setVolume@io.github.aftrolle.ffmpegkmp.player.AudioMixControls(kotlin.Double){}[0]

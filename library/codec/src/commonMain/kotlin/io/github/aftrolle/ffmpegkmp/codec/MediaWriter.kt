@@ -26,6 +26,7 @@ import io.github.aftrolle.ffmpegkmp.core.FFmpegKmpException
 import io.github.aftrolle.ffmpegkmp.core.InternalFFmpegKmpApi
 import kotlin.concurrent.atomics.AtomicBoolean
 import kotlin.concurrent.atomics.AtomicInt
+import kotlin.concurrent.atomics.AtomicLong
 import kotlin.concurrent.atomics.AtomicReference
 import kotlin.concurrent.atomics.decrementAndFetch
 import kotlin.concurrent.atomics.update
@@ -102,7 +103,11 @@ public class MediaWriter private constructor(
      * Opens an encoder for a video track, on the track's own thread. Throws
      * [MediaWritingException] when no encoder in this build and on this device takes [config], for
      * example HDR10 without a 10-bit encoder; falling back to another config is the caller's
-     * choice. Tracks are added before the first write.
+     * choice. Tracks are added before the first write; a writer takes at most 8.
+     *
+     * A [NamedCodec] opens that encoder only, and the exception names it and says why it did not
+     * open: no encoder of that name in this build, one for another codec, an option it does not
+     * recognise or a value it does not take, or the encoder's own failure.
      */
     public suspend fun addVideoTrack(config: VideoEncoderConfig): VideoTrack = addTrack("FFmpegKMP MediaWriter video") { thread ->
         val added = writing("add a video track: $config") { native.addVideoTrack(config.toNative()) }
@@ -121,6 +126,11 @@ public class MediaWriter private constructor(
     /**
      * Drains every track's encoder and writes the output's index, then closes the output. With
      * `fastStart` this moves the index to the front, which rewrites the file.
+     *
+     * Throws [MediaWritingException] for a track whose encoder took frames and, drained, produced
+     * no packets, as some MediaCodec encoders do, rather than writing an output with an empty
+     * track; the output is then left unfinished. A track that was never given a frame is not one,
+     * and finishes as before: MP4 leaves a track with no samples out of the output.
      */
     public suspend fun finish(): WriterResult {
         checkOpen()
@@ -129,7 +139,10 @@ public class MediaWriter private constructor(
         all.forEach { it.end() }
         all.forEach { it.rethrowFailure() }
         val result = withContext(NonCancellable) {
-            thread.submit { writing("finish $description") { native.finish() } }.await()
+            thread.submit {
+                all.forEach { it.checkProducedPackets(description) }
+                writing("finish $description") { native.finish() }
+            }.await()
         }
         finished.store(true)
         val progress = mutableProgress.value
@@ -210,7 +223,11 @@ public class MediaWriter private constructor(
             return MediaWriter(native, thread, description)
         }
 
-        /** Whether this platform and build have an encoder for [config], HDR included; it opens one to find out. */
+        /**
+         * Whether this platform and build have an encoder for [config], HDR included; it opens one
+         * to find out. For a [NamedCodec], whether that encoder exists, encodes the config's codec,
+         * and opens with the config and its options.
+         */
         public suspend fun canEncode(config: VideoEncoderConfig): Boolean {
             val thread = DecoderThread("FFmpegKMP MediaWriter probe")
             return try {
@@ -233,6 +250,31 @@ public sealed class WriterTrack(
     private val queue = Semaphore(QUEUED_WRITES)
     private val failure = AtomicReference<Throwable?>(null)
     private val ended = AtomicBoolean(false)
+
+    /** Frames the track's encoder took: video frames, or audio sample frames. */
+    private val taken = AtomicLong(0)
+
+    /** The encoder named in a failure, such as `h264_videotoolbox`. */
+    internal abstract val encoder: String
+
+    internal fun took(frames: Long) {
+        taken.addAndFetch(frames)
+    }
+
+    /** After the track has ended: fails it if its encoder took frames and produced no packets. */
+    internal fun checkProducedPackets(output: String) {
+        val frames = taken.load()
+        if (frames == 0L) return
+        val packets = writer.native().packetsWritten(index) ?: return
+        if (packets == 0L) {
+            throw MediaWritingException("Could not finish $output: encoder $encoder took $frames frames and produced no packets")
+        }
+    }
+
+    /** For tests: the track's packets are dropped, not written, as an encoder that gives none. Before the first write. */
+    internal fun discardPacketsForTesting() {
+        check(writer.native().discardPacketsForTesting(index)) { "The writer cannot drop track $index's packets" }
+    }
 
     /** Runs [encode] on the track's thread once the queue has room; [discard] frees the input if it never runs. */
     internal suspend fun enqueue(discard: () -> Unit, encode: suspend () -> Unit) {
@@ -278,10 +320,24 @@ public class VideoTrack internal constructor(
     public val config: VideoEncoderConfig,
     /** Frames in this format reach the encoder without a conversion. */
     public val inputFormat: FrameFormat,
-    /** The FFmpeg encoder that took the track, such as `hevc_videotoolbox`. */
+    /** The FFmpeg encoder that took the track, such as `hevc_videotoolbox`: a [NamedCodec]'s name. */
     public val encoderName: String,
+    /**
+     * Whether the encoder runs on the platform's codec hardware. The library's choice under a
+     * [CodecPreference] knows which kind it tried. For a [NamedCodec] it is true for the platform
+     * codec wrappers that [CodecPreference.AUTO] tries as hardware (MediaCodec, VideoToolbox,
+     * NVENC, Quick Sync, AMF, Media Foundation) and false for the rest, such as libaom, with one
+     * correction: a MediaCodec encoder reports Android's own answer for its component, the one
+     * `codec_name` pins or else the first `MediaCodecList` lists for the type, which MediaCodec
+     * opens by default (`MediaCodecInfo.isHardwareAccelerated` from Android 10; before, Android's
+     * software components are known by their `OMX.google.` and `c2.android.` prefixes). So
+     * `c2.android.avc.encoder` is software. FFmpeg does not say which implementation VideoToolbox
+     * runs, so VideoToolbox with `require_sw` still reports true.
+     */
     public val isHardware: Boolean,
 ) : WriterTrack(writer, thread, index) {
+    override val encoder: String get() = encoderName
+
     private val surface = AtomicReference<NativeEncoderSurface?>(null)
 
     /**
@@ -294,6 +350,10 @@ public class VideoTrack internal constructor(
      * only frames from its renderer; [inputFormat] describes the other kind.
      */
     public val zeroCopy: Boolean get() = surface.load() != null
+
+    /** The platform encoder behind a [zeroCopy] track's input surface, such as a MediaCodec component; null otherwise. */
+    @InternalFFmpegKmpApi
+    public val inputSurfaceEncoderName: String? get() = surface.load()?.encoderName
 
     /**
      * Turns the track into a [zeroCopy] one if the platform allows it, before it takes a frame,
@@ -354,6 +414,7 @@ public class VideoTrack internal constructor(
                 }
             }
             val end = pts + (frame.duration.takeIf { it.isPositive() } ?: config.frameRate?.timeOf(1) ?: Duration.ZERO)
+            took(1)
             writer.encoded(video = 1, audio = 0, end = end)
         }
     }
@@ -365,6 +426,8 @@ public class AudioTrack internal constructor(
     index: Int,
     public val config: AudioEncoderConfig,
 ) : WriterTrack(writer, thread, index) {
+    override val encoder: String get() = "AAC"
+
     private var written = 0L
 
     /**
@@ -379,6 +442,7 @@ public class AudioTrack internal constructor(
         val samples = pcm.copyOf(frames * config.channels)
         enqueue(discard = {}) {
             writing("encode audio") { writer.native().writeAudio(index, samples, 0, frames) }
+            took(frames.toLong())
             written += frames
             writer.encoded(video = 0, audio = frames.toLong(), end = (written * 1_000_000_000L / config.sampleRate).nanoseconds)
         }
@@ -391,7 +455,7 @@ private const val QUEUED_WRITES = 2
 private inline fun <T> writing(action: String, block: () -> T): T = try {
     block()
 } catch (failure: NativeMediaWriterException) {
-    val reason = when (failure.errorCode) {
+    val reason = failure.reason ?: when (failure.errorCode) {
         NativePlayerError.UNSUPPORTED -> "no encoder in this build and on this device takes it"
         NativePlayerError.INVALID_STATE -> "the writer is not in a state to do it"
         NativePlayerError.INVALID_ARGUMENT -> "the input does not fit the track"

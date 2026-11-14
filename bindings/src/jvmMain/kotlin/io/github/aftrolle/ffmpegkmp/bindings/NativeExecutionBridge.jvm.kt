@@ -12,7 +12,7 @@ public actual fun nativeHardwareDecoderSupport(codec: String, width: Int, height
 public actual fun createPlatformPlayerBridge(
     configuration: NativePlayerConfiguration,
     update: (NativePlayerSnapshot) -> Unit,
-    frame: (NativeVideoFrame) -> Unit,
+    frame: NativeVideoFrameSink,
     platformFrame: (NativePlatformVideoFrame) -> Boolean,
 ): NativePlayerBridge = createJavaCppPlayerBridge(configuration, update, frame, platformFrame)
 
@@ -26,10 +26,15 @@ public actual fun createPlatformVideoDecoder(
     decoderPreference: NativePlayerDecoderPreference,
     decoderThreads: Int,
     timeoutMicros: Long,
+    decoderThreadType: Int,
+    frameRing: Int,
+    decoderName: String?,
+    decoderOptions: Map<String, String>,
 ): NativeVideoDecoder {
     requireMemoryOutput(output)
     return createJavaCppVideoDecoder(
         source, output, memoryFormat, memoryWidth, memoryHeight, decoderPreference, decoderThreads, timeoutMicros,
+        decoderThreadType, frameRing, decoderName, decoderOptions,
     ) { 0 }
 }
 

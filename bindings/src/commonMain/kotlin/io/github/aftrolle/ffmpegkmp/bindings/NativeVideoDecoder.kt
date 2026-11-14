@@ -47,7 +47,7 @@ public class NativeVideoStream(
 
 /**
  * The native pull decoder (`ffmpegkmp_decoder.c`), or WebCodecs in a worker in the browser.
- * [start], [seek], [frameAt] and [close] must not overlap and, on Android, must run on the thread
+ * [start], [seek], [frameAt], [setSize] and [close] must not overlap and, on Android, must run on the thread
  * that started it. [interrupt], [abort] and [timeLeftMicros] are safe from any thread. Only the
  * browser's calls suspend; the native ones block their thread.
  */
@@ -57,6 +57,15 @@ public interface NativeVideoDecoder : AutoCloseable {
     public suspend fun start(): NativeVideoStream
     public suspend fun seek(positionNanos: Long)
     public suspend fun frameAt(positionNanos: Long): NativeDecodedFrame
+
+    /**
+     * Changes the memory format's frame size, 0 and 0 for the source's, as `memoryWidth` and
+     * `memoryHeight` of [createPlatformVideoDecoder] take it: the next [frameAt] converts the
+     * current frame again at that size, without decoding. Frames handed out before keep theirs.
+     * Throws [UnsupportedOperationException] where frames are not converted by the decoder: GPU
+     * buffers, and the browser.
+     */
+    public suspend fun setSize(width: Int, height: Int)
 
     /**
      * Fails the in-flight call, whose caller no longer wants it; later calls work, the next one
@@ -74,19 +83,33 @@ public interface NativeVideoDecoder : AutoCloseable {
     public fun timeLeftMicros(): Long
 }
 
+/** A decoder call that failed; [reason], where the decoder gave one (a named decoder's), says why in words. */
 @InternalFFmpegKmpApi
-public class NativeVideoDecoderException(message: String, errorCode: Int) : NativeCallException(message, errorCode)
+public class NativeVideoDecoderException(
+    message: String,
+    errorCode: Int,
+    public val reason: String? = null,
+) : NativeCallException(message, errorCode)
 
 /**
  * Creates a decoder for [source] without reading it; [NativeVideoDecoder.start] opens it.
  * [memoryFormat] is the [NativeVideoDecoderOutput.MEMORY] frames' format, null for frames as
  * decoded, and [memoryWidth] and [memoryHeight] its frames' size, 0 for the source's: frames are
  * scaled to it as they are converted, with the sample aspect ratio that keeps their display
- * aspect. [decoderThreads] is the software decoder's thread count, 0 for FFmpeg's automatic count capped
- * at 8; hardware decoders ignore it. [timeoutMicros] bounds each start, seek and frameAt natively (0 for none): calls past it fail
+ * aspect. [decoderThreads] is the software decoder's thread count, 0 for FFmpeg's automatic count,
+ * and [decoderThreadType] its `thread_type`, FF_THREAD_FRAME (1) and FF_THREAD_SLICE (2) bits,
+ * 0 for FFmpeg's default of both; hardware decoders ignore both. The frames' conversions work with
+ * as many threads. [frameRing] is how many frames the caller may hold at once, at least 2; the
+ * browser keeps 3. A [decoderName] opens that FFmpeg
+ * decoder alone, with [decoderOptions] as its AVOptions, instead of choosing by [decoderPreference]:
+ * no fallback, and [NativeVideoDecoder.start] fails with a [NativeVideoDecoderException.reason]
+ * when it does not open; the browser fails it as unsupported. [timeoutMicros] bounds each start, seek and frameAt natively (0 for none): calls past it fail
  * with [NativePlayerError.TIMED_OUT]. Other platforms reject [NativeVideoDecoderOutput.GPU_BUFFERS], which needs
  * Android 14 (API 34).
  */
+/** The frames a decoder's ring holds unless told otherwise. */
+internal const val DEFAULT_FRAME_RING: Int = 3
+
 @InternalFFmpegKmpApi
 public expect fun createPlatformVideoDecoder(
     source: NativePlayerSource,
@@ -97,6 +120,10 @@ public expect fun createPlatformVideoDecoder(
     decoderPreference: NativePlayerDecoderPreference,
     decoderThreads: Int,
     timeoutMicros: Long,
+    decoderThreadType: Int = 0,
+    frameRing: Int = 3,
+    decoderName: String? = null,
+    decoderOptions: Map<String, String> = emptyMap(),
 ): NativeVideoDecoder
 
 /** Raw `ffmpegkmp_video_decoder_*` calls for one open decoder, implemented per platform binding. */
@@ -107,9 +134,13 @@ internal interface VideoDecoderEngineCalls {
 
     /** Describes the frame at [positionNanos] with a new reference to it, or throws [NativeVideoDecoderException]. */
     fun frameAt(positionNanos: Long): NativeDecodedFrame
+    fun setSize(width: Int, height: Int): Int
     fun interrupt()
     fun abort()
     fun timeLeft(): Long
+
+    /** Why the last call failed, in the decoder's words, where it says (a named decoder's open); null otherwise. */
+    fun error(): String? = null
 
     /** Frees the decoder and anything the binding keeps alive for it. */
     fun release()
@@ -122,7 +153,10 @@ internal class GuardedVideoDecoder(
     private val guard = NativeHandleGuard()
 
     override suspend fun start(): NativeVideoStream = guard.use(::closedError) {
-        requireNative(engine.start(), "decode video from '$input'", ::NativeVideoDecoderException)
+        requireNative(engine.start(), "decode video from '$input'") { message, code ->
+            val reason = engine.error()?.takeIf(String::isNotEmpty)
+            NativeVideoDecoderException(reason?.let { "$message: $it" } ?: message, code, reason)
+        }
         val snapshot = engine.info()
         NativeVideoStream(
             info = snapshot.videoInfo
@@ -141,6 +175,10 @@ internal class GuardedVideoDecoder(
     override suspend fun frameAt(positionNanos: Long): NativeDecodedFrame = guard.use(::closedError) {
         require(positionNanos >= 0) { "Frame position must not be negative" }
         engine.frameAt(positionNanos)
+    }
+
+    override suspend fun setSize(width: Int, height: Int) = guard.use(::closedError) {
+        requireNative(engine.setSize(width, height), "resize frames to ${width}x$height", ::NativeVideoDecoderException)
     }
 
     override fun interrupt() = guard.use({}) { engine.interrupt() }

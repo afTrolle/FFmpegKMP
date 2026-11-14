@@ -34,8 +34,8 @@ class FFplayColorMetadataTest {
 
         val result = decideColorOutput(video, capable, FFplayHdrPolicy.PRESERVE_OR_TONE_MAP)
 
-        assertEquals(ColorPrimaries.BT2020, result.sourceColorSpace)
-        assertEquals(ColorPrimaries.BT2020, result.outputColorSpace)
+        assertEquals(ColorPrimaries.BT2020, result.sourcePrimaries)
+        assertEquals(ColorPrimaries.BT2020, result.outputPrimaries)
         assertEquals(FFplayHdrResult.PRESERVED, result.hdrResult)
     }
 
@@ -79,7 +79,7 @@ class FFplayColorMetadataTest {
         )
 
         assertEquals(FFplayHdrResult.NOT_HDR, result.hdrResult)
-        assertEquals(ColorPrimaries.BT709, result.outputColorSpace)
+        assertEquals(ColorPrimaries.BT709, result.outputPrimaries)
     }
 
     @Test
@@ -120,8 +120,8 @@ class FFplayColorMetadataTest {
             FFplayHdrPolicy.PRESERVE_OR_TONE_MAP,
         )
 
-        assertEquals(ColorPrimaries.DISPLAY_P3, p3.outputColorSpace)
-        assertEquals(ColorPrimaries.BT709, srgb.outputColorSpace)
+        assertEquals(ColorPrimaries.DISPLAY_P3, p3.outputPrimaries)
+        assertEquals(ColorPrimaries.BT709, srgb.outputPrimaries)
         assertEquals(FFplayHdrResult.NOT_HDR, p3.hdrResult)
         assertEquals(FFplayHdrResult.NOT_HDR, srgb.hdrResult)
     }

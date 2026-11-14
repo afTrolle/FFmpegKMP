@@ -30,7 +30,7 @@ class FFplayProductionNativeTest {
     fun publicPlayerDecodesARealMountedVideoThroughTheAppleBridge() = runBlocking {
         val bytes = bundledTestResource("playback-color-patches-1s.mp4")
         val output = NativeProductionOutput()
-        val player = FFplayPlayer(FFplayConfiguration(decoderPreference = CodecPreference.SOFTWARE))
+        val player = FFplayPlayer(FFplayConfiguration(decoder = CodecPreference.SOFTWARE))
         player.attachOutput(output)
 
         try {

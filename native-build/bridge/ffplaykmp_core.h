@@ -164,7 +164,125 @@ int ffplaykmp_video_codec_open(
         int thread_type,
         void *android_surface,
         AVDictionary **options);
+
+/*
+ * Opens `stream_index`'s decoder as `preference` asks: the one rule for AUTO's
+ * hardware-to-software fallback, which the pull decoder and the player share.
+ *
+ * Hardware is tried when the preference is not SOFTWARE and `hardware_wanted`
+ * says the caller's output takes hardware frames, except that under AUTO an
+ * `earlier` reason (FAILED: a hardware decoder failed on this source before;
+ * BUDGET: the caller keeps to software after a full budget) skips it and is
+ * reported again. Under AUTO a hardware decoder the budget has no place for
+ * (FFPLAYKMP_ERROR_BUSY) or that fails to open is closed and the software one
+ * opened in its place. REQUIRE_HARDWARE fails instead, with
+ * FFPLAYKMP_ERROR_UNSUPPORTED when there is none or BUSY with the budget full;
+ * SOFTWARE never tries hardware.
+ *
+ * `*fallback` gets why a decoder that was to be hardware under AUTO is
+ * software: UNSUPPORTED (this host has none for the codec), FAILED, BUDGET or
+ * `earlier`; NONE otherwise, also when the output wanted no hardware. A caller
+ * that keeps state across opens (the player's per-source hardware_failed and
+ * Surface budget_fallback) updates it from `*fallback` and passes it back as
+ * `earlier`; a caller that retries in software after a hardware decoder failed
+ * to decode passes FAILED.
+ *
+ * `threads` and `thread_type` are ffplaykmp_video_codec_open's for the
+ * software decoder. `android_surface` and `hardware_options` (may be NULL;
+ * copied, so the caller keeps its own) go to the hardware attempt only, such
+ * as MediaCodec's wait timeout. On failure the caller still closes `codec`.
+ */
+int ffplaykmp_video_codec_open_preferred(
+        ffplaykmp_video_codec *codec,
+        AVFormatContext *format,
+        int stream_index,
+        ffplaykmp_decoder_preference preference,
+        int hardware_wanted,
+        ffplaykmp_decoder_fallback earlier,
+        int threads,
+        int thread_type,
+        void *android_surface,
+        const AVDictionary *hardware_options,
+        ffplaykmp_decoder_fallback *fallback);
+
+/*
+ * Opens the decoder FFmpeg knows as `name` ("h264", "libaom-av1", "hevc_mediacodec"), as
+ * `ffmpeg -c:v name` before `-i` takes it, alone: no other is tried in its place and no
+ * preference applies. It must decode `stream_index`'s codec. `options` are its AVOptions packed
+ * as ffmpegkmp_codec_options_check takes them, set by ffmpegkmp_codec_options_set before
+ * avcodec_open2. A platform wrapper (AV_CODEC_CAP_HARDWARE, such as MediaCodec's) opens as the
+ * hardware decoder, taking a place in the budget (FFPLAYKMP_ERROR_BUSY with none free), onto
+ * `android_surface` on Android, with `hardware_options` (copied; may be NULL) as the hardware
+ * attempt of ffplaykmp_video_codec_open_preferred gets them; any other decoder is software, with
+ * `threads` of `thread_type` unless its options set them. On failure `error` (may be NULL) says
+ * why, in words, and the caller still closes `codec`.
+ */
+int ffplaykmp_video_codec_open_named(
+        ffplaykmp_video_codec *codec,
+        AVFormatContext *format,
+        int stream_index,
+        const char *name,
+        const char *options,
+        int options_size,
+        int threads,
+        int thread_type,
+        void *android_surface,
+        const AVDictionary *hardware_options,
+        char *error,
+        size_t error_size);
 void ffplaykmp_video_codec_close(ffplaykmp_video_codec *codec);
+
+/*
+ * Adds MediaCodec's wait timeout to `options`, the hardware options every decoder FFmpegKMP opens
+ * on Android takes: a codec that neither takes input nor outputs a frame for that long makes
+ * avcodec_send_packet and avcodec_receive_frame return EAGAIN (FFmpegKMP's FFmpeg overlay), so the
+ * loop calling them gets to check for an abort or a deadline instead of hanging on a stalled codec.
+ * Adds nothing elsewhere.
+ */
+int ffplaykmp_mediacodec_wait_options(AVDictionary **options);
+
+/*
+ * The frame-selection rule VideoDecoder.frameAt and a player following an external clock share:
+ * the frame shown for `position` is the newest one at or before it (a frame's span runs from its
+ * own time to the next frame's), so a frame at `pts` has been reached once this holds; the frame
+ * before it is then passed. Times in one time base.
+ */
+static inline int ffplaykmp_frame_reached(int64_t pts, int64_t position) {
+    return pts <= position;
+}
+
+/*
+ * A position in nanoseconds from the start as a timestamp in `time_base`, where the stream's
+ * position zero is `origin` (ffplaykmp_stream_timing's): rounded to the nearest tick, as
+ * VideoDecoder.frameAt takes its position and a player following a clock takes the clock's.
+ */
+static inline int64_t ffplaykmp_stream_time(int64_t origin, AVRational time_base, int64_t position_ns) {
+    const int64_t offset = av_rescale_q_rnd(
+            position_ns, (AVRational){ 1, 1000000000 }, time_base, AV_ROUND_NEAR_INF | AV_ROUND_PASS_MINMAX);
+    return origin > 0 && offset > INT64_MAX - origin ? INT64_MAX : origin + offset;
+}
+
+/*
+ * Checks a codec's AVOptions as the bridge packs them: `options_size` bytes holding, for each
+ * option, its key and then its value, each a NUL-terminated string, the key not empty. NULL and 0
+ * for none. On failure `error` (may be NULL) says why.
+ */
+int ffmpegkmp_codec_options_check(const char *options, int options_size, char *error, size_t error_size);
+
+/*
+ * Sets checked `options` on `context`, a context of `codec`, each as avcodec_open2 sets an options
+ * dictionary's: av_opt_set on the context and its private options. Fails naming every option
+ * the codec does not recognise, as `ffmpeg` does, or else the first it does not take, and refuses
+ * an option that is no video encoding (for an encoder) or decoding (for a decoder) parameter, as
+ * `ffmpeg` refuses it. `error` (may be NULL) gets the reason.
+ */
+int ffmpegkmp_codec_options_set(
+        AVCodecContext *context,
+        const AVCodec *codec,
+        const char *options,
+        int options_size,
+        char *error,
+        size_t error_size);
 /*
  * Whether `codec` decoded `frame` in hardware: a hwaccel frame, or any frame
  * MediaCodec decoded, including the software frames it decodes into memory.
@@ -194,6 +312,10 @@ typedef struct ffmpegkmp_converter ffmpegkmp_converter;
  * Emscripten build keeps its fixed counts whatever `threads` is.
  */
 ffmpegkmp_converter *ffmpegkmp_converter_alloc(int threads);
+/* The `threads` a converter was made with. */
+int ffmpegkmp_converter_threads(const ffmpegkmp_converter *converter);
+/* The threads the conversions of `frame`, and of the handles referencing it later, work with: 0 for one per core. */
+void ffmpegkmp_frame_set_converter_threads(ffmpegkmp_frame *frame, int threads);
 /* Frees *converter, joins its workers and sets it to NULL; NULL is a no-op. */
 void ffmpegkmp_converter_free(ffmpegkmp_converter **converter);
 
@@ -272,6 +394,8 @@ struct ffmpegkmp_frame {
     AVFrame *download;
     /* Where the download takes its buffer while one is free; NULL for a new one (ffmpegkmp_frame_set_download_pool). */
     ffmpegkmp_frame_pool *download_pool;
+    /* The threads its conversions work with (ffmpegkmp_frame_set_converter_threads); 0 for one per core. */
+    int converter_threads;
     /* CVPixelBuffer read locks the handle's maps hold. */
     int locks;
     /* A map for writing is open (ffmpegkmp_frame_map_writable). */
@@ -298,6 +422,12 @@ ffmpegkmp_frame *ffmpegkmp_frame_from_av(const AVFrame *frame);
  */
 ffmpegkmp_frame_pool *ffmpegkmp_frame_pool_alloc(int32_t capacity);
 void ffmpegkmp_frame_pool_free(ffmpegkmp_frame_pool *pool);
+/*
+ * Frees the memory of every layout and size the pool keeps, as freeing it
+ * does, and leaves the pool open: frames still out stay valid and their memory
+ * is freed as they come back.
+ */
+void ffmpegkmp_frame_pool_trim(ffmpegkmp_frame_pool *pool);
 /* Drops a reference ffmpegkmp_frame_set_download_pool took; NULL is a no-op. */
 void ffmpegkmp_pool_release(ffmpegkmp_frame_pool *pool);
 
@@ -353,6 +483,21 @@ int ffmpegkmp_frame_is_ringed(const AVFrame *frame);
 
 /* Counts pixel memory the bridge allocated, for ffmpegkmp_frame_get_statistics. */
 void ffmpegkmp_frame_count_allocation(size_t bytes);
+
+/* The gamut maps the converter has made for its tone map and keeps, for ffmpegkmp_frame_get_statistics. */
+uint64_t ffmpegkmp_gamut_maps_made(void);
+
+/*
+ * The points of the gamut map the converter's tone map takes from `from`
+ * primaries into `to`'s, for SDR codes in `transfer`: FFMPEGKMP_GAMUT_POINTS
+ * cubed points of three floats, made on first use and kept for the process.
+ * NULL with the error in *error when it cannot be made.
+ */
+const float *ffmpegkmp_gamut_map_points(
+        enum AVColorPrimaries from,
+        enum AVColorPrimaries to,
+        enum AVColorTransferCharacteristic transfer,
+        int *error);
 
 /* Primaries the converter distinguishes; the rest are taken as BT.709, as the outputs always have. */
 enum AVColorPrimaries ffmpegkmp_known_primaries(enum AVColorPrimaries primaries);

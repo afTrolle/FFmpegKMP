@@ -1,0 +1,317 @@
+// Klib ABI Dump
+// Targets: [iosArm64, iosSimulatorArm64, js, macosArm64, tvosArm64, tvosSimulatorArm64, wasmJs, watchosArm64, watchosDeviceArm64, watchosSimulatorArm64]
+// Rendering settings:
+// - Signature version: 2
+// - Show manifest properties: true
+// - Show declarations: true
+
+// Library unique name: <io.github.aftrolle.ffmpegkmp:core>
+open annotation class io.github.aftrolle.ffmpegkmp.core/ExperimentalFFmpegKmpApi : kotlin/Annotation { // io.github.aftrolle.ffmpegkmp.core/ExperimentalFFmpegKmpApi|null[0]
+    constructor <init>() // io.github.aftrolle.ffmpegkmp.core/ExperimentalFFmpegKmpApi.<init>|<init>(){}[0]
+}
+
+open annotation class io.github.aftrolle.ffmpegkmp.core/InternalFFmpegKmpApi : kotlin/Annotation { // io.github.aftrolle.ffmpegkmp.core/InternalFFmpegKmpApi|null[0]
+    constructor <init>() // io.github.aftrolle.ffmpegkmp.core/InternalFFmpegKmpApi.<init>|<init>(){}[0]
+}
+
+final enum class io.github.aftrolle.ffmpegkmp.core/LogLevel : kotlin/Enum<io.github.aftrolle.ffmpegkmp.core/LogLevel> { // io.github.aftrolle.ffmpegkmp.core/LogLevel|null[0]
+    enum entry DEBUG // io.github.aftrolle.ffmpegkmp.core/LogLevel.DEBUG|null[0]
+    enum entry ERROR // io.github.aftrolle.ffmpegkmp.core/LogLevel.ERROR|null[0]
+    enum entry FATAL // io.github.aftrolle.ffmpegkmp.core/LogLevel.FATAL|null[0]
+    enum entry INFO // io.github.aftrolle.ffmpegkmp.core/LogLevel.INFO|null[0]
+    enum entry PANIC // io.github.aftrolle.ffmpegkmp.core/LogLevel.PANIC|null[0]
+    enum entry QUIET // io.github.aftrolle.ffmpegkmp.core/LogLevel.QUIET|null[0]
+    enum entry TRACE // io.github.aftrolle.ffmpegkmp.core/LogLevel.TRACE|null[0]
+    enum entry UNKNOWN // io.github.aftrolle.ffmpegkmp.core/LogLevel.UNKNOWN|null[0]
+    enum entry VERBOSE // io.github.aftrolle.ffmpegkmp.core/LogLevel.VERBOSE|null[0]
+    enum entry WARNING // io.github.aftrolle.ffmpegkmp.core/LogLevel.WARNING|null[0]
+
+    final val entries // io.github.aftrolle.ffmpegkmp.core/LogLevel.entries|#static{}entries[0]
+        final fun <get-entries>(): kotlin.enums/EnumEntries<io.github.aftrolle.ffmpegkmp.core/LogLevel> // io.github.aftrolle.ffmpegkmp.core/LogLevel.entries.<get-entries>|<get-entries>#static(){}[0]
+
+    final fun valueOf(kotlin/String): io.github.aftrolle.ffmpegkmp.core/LogLevel // io.github.aftrolle.ffmpegkmp.core/LogLevel.valueOf|valueOf#static(kotlin.String){}[0]
+    final fun values(): kotlin/Array<io.github.aftrolle.ffmpegkmp.core/LogLevel> // io.github.aftrolle.ffmpegkmp.core/LogLevel.values|values#static(){}[0]
+}
+
+final enum class io.github.aftrolle.ffmpegkmp.core/OutputStream : kotlin/Enum<io.github.aftrolle.ffmpegkmp.core/OutputStream> { // io.github.aftrolle.ffmpegkmp.core/OutputStream|null[0]
+    enum entry STDERR // io.github.aftrolle.ffmpegkmp.core/OutputStream.STDERR|null[0]
+    enum entry STDOUT // io.github.aftrolle.ffmpegkmp.core/OutputStream.STDOUT|null[0]
+
+    final val entries // io.github.aftrolle.ffmpegkmp.core/OutputStream.entries|#static{}entries[0]
+        final fun <get-entries>(): kotlin.enums/EnumEntries<io.github.aftrolle.ffmpegkmp.core/OutputStream> // io.github.aftrolle.ffmpegkmp.core/OutputStream.entries.<get-entries>|<get-entries>#static(){}[0]
+
+    final fun valueOf(kotlin/String): io.github.aftrolle.ffmpegkmp.core/OutputStream // io.github.aftrolle.ffmpegkmp.core/OutputStream.valueOf|valueOf#static(kotlin.String){}[0]
+    final fun values(): kotlin/Array<io.github.aftrolle.ffmpegkmp.core/OutputStream> // io.github.aftrolle.ffmpegkmp.core/OutputStream.values|values#static(){}[0]
+}
+
+final enum class io.github.aftrolle.ffmpegkmp.core/SessionState : kotlin/Enum<io.github.aftrolle.ffmpegkmp.core/SessionState> { // io.github.aftrolle.ffmpegkmp.core/SessionState|null[0]
+    enum entry CANCELLED // io.github.aftrolle.ffmpegkmp.core/SessionState.CANCELLED|null[0]
+    enum entry CLOSED // io.github.aftrolle.ffmpegkmp.core/SessionState.CLOSED|null[0]
+    enum entry FAILED // io.github.aftrolle.ffmpegkmp.core/SessionState.FAILED|null[0]
+    enum entry QUEUED // io.github.aftrolle.ffmpegkmp.core/SessionState.QUEUED|null[0]
+    enum entry RUNNING // io.github.aftrolle.ffmpegkmp.core/SessionState.RUNNING|null[0]
+    enum entry SUCCEEDED // io.github.aftrolle.ffmpegkmp.core/SessionState.SUCCEEDED|null[0]
+
+    final val entries // io.github.aftrolle.ffmpegkmp.core/SessionState.entries|#static{}entries[0]
+        final fun <get-entries>(): kotlin.enums/EnumEntries<io.github.aftrolle.ffmpegkmp.core/SessionState> // io.github.aftrolle.ffmpegkmp.core/SessionState.entries.<get-entries>|<get-entries>#static(){}[0]
+
+    final fun valueOf(kotlin/String): io.github.aftrolle.ffmpegkmp.core/SessionState // io.github.aftrolle.ffmpegkmp.core/SessionState.valueOf|valueOf#static(kotlin.String){}[0]
+    final fun values(): kotlin/Array<io.github.aftrolle.ffmpegkmp.core/SessionState> // io.github.aftrolle.ffmpegkmp.core/SessionState.values|values#static(){}[0]
+}
+
+abstract interface <#A: out kotlin/Any?> io.github.aftrolle.ffmpegkmp.core/ExecutionSession : kotlin/AutoCloseable { // io.github.aftrolle.ffmpegkmp.core/ExecutionSession|null[0]
+    abstract val arguments // io.github.aftrolle.ffmpegkmp.core/ExecutionSession.arguments|{}arguments[0]
+        abstract fun <get-arguments>(): kotlin.collections/List<kotlin/String> // io.github.aftrolle.ffmpegkmp.core/ExecutionSession.arguments.<get-arguments>|<get-arguments>(){}[0]
+    abstract val events // io.github.aftrolle.ffmpegkmp.core/ExecutionSession.events|{}events[0]
+        abstract fun <get-events>(): kotlinx.coroutines.flow/Flow<io.github.aftrolle.ffmpegkmp.core/ExecutionEvent> // io.github.aftrolle.ffmpegkmp.core/ExecutionSession.events.<get-events>|<get-events>(){}[0]
+    abstract val id // io.github.aftrolle.ffmpegkmp.core/ExecutionSession.id|{}id[0]
+        abstract fun <get-id>(): kotlin/Long // io.github.aftrolle.ffmpegkmp.core/ExecutionSession.id.<get-id>|<get-id>(){}[0]
+    abstract val state // io.github.aftrolle.ffmpegkmp.core/ExecutionSession.state|{}state[0]
+        abstract fun <get-state>(): kotlinx.coroutines.flow/StateFlow<io.github.aftrolle.ffmpegkmp.core/SessionState> // io.github.aftrolle.ffmpegkmp.core/ExecutionSession.state.<get-state>|<get-state>(){}[0]
+
+    abstract fun cancel() // io.github.aftrolle.ffmpegkmp.core/ExecutionSession.cancel|cancel(){}[0]
+    abstract suspend fun await(): #A // io.github.aftrolle.ffmpegkmp.core/ExecutionSession.await|await(){}[0]
+    abstract suspend fun cancelAndJoin() // io.github.aftrolle.ffmpegkmp.core/ExecutionSession.cancelAndJoin|cancelAndJoin(){}[0]
+}
+
+sealed interface io.github.aftrolle.ffmpegkmp.core/ExecutionEvent { // io.github.aftrolle.ffmpegkmp.core/ExecutionEvent|null[0]
+    final class Log : io.github.aftrolle.ffmpegkmp.core/ExecutionEvent { // io.github.aftrolle.ffmpegkmp.core/ExecutionEvent.Log|null[0]
+        constructor <init>(io.github.aftrolle.ffmpegkmp.core/LogLevel, kotlin/String) // io.github.aftrolle.ffmpegkmp.core/ExecutionEvent.Log.<init>|<init>(io.github.aftrolle.ffmpegkmp.core.LogLevel;kotlin.String){}[0]
+
+        final val level // io.github.aftrolle.ffmpegkmp.core/ExecutionEvent.Log.level|{}level[0]
+            final fun <get-level>(): io.github.aftrolle.ffmpegkmp.core/LogLevel // io.github.aftrolle.ffmpegkmp.core/ExecutionEvent.Log.level.<get-level>|<get-level>(){}[0]
+        final val message // io.github.aftrolle.ffmpegkmp.core/ExecutionEvent.Log.message|{}message[0]
+            final fun <get-message>(): kotlin/String // io.github.aftrolle.ffmpegkmp.core/ExecutionEvent.Log.message.<get-message>|<get-message>(){}[0]
+
+        final fun component1(): io.github.aftrolle.ffmpegkmp.core/LogLevel // io.github.aftrolle.ffmpegkmp.core/ExecutionEvent.Log.component1|component1(){}[0]
+        final fun component2(): kotlin/String // io.github.aftrolle.ffmpegkmp.core/ExecutionEvent.Log.component2|component2(){}[0]
+        final fun copy(io.github.aftrolle.ffmpegkmp.core/LogLevel = ..., kotlin/String = ...): io.github.aftrolle.ffmpegkmp.core/ExecutionEvent.Log // io.github.aftrolle.ffmpegkmp.core/ExecutionEvent.Log.copy|copy(io.github.aftrolle.ffmpegkmp.core.LogLevel;kotlin.String){}[0]
+        final fun equals(kotlin/Any?): kotlin/Boolean // io.github.aftrolle.ffmpegkmp.core/ExecutionEvent.Log.equals|equals(kotlin.Any?){}[0]
+        final fun hashCode(): kotlin/Int // io.github.aftrolle.ffmpegkmp.core/ExecutionEvent.Log.hashCode|hashCode(){}[0]
+        final fun toString(): kotlin/String // io.github.aftrolle.ffmpegkmp.core/ExecutionEvent.Log.toString|toString(){}[0]
+    }
+
+    final class Output : io.github.aftrolle.ffmpegkmp.core/ExecutionEvent { // io.github.aftrolle.ffmpegkmp.core/ExecutionEvent.Output|null[0]
+        constructor <init>(io.github.aftrolle.ffmpegkmp.core/OutputStream, kotlin/String) // io.github.aftrolle.ffmpegkmp.core/ExecutionEvent.Output.<init>|<init>(io.github.aftrolle.ffmpegkmp.core.OutputStream;kotlin.String){}[0]
+
+        final val stream // io.github.aftrolle.ffmpegkmp.core/ExecutionEvent.Output.stream|{}stream[0]
+            final fun <get-stream>(): io.github.aftrolle.ffmpegkmp.core/OutputStream // io.github.aftrolle.ffmpegkmp.core/ExecutionEvent.Output.stream.<get-stream>|<get-stream>(){}[0]
+        final val text // io.github.aftrolle.ffmpegkmp.core/ExecutionEvent.Output.text|{}text[0]
+            final fun <get-text>(): kotlin/String // io.github.aftrolle.ffmpegkmp.core/ExecutionEvent.Output.text.<get-text>|<get-text>(){}[0]
+
+        final fun component1(): io.github.aftrolle.ffmpegkmp.core/OutputStream // io.github.aftrolle.ffmpegkmp.core/ExecutionEvent.Output.component1|component1(){}[0]
+        final fun component2(): kotlin/String // io.github.aftrolle.ffmpegkmp.core/ExecutionEvent.Output.component2|component2(){}[0]
+        final fun copy(io.github.aftrolle.ffmpegkmp.core/OutputStream = ..., kotlin/String = ...): io.github.aftrolle.ffmpegkmp.core/ExecutionEvent.Output // io.github.aftrolle.ffmpegkmp.core/ExecutionEvent.Output.copy|copy(io.github.aftrolle.ffmpegkmp.core.OutputStream;kotlin.String){}[0]
+        final fun equals(kotlin/Any?): kotlin/Boolean // io.github.aftrolle.ffmpegkmp.core/ExecutionEvent.Output.equals|equals(kotlin.Any?){}[0]
+        final fun hashCode(): kotlin/Int // io.github.aftrolle.ffmpegkmp.core/ExecutionEvent.Output.hashCode|hashCode(){}[0]
+        final fun toString(): kotlin/String // io.github.aftrolle.ffmpegkmp.core/ExecutionEvent.Output.toString|toString(){}[0]
+    }
+
+    final class Progress : io.github.aftrolle.ffmpegkmp.core/ExecutionEvent { // io.github.aftrolle.ffmpegkmp.core/ExecutionEvent.Progress|null[0]
+        constructor <init>(kotlin/Long? = ..., kotlin/Double? = ..., kotlin.time/Duration? = ..., kotlin/Long? = ..., kotlin/String? = ..., kotlin/Double? = ..., kotlin/Boolean = ...) // io.github.aftrolle.ffmpegkmp.core/ExecutionEvent.Progress.<init>|<init>(kotlin.Long?;kotlin.Double?;kotlin.time.Duration?;kotlin.Long?;kotlin.String?;kotlin.Double?;kotlin.Boolean){}[0]
+
+        final val bitrate // io.github.aftrolle.ffmpegkmp.core/ExecutionEvent.Progress.bitrate|{}bitrate[0]
+            final fun <get-bitrate>(): kotlin/String? // io.github.aftrolle.ffmpegkmp.core/ExecutionEvent.Progress.bitrate.<get-bitrate>|<get-bitrate>(){}[0]
+        final val end // io.github.aftrolle.ffmpegkmp.core/ExecutionEvent.Progress.end|{}end[0]
+            final fun <get-end>(): kotlin/Boolean // io.github.aftrolle.ffmpegkmp.core/ExecutionEvent.Progress.end.<get-end>|<get-end>(){}[0]
+        final val fps // io.github.aftrolle.ffmpegkmp.core/ExecutionEvent.Progress.fps|{}fps[0]
+            final fun <get-fps>(): kotlin/Double? // io.github.aftrolle.ffmpegkmp.core/ExecutionEvent.Progress.fps.<get-fps>|<get-fps>(){}[0]
+        final val frame // io.github.aftrolle.ffmpegkmp.core/ExecutionEvent.Progress.frame|{}frame[0]
+            final fun <get-frame>(): kotlin/Long? // io.github.aftrolle.ffmpegkmp.core/ExecutionEvent.Progress.frame.<get-frame>|<get-frame>(){}[0]
+        final val outTime // io.github.aftrolle.ffmpegkmp.core/ExecutionEvent.Progress.outTime|{}outTime[0]
+            final fun <get-outTime>(): kotlin.time/Duration? // io.github.aftrolle.ffmpegkmp.core/ExecutionEvent.Progress.outTime.<get-outTime>|<get-outTime>(){}[0]
+        final val speed // io.github.aftrolle.ffmpegkmp.core/ExecutionEvent.Progress.speed|{}speed[0]
+            final fun <get-speed>(): kotlin/Double? // io.github.aftrolle.ffmpegkmp.core/ExecutionEvent.Progress.speed.<get-speed>|<get-speed>(){}[0]
+        final val totalSizeBytes // io.github.aftrolle.ffmpegkmp.core/ExecutionEvent.Progress.totalSizeBytes|{}totalSizeBytes[0]
+            final fun <get-totalSizeBytes>(): kotlin/Long? // io.github.aftrolle.ffmpegkmp.core/ExecutionEvent.Progress.totalSizeBytes.<get-totalSizeBytes>|<get-totalSizeBytes>(){}[0]
+
+        final fun component1(): kotlin/Long? // io.github.aftrolle.ffmpegkmp.core/ExecutionEvent.Progress.component1|component1(){}[0]
+        final fun component2(): kotlin/Double? // io.github.aftrolle.ffmpegkmp.core/ExecutionEvent.Progress.component2|component2(){}[0]
+        final fun component3(): kotlin.time/Duration? // io.github.aftrolle.ffmpegkmp.core/ExecutionEvent.Progress.component3|component3(){}[0]
+        final fun component4(): kotlin/Long? // io.github.aftrolle.ffmpegkmp.core/ExecutionEvent.Progress.component4|component4(){}[0]
+        final fun component5(): kotlin/String? // io.github.aftrolle.ffmpegkmp.core/ExecutionEvent.Progress.component5|component5(){}[0]
+        final fun component6(): kotlin/Double? // io.github.aftrolle.ffmpegkmp.core/ExecutionEvent.Progress.component6|component6(){}[0]
+        final fun component7(): kotlin/Boolean // io.github.aftrolle.ffmpegkmp.core/ExecutionEvent.Progress.component7|component7(){}[0]
+        final fun copy(kotlin/Long? = ..., kotlin/Double? = ..., kotlin.time/Duration? = ..., kotlin/Long? = ..., kotlin/String? = ..., kotlin/Double? = ..., kotlin/Boolean = ...): io.github.aftrolle.ffmpegkmp.core/ExecutionEvent.Progress // io.github.aftrolle.ffmpegkmp.core/ExecutionEvent.Progress.copy|copy(kotlin.Long?;kotlin.Double?;kotlin.time.Duration?;kotlin.Long?;kotlin.String?;kotlin.Double?;kotlin.Boolean){}[0]
+        final fun equals(kotlin/Any?): kotlin/Boolean // io.github.aftrolle.ffmpegkmp.core/ExecutionEvent.Progress.equals|equals(kotlin.Any?){}[0]
+        final fun hashCode(): kotlin/Int // io.github.aftrolle.ffmpegkmp.core/ExecutionEvent.Progress.hashCode|hashCode(){}[0]
+        final fun toString(): kotlin/String // io.github.aftrolle.ffmpegkmp.core/ExecutionEvent.Progress.toString|toString(){}[0]
+    }
+}
+
+abstract class io.github.aftrolle.ffmpegkmp.core/CommandClient : kotlin/AutoCloseable { // io.github.aftrolle.ffmpegkmp.core/CommandClient|null[0]
+    final fun enqueue(kotlin.collections/List<kotlin/String>, io.github.aftrolle.ffmpegkmp.core/CommandIo = ...): io.github.aftrolle.ffmpegkmp.core/ExecutionSession<io.github.aftrolle.ffmpegkmp.core/ExecutionResult> // io.github.aftrolle.ffmpegkmp.core/CommandClient.enqueue|enqueue(kotlin.collections.List<kotlin.String>;io.github.aftrolle.ffmpegkmp.core.CommandIo){}[0]
+    final fun enqueue(kotlin/String, io.github.aftrolle.ffmpegkmp.core/CommandIo = ...): io.github.aftrolle.ffmpegkmp.core/ExecutionSession<io.github.aftrolle.ffmpegkmp.core/ExecutionResult> // io.github.aftrolle.ffmpegkmp.core/CommandClient.enqueue|enqueue(kotlin.String;io.github.aftrolle.ffmpegkmp.core.CommandIo){}[0]
+    final suspend fun execute(kotlin.collections/List<kotlin/String>, io.github.aftrolle.ffmpegkmp.core/CommandIo = ...): io.github.aftrolle.ffmpegkmp.core/ExecutionResult // io.github.aftrolle.ffmpegkmp.core/CommandClient.execute|execute(kotlin.collections.List<kotlin.String>;io.github.aftrolle.ffmpegkmp.core.CommandIo){}[0]
+    final suspend fun execute(kotlin/String, io.github.aftrolle.ffmpegkmp.core/CommandIo = ...): io.github.aftrolle.ffmpegkmp.core/ExecutionResult // io.github.aftrolle.ffmpegkmp.core/CommandClient.execute|execute(kotlin.String;io.github.aftrolle.ffmpegkmp.core.CommandIo){}[0]
+    open fun close() // io.github.aftrolle.ffmpegkmp.core/CommandClient.close|close(){}[0]
+}
+
+final class io.github.aftrolle.ffmpegkmp.core/AudioLevel { // io.github.aftrolle.ffmpegkmp.core/AudioLevel|null[0]
+    constructor <init>(kotlin/Double = ..., kotlin/Boolean = ...) // io.github.aftrolle.ffmpegkmp.core/AudioLevel.<init>|<init>(kotlin.Double;kotlin.Boolean){}[0]
+
+    final val effectiveVolume // io.github.aftrolle.ffmpegkmp.core/AudioLevel.effectiveVolume|{}effectiveVolume[0]
+        final fun <get-effectiveVolume>(): kotlin/Double // io.github.aftrolle.ffmpegkmp.core/AudioLevel.effectiveVolume.<get-effectiveVolume>|<get-effectiveVolume>(){}[0]
+    final val muted // io.github.aftrolle.ffmpegkmp.core/AudioLevel.muted|{}muted[0]
+        final fun <get-muted>(): kotlin/Boolean // io.github.aftrolle.ffmpegkmp.core/AudioLevel.muted.<get-muted>|<get-muted>(){}[0]
+    final val volume // io.github.aftrolle.ffmpegkmp.core/AudioLevel.volume|{}volume[0]
+        final fun <get-volume>(): kotlin/Double // io.github.aftrolle.ffmpegkmp.core/AudioLevel.volume.<get-volume>|<get-volume>(){}[0]
+
+    final fun component1(): kotlin/Double // io.github.aftrolle.ffmpegkmp.core/AudioLevel.component1|component1(){}[0]
+    final fun component2(): kotlin/Boolean // io.github.aftrolle.ffmpegkmp.core/AudioLevel.component2|component2(){}[0]
+    final fun copy(kotlin/Double = ..., kotlin/Boolean = ...): io.github.aftrolle.ffmpegkmp.core/AudioLevel // io.github.aftrolle.ffmpegkmp.core/AudioLevel.copy|copy(kotlin.Double;kotlin.Boolean){}[0]
+    final fun equals(kotlin/Any?): kotlin/Boolean // io.github.aftrolle.ffmpegkmp.core/AudioLevel.equals|equals(kotlin.Any?){}[0]
+    final fun hashCode(): kotlin/Int // io.github.aftrolle.ffmpegkmp.core/AudioLevel.hashCode|hashCode(){}[0]
+    final fun toString(): kotlin/String // io.github.aftrolle.ffmpegkmp.core/AudioLevel.toString|toString(){}[0]
+
+    final object Companion { // io.github.aftrolle.ffmpegkmp.core/AudioLevel.Companion|null[0]
+        final val Muted // io.github.aftrolle.ffmpegkmp.core/AudioLevel.Companion.Muted|{}Muted[0]
+            final fun <get-Muted>(): io.github.aftrolle.ffmpegkmp.core/AudioLevel // io.github.aftrolle.ffmpegkmp.core/AudioLevel.Companion.Muted.<get-Muted>|<get-Muted>(){}[0]
+        final val Unchanged // io.github.aftrolle.ffmpegkmp.core/AudioLevel.Companion.Unchanged|{}Unchanged[0]
+            final fun <get-Unchanged>(): io.github.aftrolle.ffmpegkmp.core/AudioLevel // io.github.aftrolle.ffmpegkmp.core/AudioLevel.Companion.Unchanged.<get-Unchanged>|<get-Unchanged>(){}[0]
+    }
+}
+
+final class io.github.aftrolle.ffmpegkmp.core/CommandIo { // io.github.aftrolle.ffmpegkmp.core/CommandIo|null[0]
+    final class Builder { // io.github.aftrolle.ffmpegkmp.core/CommandIo.Builder|null[0]
+        constructor <init>() // io.github.aftrolle.ffmpegkmp.core/CommandIo.Builder.<init>|<init>(){}[0]
+
+        final fun input(kotlin/String, okio/FileHandle) // io.github.aftrolle.ffmpegkmp.core/CommandIo.Builder.input|input(kotlin.String;okio.FileHandle){}[0]
+        final fun input(kotlin/String, okio/Source) // io.github.aftrolle.ffmpegkmp.core/CommandIo.Builder.input|input(kotlin.String;okio.Source){}[0]
+        final fun output(kotlin/String, okio/FileHandle, kotlin/Boolean = ...) // io.github.aftrolle.ffmpegkmp.core/CommandIo.Builder.output|output(kotlin.String;okio.FileHandle;kotlin.Boolean){}[0]
+        final fun output(kotlin/String, okio/Sink, kotlin/Boolean = ...) // io.github.aftrolle.ffmpegkmp.core/CommandIo.Builder.output|output(kotlin.String;okio.Sink;kotlin.Boolean){}[0]
+        final fun readWrite(kotlin/String, okio/FileHandle, kotlin/Boolean = ...) // io.github.aftrolle.ffmpegkmp.core/CommandIo.Builder.readWrite|readWrite(kotlin.String;okio.FileHandle;kotlin.Boolean){}[0]
+    }
+
+    final object Companion { // io.github.aftrolle.ffmpegkmp.core/CommandIo.Companion|null[0]
+        final val Empty // io.github.aftrolle.ffmpegkmp.core/CommandIo.Companion.Empty|{}Empty[0]
+            final fun <get-Empty>(): io.github.aftrolle.ffmpegkmp.core/CommandIo // io.github.aftrolle.ffmpegkmp.core/CommandIo.Companion.Empty.<get-Empty>|<get-Empty>(){}[0]
+
+        final fun invoke(kotlin/Function1<io.github.aftrolle.ffmpegkmp.core/CommandIo.Builder, kotlin/Unit>): io.github.aftrolle.ffmpegkmp.core/CommandIo // io.github.aftrolle.ffmpegkmp.core/CommandIo.Companion.invoke|invoke(kotlin.Function1<io.github.aftrolle.ffmpegkmp.core.CommandIo.Builder,kotlin.Unit>){}[0]
+    }
+}
+
+final class io.github.aftrolle.ffmpegkmp.core/CommandParseException : io.github.aftrolle.ffmpegkmp.core/FFmpegKmpException { // io.github.aftrolle.ffmpegkmp.core/CommandParseException|null[0]
+    constructor <init>(kotlin/String) // io.github.aftrolle.ffmpegkmp.core/CommandParseException.<init>|<init>(kotlin.String){}[0]
+}
+
+final class io.github.aftrolle.ffmpegkmp.core/CommandRuntimeLimits { // io.github.aftrolle.ffmpegkmp.core/CommandRuntimeLimits|null[0]
+    constructor <init>(kotlin/Int = ..., kotlin/Int = ..., kotlin/Int = ..., kotlin/Int = ..., kotlin/Int = ...) // io.github.aftrolle.ffmpegkmp.core/CommandRuntimeLimits.<init>|<init>(kotlin.Int;kotlin.Int;kotlin.Int;kotlin.Int;kotlin.Int){}[0]
+
+    final val maxCapturedErrorOutputCharacters // io.github.aftrolle.ffmpegkmp.core/CommandRuntimeLimits.maxCapturedErrorOutputCharacters|{}maxCapturedErrorOutputCharacters[0]
+        final fun <get-maxCapturedErrorOutputCharacters>(): kotlin/Int // io.github.aftrolle.ffmpegkmp.core/CommandRuntimeLimits.maxCapturedErrorOutputCharacters.<get-maxCapturedErrorOutputCharacters>|<get-maxCapturedErrorOutputCharacters>(){}[0]
+    final val maxCapturedOutputCharacters // io.github.aftrolle.ffmpegkmp.core/CommandRuntimeLimits.maxCapturedOutputCharacters|{}maxCapturedOutputCharacters[0]
+        final fun <get-maxCapturedOutputCharacters>(): kotlin/Int // io.github.aftrolle.ffmpegkmp.core/CommandRuntimeLimits.maxCapturedOutputCharacters.<get-maxCapturedOutputCharacters>|<get-maxCapturedOutputCharacters>(){}[0]
+    final val maxPendingNativeEvents // io.github.aftrolle.ffmpegkmp.core/CommandRuntimeLimits.maxPendingNativeEvents|{}maxPendingNativeEvents[0]
+        final fun <get-maxPendingNativeEvents>(): kotlin/Int // io.github.aftrolle.ffmpegkmp.core/CommandRuntimeLimits.maxPendingNativeEvents.<get-maxPendingNativeEvents>|<get-maxPendingNativeEvents>(){}[0]
+    final val maxRetainedLogCharacters // io.github.aftrolle.ffmpegkmp.core/CommandRuntimeLimits.maxRetainedLogCharacters|{}maxRetainedLogCharacters[0]
+        final fun <get-maxRetainedLogCharacters>(): kotlin/Int // io.github.aftrolle.ffmpegkmp.core/CommandRuntimeLimits.maxRetainedLogCharacters.<get-maxRetainedLogCharacters>|<get-maxRetainedLogCharacters>(){}[0]
+    final val maxRetainedLogEvents // io.github.aftrolle.ffmpegkmp.core/CommandRuntimeLimits.maxRetainedLogEvents|{}maxRetainedLogEvents[0]
+        final fun <get-maxRetainedLogEvents>(): kotlin/Int // io.github.aftrolle.ffmpegkmp.core/CommandRuntimeLimits.maxRetainedLogEvents.<get-maxRetainedLogEvents>|<get-maxRetainedLogEvents>(){}[0]
+
+    final fun component1(): kotlin/Int // io.github.aftrolle.ffmpegkmp.core/CommandRuntimeLimits.component1|component1(){}[0]
+    final fun component2(): kotlin/Int // io.github.aftrolle.ffmpegkmp.core/CommandRuntimeLimits.component2|component2(){}[0]
+    final fun component3(): kotlin/Int // io.github.aftrolle.ffmpegkmp.core/CommandRuntimeLimits.component3|component3(){}[0]
+    final fun component4(): kotlin/Int // io.github.aftrolle.ffmpegkmp.core/CommandRuntimeLimits.component4|component4(){}[0]
+    final fun component5(): kotlin/Int // io.github.aftrolle.ffmpegkmp.core/CommandRuntimeLimits.component5|component5(){}[0]
+    final fun copy(kotlin/Int = ..., kotlin/Int = ..., kotlin/Int = ..., kotlin/Int = ..., kotlin/Int = ...): io.github.aftrolle.ffmpegkmp.core/CommandRuntimeLimits // io.github.aftrolle.ffmpegkmp.core/CommandRuntimeLimits.copy|copy(kotlin.Int;kotlin.Int;kotlin.Int;kotlin.Int;kotlin.Int){}[0]
+    final fun equals(kotlin/Any?): kotlin/Boolean // io.github.aftrolle.ffmpegkmp.core/CommandRuntimeLimits.equals|equals(kotlin.Any?){}[0]
+    final fun hashCode(): kotlin/Int // io.github.aftrolle.ffmpegkmp.core/CommandRuntimeLimits.hashCode|hashCode(){}[0]
+    final fun toString(): kotlin/String // io.github.aftrolle.ffmpegkmp.core/CommandRuntimeLimits.toString|toString(){}[0]
+
+    final object Companion { // io.github.aftrolle.ffmpegkmp.core/CommandRuntimeLimits.Companion|null[0]
+        final val Default // io.github.aftrolle.ffmpegkmp.core/CommandRuntimeLimits.Companion.Default|{}Default[0]
+            final fun <get-Default>(): io.github.aftrolle.ffmpegkmp.core/CommandRuntimeLimits // io.github.aftrolle.ffmpegkmp.core/CommandRuntimeLimits.Companion.Default.<get-Default>|<get-Default>(){}[0]
+    }
+}
+
+final class io.github.aftrolle.ffmpegkmp.core/ExecutionCaptureStatus { // io.github.aftrolle.ffmpegkmp.core/ExecutionCaptureStatus|null[0]
+    constructor <init>(kotlin/Boolean = ..., kotlin/Boolean = ..., kotlin/Boolean = ..., kotlin/Long = ..., kotlin/Long = ...) // io.github.aftrolle.ffmpegkmp.core/ExecutionCaptureStatus.<init>|<init>(kotlin.Boolean;kotlin.Boolean;kotlin.Boolean;kotlin.Long;kotlin.Long){}[0]
+
+    final val errorOutputTruncated // io.github.aftrolle.ffmpegkmp.core/ExecutionCaptureStatus.errorOutputTruncated|{}errorOutputTruncated[0]
+        final fun <get-errorOutputTruncated>(): kotlin/Boolean // io.github.aftrolle.ffmpegkmp.core/ExecutionCaptureStatus.errorOutputTruncated.<get-errorOutputTruncated>|<get-errorOutputTruncated>(){}[0]
+    final val logsTruncated // io.github.aftrolle.ffmpegkmp.core/ExecutionCaptureStatus.logsTruncated|{}logsTruncated[0]
+        final fun <get-logsTruncated>(): kotlin/Boolean // io.github.aftrolle.ffmpegkmp.core/ExecutionCaptureStatus.logsTruncated.<get-logsTruncated>|<get-logsTruncated>(){}[0]
+    final val omittedLogCharacters // io.github.aftrolle.ffmpegkmp.core/ExecutionCaptureStatus.omittedLogCharacters|{}omittedLogCharacters[0]
+        final fun <get-omittedLogCharacters>(): kotlin/Long // io.github.aftrolle.ffmpegkmp.core/ExecutionCaptureStatus.omittedLogCharacters.<get-omittedLogCharacters>|<get-omittedLogCharacters>(){}[0]
+    final val omittedLogEvents // io.github.aftrolle.ffmpegkmp.core/ExecutionCaptureStatus.omittedLogEvents|{}omittedLogEvents[0]
+        final fun <get-omittedLogEvents>(): kotlin/Long // io.github.aftrolle.ffmpegkmp.core/ExecutionCaptureStatus.omittedLogEvents.<get-omittedLogEvents>|<get-omittedLogEvents>(){}[0]
+    final val outputTruncated // io.github.aftrolle.ffmpegkmp.core/ExecutionCaptureStatus.outputTruncated|{}outputTruncated[0]
+        final fun <get-outputTruncated>(): kotlin/Boolean // io.github.aftrolle.ffmpegkmp.core/ExecutionCaptureStatus.outputTruncated.<get-outputTruncated>|<get-outputTruncated>(){}[0]
+    final val truncated // io.github.aftrolle.ffmpegkmp.core/ExecutionCaptureStatus.truncated|{}truncated[0]
+        final fun <get-truncated>(): kotlin/Boolean // io.github.aftrolle.ffmpegkmp.core/ExecutionCaptureStatus.truncated.<get-truncated>|<get-truncated>(){}[0]
+
+    final fun component1(): kotlin/Boolean // io.github.aftrolle.ffmpegkmp.core/ExecutionCaptureStatus.component1|component1(){}[0]
+    final fun component2(): kotlin/Boolean // io.github.aftrolle.ffmpegkmp.core/ExecutionCaptureStatus.component2|component2(){}[0]
+    final fun component3(): kotlin/Boolean // io.github.aftrolle.ffmpegkmp.core/ExecutionCaptureStatus.component3|component3(){}[0]
+    final fun component4(): kotlin/Long // io.github.aftrolle.ffmpegkmp.core/ExecutionCaptureStatus.component4|component4(){}[0]
+    final fun component5(): kotlin/Long // io.github.aftrolle.ffmpegkmp.core/ExecutionCaptureStatus.component5|component5(){}[0]
+    final fun copy(kotlin/Boolean = ..., kotlin/Boolean = ..., kotlin/Boolean = ..., kotlin/Long = ..., kotlin/Long = ...): io.github.aftrolle.ffmpegkmp.core/ExecutionCaptureStatus // io.github.aftrolle.ffmpegkmp.core/ExecutionCaptureStatus.copy|copy(kotlin.Boolean;kotlin.Boolean;kotlin.Boolean;kotlin.Long;kotlin.Long){}[0]
+    final fun equals(kotlin/Any?): kotlin/Boolean // io.github.aftrolle.ffmpegkmp.core/ExecutionCaptureStatus.equals|equals(kotlin.Any?){}[0]
+    final fun hashCode(): kotlin/Int // io.github.aftrolle.ffmpegkmp.core/ExecutionCaptureStatus.hashCode|hashCode(){}[0]
+    final fun toString(): kotlin/String // io.github.aftrolle.ffmpegkmp.core/ExecutionCaptureStatus.toString|toString(){}[0]
+}
+
+final class io.github.aftrolle.ffmpegkmp.core/ExecutionResult { // io.github.aftrolle.ffmpegkmp.core/ExecutionResult|null[0]
+    constructor <init>(kotlin/Int, kotlin/String, kotlin/String, kotlin.collections/List<io.github.aftrolle.ffmpegkmp.core/ExecutionEvent.Log>, kotlin.time/Duration, kotlin/Boolean, io.github.aftrolle.ffmpegkmp.core/ExecutionEvent.Progress? = ..., io.github.aftrolle.ffmpegkmp.core/ExecutionCaptureStatus = ...) // io.github.aftrolle.ffmpegkmp.core/ExecutionResult.<init>|<init>(kotlin.Int;kotlin.String;kotlin.String;kotlin.collections.List<io.github.aftrolle.ffmpegkmp.core.ExecutionEvent.Log>;kotlin.time.Duration;kotlin.Boolean;io.github.aftrolle.ffmpegkmp.core.ExecutionEvent.Progress?;io.github.aftrolle.ffmpegkmp.core.ExecutionCaptureStatus){}[0]
+
+    final val cancelled // io.github.aftrolle.ffmpegkmp.core/ExecutionResult.cancelled|{}cancelled[0]
+        final fun <get-cancelled>(): kotlin/Boolean // io.github.aftrolle.ffmpegkmp.core/ExecutionResult.cancelled.<get-cancelled>|<get-cancelled>(){}[0]
+    final val captureStatus // io.github.aftrolle.ffmpegkmp.core/ExecutionResult.captureStatus|{}captureStatus[0]
+        final fun <get-captureStatus>(): io.github.aftrolle.ffmpegkmp.core/ExecutionCaptureStatus // io.github.aftrolle.ffmpegkmp.core/ExecutionResult.captureStatus.<get-captureStatus>|<get-captureStatus>(){}[0]
+    final val duration // io.github.aftrolle.ffmpegkmp.core/ExecutionResult.duration|{}duration[0]
+        final fun <get-duration>(): kotlin.time/Duration // io.github.aftrolle.ffmpegkmp.core/ExecutionResult.duration.<get-duration>|<get-duration>(){}[0]
+    final val errorOutput // io.github.aftrolle.ffmpegkmp.core/ExecutionResult.errorOutput|{}errorOutput[0]
+        final fun <get-errorOutput>(): kotlin/String // io.github.aftrolle.ffmpegkmp.core/ExecutionResult.errorOutput.<get-errorOutput>|<get-errorOutput>(){}[0]
+    final val finalProgress // io.github.aftrolle.ffmpegkmp.core/ExecutionResult.finalProgress|{}finalProgress[0]
+        final fun <get-finalProgress>(): io.github.aftrolle.ffmpegkmp.core/ExecutionEvent.Progress? // io.github.aftrolle.ffmpegkmp.core/ExecutionResult.finalProgress.<get-finalProgress>|<get-finalProgress>(){}[0]
+    final val isSuccess // io.github.aftrolle.ffmpegkmp.core/ExecutionResult.isSuccess|{}isSuccess[0]
+        final fun <get-isSuccess>(): kotlin/Boolean // io.github.aftrolle.ffmpegkmp.core/ExecutionResult.isSuccess.<get-isSuccess>|<get-isSuccess>(){}[0]
+    final val logs // io.github.aftrolle.ffmpegkmp.core/ExecutionResult.logs|{}logs[0]
+        final fun <get-logs>(): kotlin.collections/List<io.github.aftrolle.ffmpegkmp.core/ExecutionEvent.Log> // io.github.aftrolle.ffmpegkmp.core/ExecutionResult.logs.<get-logs>|<get-logs>(){}[0]
+    final val output // io.github.aftrolle.ffmpegkmp.core/ExecutionResult.output|{}output[0]
+        final fun <get-output>(): kotlin/String // io.github.aftrolle.ffmpegkmp.core/ExecutionResult.output.<get-output>|<get-output>(){}[0]
+    final val returnCode // io.github.aftrolle.ffmpegkmp.core/ExecutionResult.returnCode|{}returnCode[0]
+        final fun <get-returnCode>(): kotlin/Int // io.github.aftrolle.ffmpegkmp.core/ExecutionResult.returnCode.<get-returnCode>|<get-returnCode>(){}[0]
+
+    final fun component1(): kotlin/Int // io.github.aftrolle.ffmpegkmp.core/ExecutionResult.component1|component1(){}[0]
+    final fun component2(): kotlin/String // io.github.aftrolle.ffmpegkmp.core/ExecutionResult.component2|component2(){}[0]
+    final fun component3(): kotlin/String // io.github.aftrolle.ffmpegkmp.core/ExecutionResult.component3|component3(){}[0]
+    final fun component4(): kotlin.collections/List<io.github.aftrolle.ffmpegkmp.core/ExecutionEvent.Log> // io.github.aftrolle.ffmpegkmp.core/ExecutionResult.component4|component4(){}[0]
+    final fun component5(): kotlin.time/Duration // io.github.aftrolle.ffmpegkmp.core/ExecutionResult.component5|component5(){}[0]
+    final fun component6(): kotlin/Boolean // io.github.aftrolle.ffmpegkmp.core/ExecutionResult.component6|component6(){}[0]
+    final fun component7(): io.github.aftrolle.ffmpegkmp.core/ExecutionEvent.Progress? // io.github.aftrolle.ffmpegkmp.core/ExecutionResult.component7|component7(){}[0]
+    final fun component8(): io.github.aftrolle.ffmpegkmp.core/ExecutionCaptureStatus // io.github.aftrolle.ffmpegkmp.core/ExecutionResult.component8|component8(){}[0]
+    final fun copy(kotlin/Int = ..., kotlin/String = ..., kotlin/String = ..., kotlin.collections/List<io.github.aftrolle.ffmpegkmp.core/ExecutionEvent.Log> = ..., kotlin.time/Duration = ..., kotlin/Boolean = ..., io.github.aftrolle.ffmpegkmp.core/ExecutionEvent.Progress? = ..., io.github.aftrolle.ffmpegkmp.core/ExecutionCaptureStatus = ...): io.github.aftrolle.ffmpegkmp.core/ExecutionResult // io.github.aftrolle.ffmpegkmp.core/ExecutionResult.copy|copy(kotlin.Int;kotlin.String;kotlin.String;kotlin.collections.List<io.github.aftrolle.ffmpegkmp.core.ExecutionEvent.Log>;kotlin.time.Duration;kotlin.Boolean;io.github.aftrolle.ffmpegkmp.core.ExecutionEvent.Progress?;io.github.aftrolle.ffmpegkmp.core.ExecutionCaptureStatus){}[0]
+    final fun equals(kotlin/Any?): kotlin/Boolean // io.github.aftrolle.ffmpegkmp.core/ExecutionResult.equals|equals(kotlin.Any?){}[0]
+    final fun hashCode(): kotlin/Int // io.github.aftrolle.ffmpegkmp.core/ExecutionResult.hashCode|hashCode(){}[0]
+    final fun toString(): kotlin/String // io.github.aftrolle.ffmpegkmp.core/ExecutionResult.toString|toString(){}[0]
+}
+
+final class io.github.aftrolle.ffmpegkmp.core/MediaSource { // io.github.aftrolle.ffmpegkmp.core/MediaSource|null[0]
+    constructor <init>(kotlin/String, io.github.aftrolle.ffmpegkmp.core/CommandIo = ...) // io.github.aftrolle.ffmpegkmp.core/MediaSource.<init>|<init>(kotlin.String;io.github.aftrolle.ffmpegkmp.core.CommandIo){}[0]
+
+    final val input // io.github.aftrolle.ffmpegkmp.core/MediaSource.input|{}input[0]
+        final fun <get-input>(): kotlin/String // io.github.aftrolle.ffmpegkmp.core/MediaSource.input.<get-input>|<get-input>(){}[0]
+    final val io // io.github.aftrolle.ffmpegkmp.core/MediaSource.io|{}io[0]
+        final fun <get-io>(): io.github.aftrolle.ffmpegkmp.core/CommandIo // io.github.aftrolle.ffmpegkmp.core/MediaSource.io.<get-io>|<get-io>(){}[0]
+
+    final fun component1(): kotlin/String // io.github.aftrolle.ffmpegkmp.core/MediaSource.component1|component1(){}[0]
+    final fun component2(): io.github.aftrolle.ffmpegkmp.core/CommandIo // io.github.aftrolle.ffmpegkmp.core/MediaSource.component2|component2(){}[0]
+    final fun copy(kotlin/String = ..., io.github.aftrolle.ffmpegkmp.core/CommandIo = ...): io.github.aftrolle.ffmpegkmp.core/MediaSource // io.github.aftrolle.ffmpegkmp.core/MediaSource.copy|copy(kotlin.String;io.github.aftrolle.ffmpegkmp.core.CommandIo){}[0]
+    final fun equals(kotlin/Any?): kotlin/Boolean // io.github.aftrolle.ffmpegkmp.core/MediaSource.equals|equals(kotlin.Any?){}[0]
+    final fun hashCode(): kotlin/Int // io.github.aftrolle.ffmpegkmp.core/MediaSource.hashCode|hashCode(){}[0]
+    final fun toString(): kotlin/String // io.github.aftrolle.ffmpegkmp.core/MediaSource.toString|toString(){}[0]
+}
+
+final class io.github.aftrolle.ffmpegkmp.core/NativeExecutionException : io.github.aftrolle.ffmpegkmp.core/FFmpegKmpException { // io.github.aftrolle.ffmpegkmp.core/NativeExecutionException|null[0]
+    constructor <init>(kotlin/String, kotlin/Throwable? = ...) // io.github.aftrolle.ffmpegkmp.core/NativeExecutionException.<init>|<init>(kotlin.String;kotlin.Throwable?){}[0]
+}
+
+final class io.github.aftrolle.ffmpegkmp.core/StagedOutputEmptyException : io.github.aftrolle.ffmpegkmp.core/FFmpegKmpException { // io.github.aftrolle.ffmpegkmp.core/StagedOutputEmptyException|null[0]
+    constructor <init>(kotlin/String) // io.github.aftrolle.ffmpegkmp.core/StagedOutputEmptyException.<init>|<init>(kotlin.String){}[0]
+}
+
+open class io.github.aftrolle.ffmpegkmp.core/FFmpegKmpException : kotlin/RuntimeException { // io.github.aftrolle.ffmpegkmp.core/FFmpegKmpException|null[0]
+    constructor <init>(kotlin/String, kotlin/Throwable? = ...) // io.github.aftrolle.ffmpegkmp.core/FFmpegKmpException.<init>|<init>(kotlin.String;kotlin.Throwable?){}[0]
+}

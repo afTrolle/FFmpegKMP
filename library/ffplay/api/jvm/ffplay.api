@@ -1,0 +1,315 @@
+public final class io/github/aftrolle/ffmpegkmp/ffplay/ComposeFrameRenderer : java/lang/AutoCloseable {
+	public static final field $stable I
+	public fun <init> (IILio/github/aftrolle/ffmpegkmp/codec/FrameFormat;Landroidx/compose/ui/unit/Density;Lkotlin/jvm/functions/Function3;)V
+	public synthetic fun <init> (IILio/github/aftrolle/ffmpegkmp/codec/FrameFormat;Landroidx/compose/ui/unit/Density;Lkotlin/jvm/functions/Function3;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public fun <init> (Lio/github/aftrolle/ffmpegkmp/codec/VideoTrack;Landroidx/compose/ui/unit/Density;Lkotlin/jvm/functions/Function3;)V
+	public synthetic fun <init> (Lio/github/aftrolle/ffmpegkmp/codec/VideoTrack;Landroidx/compose/ui/unit/Density;Lkotlin/jvm/functions/Function3;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public fun close ()V
+	public final fun getDensity ()Landroidx/compose/ui/unit/Density;
+	public final fun getFormat ()Lio/github/aftrolle/ffmpegkmp/codec/FrameFormat;
+	public final fun getHeight ()I
+	public final fun getWidth ()I
+	public final fun render-KLykuaI (JLjava/lang/Object;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
+}
+
+public abstract interface class io/github/aftrolle/ffmpegkmp/ffplay/FFplayClock {
+	public abstract fun positionAt-wmV0flA (J)J
+}
+
+public final class io/github/aftrolle/ffmpegkmp/ffplay/FFplayConfiguration {
+	public static final field $stable I
+	public fun <init> ()V
+	public synthetic fun <init> (Lio/github/aftrolle/ffmpegkmp/codec/CodecSelection;Lio/github/aftrolle/ffmpegkmp/ffplay/FFplayOutputPreference;Lio/github/aftrolle/ffmpegkmp/ffplay/FFplayHdrPolicy;ZLio/github/aftrolle/ffmpegkmp/codec/DecoderThreads;JIIJILkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public synthetic fun <init> (Lio/github/aftrolle/ffmpegkmp/codec/CodecSelection;Lio/github/aftrolle/ffmpegkmp/ffplay/FFplayOutputPreference;Lio/github/aftrolle/ffmpegkmp/ffplay/FFplayHdrPolicy;ZLio/github/aftrolle/ffmpegkmp/codec/DecoderThreads;JIIJLkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public final fun component1 ()Lio/github/aftrolle/ffmpegkmp/codec/CodecSelection;
+	public final fun component2 ()Lio/github/aftrolle/ffmpegkmp/ffplay/FFplayOutputPreference;
+	public final fun component3 ()Lio/github/aftrolle/ffmpegkmp/ffplay/FFplayHdrPolicy;
+	public final fun component4 ()Z
+	public final fun component5 ()Lio/github/aftrolle/ffmpegkmp/codec/DecoderThreads;
+	public final fun component6-UwyO8pc ()J
+	public final fun component7 ()I
+	public final fun component8 ()I
+	public final fun component9-UwyO8pc ()J
+	public final fun copy-BSFP94w (Lio/github/aftrolle/ffmpegkmp/codec/CodecSelection;Lio/github/aftrolle/ffmpegkmp/ffplay/FFplayOutputPreference;Lio/github/aftrolle/ffmpegkmp/ffplay/FFplayHdrPolicy;ZLio/github/aftrolle/ffmpegkmp/codec/DecoderThreads;JIIJ)Lio/github/aftrolle/ffmpegkmp/ffplay/FFplayConfiguration;
+	public static synthetic fun copy-BSFP94w$default (Lio/github/aftrolle/ffmpegkmp/ffplay/FFplayConfiguration;Lio/github/aftrolle/ffmpegkmp/codec/CodecSelection;Lio/github/aftrolle/ffmpegkmp/ffplay/FFplayOutputPreference;Lio/github/aftrolle/ffmpegkmp/ffplay/FFplayHdrPolicy;ZLio/github/aftrolle/ffmpegkmp/codec/DecoderThreads;JIIJILjava/lang/Object;)Lio/github/aftrolle/ffmpegkmp/ffplay/FFplayConfiguration;
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getAudio ()Z
+	public final fun getCanvasFrames ()I
+	public final fun getCatchUpLag-UwyO8pc ()J
+	public final fun getDecoder ()Lio/github/aftrolle/ffmpegkmp/codec/CodecSelection;
+	public final fun getDecoderIdleRelease-UwyO8pc ()J
+	public final fun getFrameQueueSize ()I
+	public final fun getHdrPolicy ()Lio/github/aftrolle/ffmpegkmp/ffplay/FFplayHdrPolicy;
+	public final fun getOutputPreference ()Lio/github/aftrolle/ffmpegkmp/ffplay/FFplayOutputPreference;
+	public final fun getThreads ()Lio/github/aftrolle/ffmpegkmp/codec/DecoderThreads;
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class io/github/aftrolle/ffmpegkmp/ffplay/FFplayContentProtection : java/lang/Enum {
+	public static final field CLEAR_OR_AUTO_DETECT Lio/github/aftrolle/ffmpegkmp/ffplay/FFplayContentProtection;
+	public static final field REQUIRE_SECURE_PATH Lio/github/aftrolle/ffmpegkmp/ffplay/FFplayContentProtection;
+	public static fun getEntries ()Lkotlin/enums/EnumEntries;
+	public static fun valueOf (Ljava/lang/String;)Lio/github/aftrolle/ffmpegkmp/ffplay/FFplayContentProtection;
+	public static fun values ()[Lio/github/aftrolle/ffmpegkmp/ffplay/FFplayContentProtection;
+}
+
+public abstract interface class io/github/aftrolle/ffmpegkmp/ffplay/FFplayEvent {
+	public abstract fun getMessage ()Ljava/lang/String;
+}
+
+public final class io/github/aftrolle/ffmpegkmp/ffplay/FFplayEvent$CaughtUp : io/github/aftrolle/ffmpegkmp/ffplay/FFplayEvent {
+	public static final field $stable I
+	public synthetic fun <init> (Ljava/lang/String;JLkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public final fun component1 ()Ljava/lang/String;
+	public final fun component2-UwyO8pc ()J
+	public final fun copy-HG0u8IE (Ljava/lang/String;J)Lio/github/aftrolle/ffmpegkmp/ffplay/FFplayEvent$CaughtUp;
+	public static synthetic fun copy-HG0u8IE$default (Lio/github/aftrolle/ffmpegkmp/ffplay/FFplayEvent$CaughtUp;Ljava/lang/String;JILjava/lang/Object;)Lio/github/aftrolle/ffmpegkmp/ffplay/FFplayEvent$CaughtUp;
+	public fun equals (Ljava/lang/Object;)Z
+	public fun getMessage ()Ljava/lang/String;
+	public final fun getPosition-UwyO8pc ()J
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class io/github/aftrolle/ffmpegkmp/ffplay/FFplayEvent$DecoderFallback : io/github/aftrolle/ffmpegkmp/ffplay/FFplayEvent {
+	public static final field $stable I
+	public fun <init> (Ljava/lang/String;Lio/github/aftrolle/ffmpegkmp/codec/DecoderFallbackReason;)V
+	public synthetic fun <init> (Ljava/lang/String;Lio/github/aftrolle/ffmpegkmp/codec/DecoderFallbackReason;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public final fun component1 ()Ljava/lang/String;
+	public final fun component2 ()Lio/github/aftrolle/ffmpegkmp/codec/DecoderFallbackReason;
+	public final fun copy (Ljava/lang/String;Lio/github/aftrolle/ffmpegkmp/codec/DecoderFallbackReason;)Lio/github/aftrolle/ffmpegkmp/ffplay/FFplayEvent$DecoderFallback;
+	public static synthetic fun copy$default (Lio/github/aftrolle/ffmpegkmp/ffplay/FFplayEvent$DecoderFallback;Ljava/lang/String;Lio/github/aftrolle/ffmpegkmp/codec/DecoderFallbackReason;ILjava/lang/Object;)Lio/github/aftrolle/ffmpegkmp/ffplay/FFplayEvent$DecoderFallback;
+	public fun equals (Ljava/lang/Object;)Z
+	public fun getMessage ()Ljava/lang/String;
+	public final fun getReason ()Lio/github/aftrolle/ffmpegkmp/codec/DecoderFallbackReason;
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class io/github/aftrolle/ffmpegkmp/ffplay/FFplayEvent$Fatal : io/github/aftrolle/ffmpegkmp/ffplay/FFplayEvent {
+	public static final field $stable I
+	public fun <init> (Ljava/lang/String;Ljava/lang/Throwable;)V
+	public synthetic fun <init> (Ljava/lang/String;Ljava/lang/Throwable;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public final fun component1 ()Ljava/lang/String;
+	public final fun component2 ()Ljava/lang/Throwable;
+	public final fun copy (Ljava/lang/String;Ljava/lang/Throwable;)Lio/github/aftrolle/ffmpegkmp/ffplay/FFplayEvent$Fatal;
+	public static synthetic fun copy$default (Lio/github/aftrolle/ffmpegkmp/ffplay/FFplayEvent$Fatal;Ljava/lang/String;Ljava/lang/Throwable;ILjava/lang/Object;)Lio/github/aftrolle/ffmpegkmp/ffplay/FFplayEvent$Fatal;
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getCause ()Ljava/lang/Throwable;
+	public fun getMessage ()Ljava/lang/String;
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class io/github/aftrolle/ffmpegkmp/ffplay/FFplayEvent$ProtectionRequired : io/github/aftrolle/ffmpegkmp/ffplay/FFplayEvent {
+	public static final field $stable I
+	public fun <init> (Ljava/lang/String;)V
+	public final fun component1 ()Ljava/lang/String;
+	public final fun copy (Ljava/lang/String;)Lio/github/aftrolle/ffmpegkmp/ffplay/FFplayEvent$ProtectionRequired;
+	public static synthetic fun copy$default (Lio/github/aftrolle/ffmpegkmp/ffplay/FFplayEvent$ProtectionRequired;Ljava/lang/String;ILjava/lang/Object;)Lio/github/aftrolle/ffmpegkmp/ffplay/FFplayEvent$ProtectionRequired;
+	public fun equals (Ljava/lang/Object;)Z
+	public fun getMessage ()Ljava/lang/String;
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class io/github/aftrolle/ffmpegkmp/ffplay/FFplayEvent$RendererFallback : io/github/aftrolle/ffmpegkmp/ffplay/FFplayEvent {
+	public static final field $stable I
+	public fun <init> (Ljava/lang/String;)V
+	public final fun component1 ()Ljava/lang/String;
+	public final fun copy (Ljava/lang/String;)Lio/github/aftrolle/ffmpegkmp/ffplay/FFplayEvent$RendererFallback;
+	public static synthetic fun copy$default (Lio/github/aftrolle/ffmpegkmp/ffplay/FFplayEvent$RendererFallback;Ljava/lang/String;ILjava/lang/Object;)Lio/github/aftrolle/ffmpegkmp/ffplay/FFplayEvent$RendererFallback;
+	public fun equals (Ljava/lang/Object;)Z
+	public fun getMessage ()Ljava/lang/String;
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class io/github/aftrolle/ffmpegkmp/ffplay/FFplayEvent$SurfaceLost : io/github/aftrolle/ffmpegkmp/ffplay/FFplayEvent {
+	public static final field $stable I
+	public fun <init> (Ljava/lang/String;)V
+	public final fun component1 ()Ljava/lang/String;
+	public final fun copy (Ljava/lang/String;)Lio/github/aftrolle/ffmpegkmp/ffplay/FFplayEvent$SurfaceLost;
+	public static synthetic fun copy$default (Lio/github/aftrolle/ffmpegkmp/ffplay/FFplayEvent$SurfaceLost;Ljava/lang/String;ILjava/lang/Object;)Lio/github/aftrolle/ffmpegkmp/ffplay/FFplayEvent$SurfaceLost;
+	public fun equals (Ljava/lang/Object;)Z
+	public fun getMessage ()Ljava/lang/String;
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class io/github/aftrolle/ffmpegkmp/ffplay/FFplayEvent$Warning : io/github/aftrolle/ffmpegkmp/ffplay/FFplayEvent {
+	public static final field $stable I
+	public fun <init> (Ljava/lang/String;)V
+	public final fun component1 ()Ljava/lang/String;
+	public final fun copy (Ljava/lang/String;)Lio/github/aftrolle/ffmpegkmp/ffplay/FFplayEvent$Warning;
+	public static synthetic fun copy$default (Lio/github/aftrolle/ffmpegkmp/ffplay/FFplayEvent$Warning;Ljava/lang/String;ILjava/lang/Object;)Lio/github/aftrolle/ffmpegkmp/ffplay/FFplayEvent$Warning;
+	public fun equals (Ljava/lang/Object;)Z
+	public fun getMessage ()Ljava/lang/String;
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class io/github/aftrolle/ffmpegkmp/ffplay/FFplayFailure {
+	public static final field $stable I
+	public fun <init> (Ljava/lang/String;Ljava/lang/Throwable;)V
+	public synthetic fun <init> (Ljava/lang/String;Ljava/lang/Throwable;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public final fun component1 ()Ljava/lang/String;
+	public final fun component2 ()Ljava/lang/Throwable;
+	public final fun copy (Ljava/lang/String;Ljava/lang/Throwable;)Lio/github/aftrolle/ffmpegkmp/ffplay/FFplayFailure;
+	public static synthetic fun copy$default (Lio/github/aftrolle/ffmpegkmp/ffplay/FFplayFailure;Ljava/lang/String;Ljava/lang/Throwable;ILjava/lang/Object;)Lio/github/aftrolle/ffmpegkmp/ffplay/FFplayFailure;
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getCause ()Ljava/lang/Throwable;
+	public final fun getMessage ()Ljava/lang/String;
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class io/github/aftrolle/ffmpegkmp/ffplay/FFplayHdrPolicy : java/lang/Enum {
+	public static final field FORCE_SDR Lio/github/aftrolle/ffmpegkmp/ffplay/FFplayHdrPolicy;
+	public static final field PRESERVE_OR_TONE_MAP Lio/github/aftrolle/ffmpegkmp/ffplay/FFplayHdrPolicy;
+	public static fun getEntries ()Lkotlin/enums/EnumEntries;
+	public static fun valueOf (Ljava/lang/String;)Lio/github/aftrolle/ffmpegkmp/ffplay/FFplayHdrPolicy;
+	public static fun values ()[Lio/github/aftrolle/ffmpegkmp/ffplay/FFplayHdrPolicy;
+}
+
+public final class io/github/aftrolle/ffmpegkmp/ffplay/FFplayHdrResult : java/lang/Enum {
+	public static final field NOT_HDR Lio/github/aftrolle/ffmpegkmp/ffplay/FFplayHdrResult;
+	public static final field PRESERVED Lio/github/aftrolle/ffmpegkmp/ffplay/FFplayHdrResult;
+	public static final field TONE_MAPPED Lio/github/aftrolle/ffmpegkmp/ffplay/FFplayHdrResult;
+	public static final field UNSUPPORTED Lio/github/aftrolle/ffmpegkmp/ffplay/FFplayHdrResult;
+	public static fun getEntries ()Lkotlin/enums/EnumEntries;
+	public static fun valueOf (Ljava/lang/String;)Lio/github/aftrolle/ffmpegkmp/ffplay/FFplayHdrResult;
+	public static fun values ()[Lio/github/aftrolle/ffmpegkmp/ffplay/FFplayHdrResult;
+}
+
+public final class io/github/aftrolle/ffmpegkmp/ffplay/FFplayOutputInfo {
+	public static final field $stable I
+	public fun <init> (Lio/github/aftrolle/ffmpegkmp/codec/DecoderKind;Lio/github/aftrolle/ffmpegkmp/ffplay/FFplayRendererKind;ZLio/github/aftrolle/ffmpegkmp/codec/ColorPrimaries;Lio/github/aftrolle/ffmpegkmp/codec/ColorPrimaries;Lio/github/aftrolle/ffmpegkmp/ffplay/FFplayHdrResult;ZLio/github/aftrolle/ffmpegkmp/codec/DecoderFallbackReason;)V
+	public synthetic fun <init> (Lio/github/aftrolle/ffmpegkmp/codec/DecoderKind;Lio/github/aftrolle/ffmpegkmp/ffplay/FFplayRendererKind;ZLio/github/aftrolle/ffmpegkmp/codec/ColorPrimaries;Lio/github/aftrolle/ffmpegkmp/codec/ColorPrimaries;Lio/github/aftrolle/ffmpegkmp/ffplay/FFplayHdrResult;ZLio/github/aftrolle/ffmpegkmp/codec/DecoderFallbackReason;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public final fun component1 ()Lio/github/aftrolle/ffmpegkmp/codec/DecoderKind;
+	public final fun component2 ()Lio/github/aftrolle/ffmpegkmp/ffplay/FFplayRendererKind;
+	public final fun component3 ()Z
+	public final fun component4 ()Lio/github/aftrolle/ffmpegkmp/codec/ColorPrimaries;
+	public final fun component5 ()Lio/github/aftrolle/ffmpegkmp/codec/ColorPrimaries;
+	public final fun component6 ()Lio/github/aftrolle/ffmpegkmp/ffplay/FFplayHdrResult;
+	public final fun component7 ()Z
+	public final fun component8 ()Lio/github/aftrolle/ffmpegkmp/codec/DecoderFallbackReason;
+	public final fun copy (Lio/github/aftrolle/ffmpegkmp/codec/DecoderKind;Lio/github/aftrolle/ffmpegkmp/ffplay/FFplayRendererKind;ZLio/github/aftrolle/ffmpegkmp/codec/ColorPrimaries;Lio/github/aftrolle/ffmpegkmp/codec/ColorPrimaries;Lio/github/aftrolle/ffmpegkmp/ffplay/FFplayHdrResult;ZLio/github/aftrolle/ffmpegkmp/codec/DecoderFallbackReason;)Lio/github/aftrolle/ffmpegkmp/ffplay/FFplayOutputInfo;
+	public static synthetic fun copy$default (Lio/github/aftrolle/ffmpegkmp/ffplay/FFplayOutputInfo;Lio/github/aftrolle/ffmpegkmp/codec/DecoderKind;Lio/github/aftrolle/ffmpegkmp/ffplay/FFplayRendererKind;ZLio/github/aftrolle/ffmpegkmp/codec/ColorPrimaries;Lio/github/aftrolle/ffmpegkmp/codec/ColorPrimaries;Lio/github/aftrolle/ffmpegkmp/ffplay/FFplayHdrResult;ZLio/github/aftrolle/ffmpegkmp/codec/DecoderFallbackReason;ILjava/lang/Object;)Lio/github/aftrolle/ffmpegkmp/ffplay/FFplayOutputInfo;
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getDecoder ()Lio/github/aftrolle/ffmpegkmp/codec/DecoderKind;
+	public final fun getDecoderFallback ()Lio/github/aftrolle/ffmpegkmp/codec/DecoderFallbackReason;
+	public final fun getHdrResult ()Lio/github/aftrolle/ffmpegkmp/ffplay/FFplayHdrResult;
+	public final fun getOutputPrimaries ()Lio/github/aftrolle/ffmpegkmp/codec/ColorPrimaries;
+	public final fun getRenderer ()Lio/github/aftrolle/ffmpegkmp/ffplay/FFplayRendererKind;
+	public final fun getSecurePath ()Z
+	public final fun getSourcePrimaries ()Lio/github/aftrolle/ffmpegkmp/codec/ColorPrimaries;
+	public final fun getZeroCopy ()Z
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class io/github/aftrolle/ffmpegkmp/ffplay/FFplayOutputPreference : java/lang/Enum {
+	public static final field AUTO Lio/github/aftrolle/ffmpegkmp/ffplay/FFplayOutputPreference;
+	public static final field COMPOSE_CANVAS Lio/github/aftrolle/ffmpegkmp/ffplay/FFplayOutputPreference;
+	public static final field NATIVE_SURFACE Lio/github/aftrolle/ffmpegkmp/ffplay/FFplayOutputPreference;
+	public static fun getEntries ()Lkotlin/enums/EnumEntries;
+	public static fun valueOf (Ljava/lang/String;)Lio/github/aftrolle/ffmpegkmp/ffplay/FFplayOutputPreference;
+	public static fun values ()[Lio/github/aftrolle/ffmpegkmp/ffplay/FFplayOutputPreference;
+}
+
+public final class io/github/aftrolle/ffmpegkmp/ffplay/FFplayPlayer : java/lang/AutoCloseable {
+	public static final field $stable I
+	public fun <init> (Lio/github/aftrolle/ffmpegkmp/ffplay/FFplayConfiguration;)V
+	public synthetic fun <init> (Lio/github/aftrolle/ffmpegkmp/ffplay/FFplayConfiguration;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public fun close ()V
+	public final fun follow (Lio/github/aftrolle/ffmpegkmp/ffplay/FFplayClock;)V
+	public final fun getAudio ()Lkotlinx/coroutines/flow/StateFlow;
+	public final fun getConfiguration ()Lio/github/aftrolle/ffmpegkmp/ffplay/FFplayConfiguration;
+	public final fun getEvents ()Lkotlinx/coroutines/flow/Flow;
+	public final fun getSnapshot ()Lkotlinx/coroutines/flow/StateFlow;
+	public final fun pause ()V
+	public final fun play ()V
+	public final fun prepare (Lio/github/aftrolle/ffmpegkmp/core/MediaSource;Lio/github/aftrolle/ffmpegkmp/ffplay/FFplayContentProtection;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
+	public static synthetic fun prepare$default (Lio/github/aftrolle/ffmpegkmp/ffplay/FFplayPlayer;Lio/github/aftrolle/ffmpegkmp/core/MediaSource;Lio/github/aftrolle/ffmpegkmp/ffplay/FFplayContentProtection;Lkotlin/coroutines/Continuation;ILjava/lang/Object;)Ljava/lang/Object;
+	public final fun seekTo-LRDsOJo (J)V
+	public final fun stop ()V
+}
+
+public final class io/github/aftrolle/ffmpegkmp/ffplay/FFplayRendererKind : java/lang/Enum {
+	public static final field COMPOSE_CANVAS Lio/github/aftrolle/ffmpegkmp/ffplay/FFplayRendererKind;
+	public static final field NATIVE_SURFACE Lio/github/aftrolle/ffmpegkmp/ffplay/FFplayRendererKind;
+	public static fun getEntries ()Lkotlin/enums/EnumEntries;
+	public static fun valueOf (Ljava/lang/String;)Lio/github/aftrolle/ffmpegkmp/ffplay/FFplayRendererKind;
+	public static fun values ()[Lio/github/aftrolle/ffmpegkmp/ffplay/FFplayRendererKind;
+}
+
+public final class io/github/aftrolle/ffmpegkmp/ffplay/FFplaySnapshot {
+	public static final field $stable I
+	public fun <init> ()V
+	public synthetic fun <init> (Lio/github/aftrolle/ffmpegkmp/ffplay/FFplayState;JLkotlin/time/Duration;ZLio/github/aftrolle/ffmpegkmp/codec/VideoInfo;Lio/github/aftrolle/ffmpegkmp/ffplay/FFplayOutputInfo;JLio/github/aftrolle/ffmpegkmp/ffplay/FFplayFailure;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public synthetic fun <init> (Lio/github/aftrolle/ffmpegkmp/ffplay/FFplayState;JLkotlin/time/Duration;ZLio/github/aftrolle/ffmpegkmp/codec/VideoInfo;Lio/github/aftrolle/ffmpegkmp/ffplay/FFplayOutputInfo;JLio/github/aftrolle/ffmpegkmp/ffplay/FFplayFailure;Lkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public final fun component1 ()Lio/github/aftrolle/ffmpegkmp/ffplay/FFplayState;
+	public final fun component2-UwyO8pc ()J
+	public final fun component3-FghU774 ()Lkotlin/time/Duration;
+	public final fun component4 ()Z
+	public final fun component5 ()Lio/github/aftrolle/ffmpegkmp/codec/VideoInfo;
+	public final fun component6 ()Lio/github/aftrolle/ffmpegkmp/ffplay/FFplayOutputInfo;
+	public final fun component7 ()J
+	public final fun component8 ()Lio/github/aftrolle/ffmpegkmp/ffplay/FFplayFailure;
+	public final fun copy-uYExaCY (Lio/github/aftrolle/ffmpegkmp/ffplay/FFplayState;JLkotlin/time/Duration;ZLio/github/aftrolle/ffmpegkmp/codec/VideoInfo;Lio/github/aftrolle/ffmpegkmp/ffplay/FFplayOutputInfo;JLio/github/aftrolle/ffmpegkmp/ffplay/FFplayFailure;)Lio/github/aftrolle/ffmpegkmp/ffplay/FFplaySnapshot;
+	public static synthetic fun copy-uYExaCY$default (Lio/github/aftrolle/ffmpegkmp/ffplay/FFplaySnapshot;Lio/github/aftrolle/ffmpegkmp/ffplay/FFplayState;JLkotlin/time/Duration;ZLio/github/aftrolle/ffmpegkmp/codec/VideoInfo;Lio/github/aftrolle/ffmpegkmp/ffplay/FFplayOutputInfo;JLio/github/aftrolle/ffmpegkmp/ffplay/FFplayFailure;ILjava/lang/Object;)Lio/github/aftrolle/ffmpegkmp/ffplay/FFplaySnapshot;
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getDroppedFrames ()J
+	public final fun getDuration-FghU774 ()Lkotlin/time/Duration;
+	public final fun getFailure ()Lio/github/aftrolle/ffmpegkmp/ffplay/FFplayFailure;
+	public final fun getOutput ()Lio/github/aftrolle/ffmpegkmp/ffplay/FFplayOutputInfo;
+	public final fun getPosition-UwyO8pc ()J
+	public final fun getSeekable ()Z
+	public final fun getState ()Lio/github/aftrolle/ffmpegkmp/ffplay/FFplayState;
+	public final fun getVideo ()Lio/github/aftrolle/ffmpegkmp/codec/VideoInfo;
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class io/github/aftrolle/ffmpegkmp/ffplay/FFplayState : java/lang/Enum {
+	public static final field CLOSED Lio/github/aftrolle/ffmpegkmp/ffplay/FFplayState;
+	public static final field ENDED Lio/github/aftrolle/ffmpegkmp/ffplay/FFplayState;
+	public static final field FAILED Lio/github/aftrolle/ffmpegkmp/ffplay/FFplayState;
+	public static final field IDLE Lio/github/aftrolle/ffmpegkmp/ffplay/FFplayState;
+	public static final field PAUSED Lio/github/aftrolle/ffmpegkmp/ffplay/FFplayState;
+	public static final field PLAYING Lio/github/aftrolle/ffmpegkmp/ffplay/FFplayState;
+	public static final field PREPARING Lio/github/aftrolle/ffmpegkmp/ffplay/FFplayState;
+	public static final field READY Lio/github/aftrolle/ffmpegkmp/ffplay/FFplayState;
+	public static final field SEEKING Lio/github/aftrolle/ffmpegkmp/ffplay/FFplayState;
+	public static final field STOPPED Lio/github/aftrolle/ffmpegkmp/ffplay/FFplayState;
+	public static final field WAITING_FOR_OUTPUT Lio/github/aftrolle/ffmpegkmp/ffplay/FFplayState;
+	public static fun getEntries ()Lkotlin/enums/EnumEntries;
+	public static fun valueOf (Ljava/lang/String;)Lio/github/aftrolle/ffmpegkmp/ffplay/FFplayState;
+	public static fun values ()[Lio/github/aftrolle/ffmpegkmp/ffplay/FFplayState;
+}
+
+public final class io/github/aftrolle/ffmpegkmp/ffplay/FFplaySurfaceKt {
+	public static final fun FFplaySurface-eNL-U6s (Lio/github/aftrolle/ffmpegkmp/ffplay/FFplayPlayer;Landroidx/compose/ui/Modifier;Landroidx/compose/ui/layout/ContentScale;JLandroidx/compose/ui/unit/IntSize;Landroidx/compose/runtime/Composer;II)V
+	public static final fun rememberFFplayPlayer (Lio/github/aftrolle/ffmpegkmp/ffplay/FFplayConfiguration;Landroidx/compose/runtime/Composer;II)Lio/github/aftrolle/ffmpegkmp/ffplay/FFplayPlayer;
+}
+
+public final class io/github/aftrolle/ffmpegkmp/ffplay/FrameImage : java/lang/AutoCloseable {
+	public static final field $stable I
+	public fun close ()V
+	public final fun getDisplaySize-NH-jbRc ()J
+	public final fun getTargetSize-bOM6tXw ()Landroidx/compose/ui/unit/IntSize;
+	public final fun setTargetSize-fhxjrPA (Landroidx/compose/ui/unit/IntSize;)V
+	public final fun update (Lio/github/aftrolle/ffmpegkmp/codec/VideoFrame;)V
+}
+
+public final class io/github/aftrolle/ffmpegkmp/ffplay/FrameImageKt {
+	public static final fun drawFrameImage-UxnYL8s (Landroidx/compose/ui/graphics/drawscope/DrawScope;Lio/github/aftrolle/ffmpegkmp/ffplay/FrameImage;JJ)V
+	public static synthetic fun drawFrameImage-UxnYL8s$default (Landroidx/compose/ui/graphics/drawscope/DrawScope;Lio/github/aftrolle/ffmpegkmp/ffplay/FrameImage;JJILjava/lang/Object;)V
+}
+
+public final class io/github/aftrolle/ffmpegkmp/ffplay/VideoFrameImage_skikoKt {
+	public static final fun toImageBitmap (Lio/github/aftrolle/ffmpegkmp/codec/VideoFrame;)Landroidx/compose/ui/graphics/ImageBitmap;
+}
+

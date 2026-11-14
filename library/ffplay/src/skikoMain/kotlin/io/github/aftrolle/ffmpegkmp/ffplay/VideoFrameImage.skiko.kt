@@ -40,13 +40,14 @@ internal actual fun DrawScope.drawCodedImage(
     dstOffset: IntOffset,
     dstSize: IntSize,
     transfer: ColorTransfer,
+    toneMap: SdrToneMap?,
 ): Unit = throw IllegalStateException("Only Android frames lie in GPU memory")
 
 /** Skia's platforms decode into memory only. */
 private object NoGpuFrameWraps : GpuFrameWraps {
     override val count: Int = 0
 
-    override fun wrap(frame: VideoFrame): GpuImage = throw IllegalStateException("Only Android frames lie in GPU memory: $frame")
+    override fun wrap(frame: VideoFrame, toneMap: SdrToneMap?): GpuImage = throw IllegalStateException("Only Android frames lie in GPU memory: $frame")
 
     override fun close() = Unit
 }

@@ -109,7 +109,7 @@ class VideoDecoderSystemTest {
     }
 
     @Test
-    fun everyThreadCountReturnsTheSameFramesAtTheSamePositions() = runBlocking {
+    fun everyThreadCountAndTypeReturnsTheSameFramesAtTheSamePositions() = runBlocking {
         // Forward steps, then jumps back and ahead, then an accurate seek: what frame threading reorders.
         val positions = (0 until 150).map { it.seconds / 30 } +
             listOf(4.seconds, 0.5.seconds, 10.seconds, 2.4.seconds, Duration.ZERO, 3.seconds)
@@ -123,7 +123,14 @@ class VideoDecoderSystemTest {
             val numbered = !name.startsWith("hdr10") && !name.startsWith("hlg")
             val output = if (numbered) VideoOutput.Memory() else VideoOutput.Memory(FrameFormat.Rgba8)
             val expected = decoder(name, output, threads = DecoderThreads.Fixed(1)).use { it.walk(numbered) }
-            for (threads in listOf(DecoderThreads.Fixed(3), DecoderThreads.Auto)) {
+            // Fixed(3) allows both kinds, so codecs with frame threading take it; each kind alone too.
+            val choices = listOf(
+                DecoderThreads.Fixed(3),
+                DecoderThreads.Fixed(3, setOf(DecoderThreadType.FRAME)),
+                DecoderThreads.Fixed(3, setOf(DecoderThreadType.SLICE)),
+                DecoderThreads.Auto,
+            )
+            for (threads in choices) {
                 decoder(name, output, threads = threads).use { decoder ->
                     assertEquals(expected, decoder.walk(numbered), "$name with $threads")
                 }

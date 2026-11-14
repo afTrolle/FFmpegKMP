@@ -139,7 +139,7 @@ class NativeDecoderBudgetJvmTest {
     private fun player(
         configuration: NativePlayerConfiguration,
         frames: MutableList<NativeVideoFrame>? = null,
-    ): NativePlayerBridge = createPlatformPlayerBridge(
+    ): NativePlayerBridge = refreshedPlayerBridge(
         configuration,
         update = {},
         frame = { frame -> if (frames != null) frames += frame else frame.frame.close() },

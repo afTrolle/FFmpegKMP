@@ -322,6 +322,43 @@ class MediaWriterSystemTest {
     }
 
     @Test
+    fun finishFailsATrackWhoseEncoderTookFramesAndProducedNoPackets() = runBlocking<Unit> {
+        // The test switch drops the AAC encoder's packets, as an encoder that gives none would.
+        MediaWriter.open(MediaOutput.File((directory / "no-audio-packets.mp4").toString())).use { writer ->
+            val audio = writer.addAudioTrack(AudioEncoderConfig(sampleRate = 48_000, channels = 1))
+            audio.discardPacketsForTesting()
+            audio.write(FloatArray(4_800))
+            val failure = assertFailsWith<MediaWritingException> { writer.finish() }
+            assertContains(failure.message.orEmpty(), "encoder AAC took 4800 frames and produced no packets")
+        }
+        val config = VideoEncoderConfig(128, 128, FrameRate(30))
+        if (!encodes(config)) return@runBlocking
+        MediaWriter.open(MediaOutput.File((directory / "no-video-packets.mp4").toString())).use { writer ->
+            val video = writer.addVideoTrack(config)
+            val audio = writer.addAudioTrack(AudioEncoderConfig(sampleRate = 48_000, channels = 1))
+            video.discardPacketsForTesting()
+            decoder("cfr-30-h264-128.mp4", VideoOutput.Memory(video.inputFormat)).use { decoder ->
+                decoder.frames(until = 1.seconds).collect { video.write(it) }
+            }
+            audio.write(FloatArray(48_000))
+            val failure = assertFailsWith<MediaWritingException> { writer.finish() }
+            assertContains(failure.message.orEmpty(), "encoder ${video.encoderName} took 30 frames and produced no packets")
+        }
+    }
+
+    @Test
+    fun aTrackNeverGivenAFrameIsLeftOutWithoutAFailure() = runBlocking {
+        // As before the packet check: finish succeeds, and MP4 leaves the track with no samples out.
+        val output = directory / "empty-audio.mp4"
+        val result = MediaWriter.open(MediaOutput.File(output.toString())).use { writer ->
+            writer.addAudioTrack(AudioEncoderConfig(sampleRate = 48_000, channels = 1))
+            writer.finish()
+        }
+        assertEquals(0, result.audioFrames)
+        assertEquals(emptyList(), probe(output))
+    }
+
+    @Test
     fun framesFromADecodersRingGoBackOnceWritten() = runBlocking {
         val config = VideoEncoderConfig(128, 128, FrameRate(30))
         if (!encodes(config)) return@runBlocking

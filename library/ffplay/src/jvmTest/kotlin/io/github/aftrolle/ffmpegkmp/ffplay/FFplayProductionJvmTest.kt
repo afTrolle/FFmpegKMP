@@ -8,6 +8,7 @@ import io.github.aftrolle.ffmpegkmp.bindings.nativePlayerStatistics
 import io.github.aftrolle.ffmpegkmp.codec.DecoderBudget
 import io.github.aftrolle.ffmpegkmp.codec.DecoderFallbackReason
 import io.github.aftrolle.ffmpegkmp.codec.DecoderKind
+import io.github.aftrolle.ffmpegkmp.codec.NamedCodec
 import io.github.aftrolle.ffmpegkmp.codec.CodecPreference
 import io.github.aftrolle.ffmpegkmp.codec.VideoDecoder
 import io.github.aftrolle.ffmpegkmp.codec.VideoFrame
@@ -43,7 +44,7 @@ class FFplayProductionJvmTest {
             "Missing shared playback fixture"
         }.use { it.readBytes() }
         val output = ProductionOutput()
-        val player = FFplayPlayer(FFplayConfiguration(decoderPreference = CodecPreference.SOFTWARE))
+        val player = FFplayPlayer(FFplayConfiguration(decoder = CodecPreference.SOFTWARE))
         player.attachOutput(output)
 
         try {
@@ -74,7 +75,7 @@ class FFplayProductionJvmTest {
     @Test
     fun aDesktopCanvasOutputReportsWhyItDecodesInSoftware() = runBlocking {
         if (!System.getProperty("os.name").contains("Mac", ignoreCase = true)) return@runBlocking
-        val player = FFplayPlayer(FFplayConfiguration(decoderPreference = CodecPreference.AUTO, audio = false))
+        val player = FFplayPlayer(FFplayConfiguration(decoder = CodecPreference.AUTO, audio = false))
         val fallback = async(Dispatchers.Default, CoroutineStart.UNDISPATCHED) {
             player.events.filterIsInstance<FFplayEvent.DecoderFallback>().first()
         }
@@ -96,6 +97,54 @@ class FFplayProductionJvmTest {
         }
     }
 
+    /** A named software decoder plays the source: exactly that one, with its options, and no fallback to report. */
+    @Test
+    fun aPlayerWithANamedSoftwareDecoderPlays() = runBlocking {
+        val output = ProductionOutput()
+        val player = FFplayPlayer(
+            FFplayConfiguration(
+                decoder = NamedCodec("mpeg2video", mapOf("skip_loop_filter" to "none")),
+                audio = false,
+            ),
+        )
+        player.attachOutput(output)
+        try {
+            player.prepare(fixtureSource("playback-color-patches-1s.mp4"))
+            assertEquals(FFplayState.READY, player.snapshot.value.state)
+            player.play()
+            withTimeout(3_000) { player.snapshot.first { it.position >= 300.milliseconds } }
+            player.pause()
+            assertEquals(DecoderKind.SOFTWARE, player.snapshot.value.output?.decoder)
+            assertNull(player.snapshot.value.output?.decoderFallback)
+            assertTrue(output.presented.size > 1, "frames presented: ${output.presented.size}")
+        } finally {
+            player.close()
+        }
+    }
+
+    /** A decoder this build does not have fails the prepare, saying so, rather than opening another. */
+    @Test
+    fun anUnknownNamedDecoderFailsWithItsReason() = runBlocking {
+        val output = ProductionOutput()
+        val player = FFplayPlayer(FFplayConfiguration(decoder = NamedCodec("no-such-decoder"), audio = false))
+        player.attachOutput(output)
+        try {
+            val failure = assertFailsWith<NativePlayerException> {
+                player.prepare(fixtureSource("playback-color-patches-1s.mp4"))
+            }
+            assertEquals(NativePlayerError.UNSUPPORTED, failure.errorCode)
+            assertTrue("no decoder named 'no-such-decoder'" in failure.message.orEmpty(), failure.message)
+            assertEquals(FFplayState.FAILED, player.snapshot.value.state)
+            assertTrue(
+                "no-such-decoder" in player.snapshot.value.failure?.message.orEmpty(),
+                player.snapshot.value.failure?.message,
+            )
+            assertEquals(0, output.framesReceived)
+        } finally {
+            player.close()
+        }
+    }
+
     /**
      * A paused player releases its decoder after the configured delay and keeps showing its frame;
      * play then opens one decoder and starts at the paused frame.
@@ -105,9 +154,9 @@ class FFplayProductionJvmTest {
         val output = ProductionOutput()
         val player = FFplayPlayer(
             FFplayConfiguration(
-                decoderPreference = CodecPreference.SOFTWARE,
+                decoder = CodecPreference.SOFTWARE,
                 audio = false,
-                releaseDecoderWhenPaused = 300.milliseconds,
+                decoderIdleRelease = 300.milliseconds,
             ),
         )
         player.attachOutput(output)
@@ -201,7 +250,7 @@ class FFplayProductionJvmTest {
         val releasing = budgetPlayer(CodecPreference.REQUIRE_HARDWARE, releaseDecoder = 300.milliseconds)
         val holder = budgetPlayer()
         val late = budgetPlayer(CodecPreference.REQUIRE_HARDWARE)
-        val unattached = FFplayPlayer(FFplayConfiguration(decoderPreference = CodecPreference.REQUIRE_HARDWARE, audio = false))
+        val unattached = FFplayPlayer(FFplayConfiguration(decoder = CodecPreference.REQUIRE_HARDWARE, audio = false))
         try {
             releasing.prepare(fixtureSource("hardware-h264.mp4"))
             assertEquals(DecoderKind.HARDWARE, releasing.snapshot.value.output?.decoder)
@@ -233,14 +282,14 @@ class FFplayProductionJvmTest {
      */
     private fun budgetPlayer(
         preference: CodecPreference = CodecPreference.AUTO,
-        releaseDecoder: Duration? = null,
+        releaseDecoder: Duration = Duration.INFINITE,
     ): FFplayPlayer =
-        FFplayPlayer(FFplayConfiguration(decoderPreference = preference, audio = false, releaseDecoderWhenPaused = releaseDecoder))
+        FFplayPlayer(FFplayConfiguration(decoder = preference, audio = false, decoderIdleRelease = releaseDecoder))
             .apply { attachOutput(budgetOutput(preference)) }
 
     private fun budgetOutput(preference: CodecPreference): ProductionOutput =
         if (preference == CodecPreference.REQUIRE_HARDWARE) {
-            ProductionOutput(FFplayOutputCapabilities(hardwareFrameImport = true), FFplayRendererKind.GPU_TEXTURE)
+            ProductionOutput(FFplayOutputCapabilities(hardwareFrameImport = true), FFplayRendererKind.NATIVE_SURFACE)
         } else {
             ProductionOutput()
         }

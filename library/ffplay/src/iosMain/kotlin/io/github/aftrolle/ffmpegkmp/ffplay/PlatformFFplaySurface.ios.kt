@@ -73,15 +73,15 @@ internal actual fun PlatformFFplaySurface(
     modifier: Modifier,
     contentScale: ContentScale,
     backgroundColor: Color,
-    resolution: IntSize?,
+    targetSize: IntSize?,
 ) {
     if (player.configuration.outputPreference == FFplayOutputPreference.COMPOSE_CANVAS) {
-        ComposeCanvasFFplaySurface(player, modifier, contentScale, backgroundColor, resolution)
+        ComposeCanvasFFplaySurface(player, modifier, contentScale, backgroundColor, targetSize)
         return
     }
 
     val output = remember(player) { IOSSampleBufferOutput() }
-    output.image.targetSize = resolution
+    output.image.targetSize = targetSize
     // Only the stream's display metadata matters here; the full snapshot changes every frame.
     val video by remember(player) { player.snapshot.map { it.video }.distinctUntilChanged() }
         .collectAsState(player.snapshot.value.video)

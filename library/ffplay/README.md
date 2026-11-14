@@ -16,13 +16,16 @@ FFplaySurface(player, Modifier.fillMaxSize())
 A player can be prepared before an output is attached; it publishes its whole observable state as
 one immutable `FFplaySnapshot`. Preparation opens the container and inspects its video stream, but
 no decoder is created until an output has been negotiated. Each player runs its own native
-demux/decode worker with scheduled frames, seek/pause/stop, and replayable mounted input.
+demux/decode worker, which decodes ahead into a bounded frame queue, with seek/pause/stop and
+replayable mounted input; the display shows the queued frames as they fall due (see
+[Timing](#timing)).
 
 `FFplaySnapshot.output` reports the decoder and renderer that actually became active: a hardware
 request is never reported as hardware by itself, and `REQUIRE_HARDWARE` fails when the hardware
-path cannot be opened. Frames more than one frame interval late are dropped; native drops and
-renderer rejections are summed in `FFplaySnapshot.droppedFrames`, kept across surface recreation
-and reset by a new source or `stop()`.
+path cannot be opened. Queued frames that another due frame overtakes are dropped, as ffplay drops
+them; native drops, the frames a catch-up skips and renderer rejections are summed in
+`FFplaySnapshot.droppedFrames`, kept across surface recreation and reset by a new source or
+`stop()`.
 
 `VideoInfo` carries pixel format, bit depth, aspect ratio, rotation, the colour as a `FrameColor`,
 and the mastering display and content-light metadata, with Dolby Vision and HDR10+ as flags on
@@ -36,8 +39,8 @@ them in software.
 ## Types from `codec`
 
 The decoder and stream types come from the Compose-free [`codec`](../codec/README.md) module,
-which `ffplay` exposes as an API dependency: `CodecPreference` and `DecoderThreads` configure the
-player, and `VideoInfo` and `DecoderKind` describe what it plays. They live in
+which `ffplay` exposes as an API dependency: `CodecSelection` (a `CodecPreference` or a
+`NamedCodec`) and `DecoderThreads` configure the player, and `VideoInfo` and `DecoderKind` describe what it plays. They live in
 `io.github.aftrolle.ffmpegkmp.codec`. What `prepare` takes, `MediaSource`, is in
 `io.github.aftrolle.ffmpegkmp.core`; binaries built against 0.2 need recompiling.
 
@@ -45,13 +48,14 @@ player, and `VideoInfo` and `DecoderKind` describe what it plays. They live in
 
 | Target | Output | Hardware decode |
 | --- | --- | --- |
-| Android | `AndroidExternalSurface`; `COMPOSE_CANVAS` on request | MediaCodec direct to the `Surface`, software upload on fallback |
+| Android | `AndroidExternalSurface`; `COMPOSE_CANVAS` on request | MediaCodec direct to the `Surface`, software upload on fallback; on the Canvas, Android 14+, MediaCodec's frames from GPU memory |
 | iOS | `AVSampleBufferDisplayLayer`; Compose overlay on fallback | VideoToolbox `CVPixelBuffer`s wrapped in `CMSampleBuffer`s |
 | JVM desktop | Compose Canvas | VideoToolbox, D3D11VA/DXVA2, VAAPI (when libva is present), downloaded to the canvas |
 | JS / Wasm | HTML canvas via `HtmlElementView` | WebCodecs `VideoFrame`s, Wasm software decode on fallback |
 
 On Android the direct `ContentScale.Fit` surface advertises PQ, HLG, BT.2020 and P3 only from the
-display's runtime capabilities. Desktop hardware frames go through the software renderer, so
+display's runtime capabilities. The Canvas takes hardware frames as described under
+[The Canvas on Android 14](#the-canvas-on-android-14). Desktop hardware frames go through the software renderer, so
 `zeroCopy` is false there and protected content is never allowed. In the browser the engine runs in
 the Emscripten worker and hands frames over through a one-frame mailbox; WebCodecs is reported as
 hardware only when the browser's decoder configuration confirms it.
@@ -122,6 +126,97 @@ immediately, while track changes are heard after the quarter second decoded ahea
 start audio after a user gesture: until then video plays on its own, the player emits one
 `FFplayEvent.Warning`, and the audio rejoins at the current position on the first gesture.
 
+## Timing
+
+The player is a port of ffplay's display loop. The session thread reads, decodes and hands each
+frame to the output as it enters a queue of `FFplayConfiguration.frameQueueSize` frames (3 by
+default, ffplay's; at least 1), and blocks only while the queue is full. Whoever drives the display
+calls the player's refresh, ffplay's `video_refresh`: of the queued frames that are due it shows the
+newest and drops the older ones, so a decoder that falls behind still shows what it decodes, and it
+says how long until the next frame is due.
+
+- The Compose Canvas refreshes once per display frame from the composition's frame clock
+  (`withFrameNanos`), choosing the frame for the time it will be visible, one display frame ahead.
+  On Android the frame clock's times are the player's own clock, so every player in a window
+  chooses its frame for the same vsync time; elsewhere it chooses the frame for the time the
+  refresh runs. Outputs without a frame clock (Android's `SurfaceView`, iOS's layer) are refreshed
+  by one coroutine per player that waits as long as the last refresh said. No output has a thread
+  of its own for presenting.
+- A MediaCodec decoder rendering to a Surface hands its buffers over about two display frames ahead,
+  with the frame's due time as the render timestamp, so the compositor shows each at its vsync. The
+  player's waits on MediaCodec are bounded (50 ms), so a stalled codec cannot hang it.
+- When a decoded frame is more than 500 ms behind the clock, the player skips forward to the first
+  keyframe at or after the clock, drops what it passed over (counted in `droppedFrames`) and shows
+  the frame it lands on when the clock reaches it. It is not a seek: no `SEEKING`, no preview. A
+  source with no later keyframe decodes on. ffplay's decoder-side early drop is not ported: on a
+  decoder slower than real time it drops every frame.
+
+Each slot of the queue holds one frame: on the Canvas, the bitmap it was converted into, drawn width
+× height × 4 bytes, with the Canvas keeping `FFplayConfiguration.canvasFrames` bitmaps, by default `frameQueueSize` + 2
+(the queued frames, the frame on screen and the one before it, which a drawing may still read); on
+other outputs the decoded frame; for a hardware decoder, one of its output buffers, as many as the
+codec gives up to the queue's size. `canvasFrames` goes down to 1 to save memory: below the default
+the frame shown before is reused at once, queued frames without a bitmap are converted as they are
+shown, on the drawing thread, and at 1 each frame is written over the one on screen, which a
+drawing under way may show partly written. A player's memory is therefore its decoder's frame
+threads × one picture, its queue × one drawable frame, and the decoder's own reference pictures.
+`frameQueueSize = 1` costs no more bitmaps than a player held before 0.6. The browser's player paces
+its own frames and ignores `frameQueueSize`.
+
+### Following a clock
+
+`player.follow(clock)` makes the player show, at each display frame, the frame for the media
+position an `FFplayClock` gives, instead of pacing itself. Several players on one clock show the
+same instant in the same display frame. The clock is a function per player, so an editor derives
+each clip's position from its one timeline clock with that clip's offset, trim and loop:
+
+```kotlin
+// timeline.positionAt(frameTime): where the editor's one timeline is at that display frame.
+player.follow { frameTime ->
+    val local = (timeline.positionAt(frameTime) - clip.start).coerceAtLeast(Duration.ZERO)
+    val inClip = if (clip.loops) (local.inWholeMicroseconds % clip.length.inWholeMicroseconds).microseconds else local
+    clip.trimStart + inClip
+}
+```
+
+- The frame shown is the one whose span contains the position, the frame `VideoDecoder.frameAt`
+  returns for it, so a preview and a frame-by-frame export of one position show the same frame.
+- The video decodes ahead in one run and is never paused per frame: a position that advances
+  consumes the queue, one that stands still or repeats holds its frame. A jump of the clock itself,
+  back or more than 500 ms further than the frame time moved, seeks, as a loop wrap does, and the
+  first frames after it wait for that seek. Positions before the start or past the end hold the
+  first or last frame, silent.
+- Audio plays while the position advances within 25 % of real time, judged over 100 ms, and is
+  silent otherwise, also when no frame has asked the clock for 200 ms. It seeks when the clock jumps
+  and is sought back when it drifts more than 100 ms; it is not resampled.
+- While following, the clock is the transport: `play`, `pause` and `seekTo` throw
+  `IllegalStateException`. `follow(null)` stops following and pauses; the player's own clock (the audio,
+  else the wall clock) takes over at the next `play`.
+- `positionAt` is called once per display frame on the refreshing thread, so it must be fast and
+  thread-safe. The browser cannot follow a clock and throws `UnsupportedOperationException`.
+
+### The Canvas on Android 14
+
+On Android 14 (API 34) and later the Compose Canvas output draws a hardware decoder's frames from
+GPU memory, with no copy and no bitmaps. The player renders each MediaCodec frame, as it is queued,
+into an `ImageReader` of the output's own (the class `VideoOutput.GpuBuffers` uses), and the output
+waits on the session thread, bounded, for the image that carries it; presenting flips to that image.
+The reader holds `canvasFrames` images, down to 1. Nothing needs choosing: until the stream is
+known, and for a stream the Canvas does not take, frames come in memory and are converted as above,
+and `FFplayOutputInfo` says which path is in use (decoder `HARDWARE` with `zeroCopy`, or
+`SOFTWARE`). A resize costs nothing, since the GPU scales the frame as it draws it.
+
+- BT.709 SDR draws as it is.
+- PQ and HLG draw tone mapped by an AGSL shader that follows the CPU converter step by step: BT.2390
+  to SDR white at the clip's peak, then the converter's own gamut map into BT.709, looked up
+  tetrahedrally. The peak comes from the stream's metadata, not from each frame, and the result
+  assumes an sRGB canvas. On an S25 the drawn frames are within 3 (HLG) and 4 (PQ) 8-bit codes of
+  the software conversion.
+- SDR in Display P3 or BT.2020 primaries stays converted in software, because Android's mapping of
+  such a buffer into an sRGB canvas differs from the conversion by up to 16 8-bit codes.
+
+Older Android versions, and other platforms, keep the software path.
+
 ## Frames as images
 
 `VideoFrame.toImageBitmap()` turns a [`codec`](../codec/README.md) frame, from `VideoDecoder` for
@@ -147,11 +242,10 @@ VideoDecoder.open(MediaSource("clip.mp4")).use { decoder ->
 A frame as decoded is then in two buffers, the decoder's and the bitmap's, with no copy in
 between. `toImageBitmap` leaves the frame open.
 
-The Compose Canvas fallback draws the player's frames the same way: the player hands over each
-frame as decoded, and the canvas output converts it into a
-[`FrameImage`](#two-bitmaps-per-source) on the player's thread. Since that thread updates the image
-at the video's rate, which drawing does not pace, the player's image keeps three bitmaps rather
-than two. Android's Surface fallback draws each frame onto the surface before it takes the next,
+The Compose Canvas output draws the player's frames the same way, ahead of their time: the player
+hands over each frame as decoded as it enters the frame queue, and the canvas output converts it
+then, on the player's session thread, into a free bitmap of a ring of `frameQueueSize` + 2
+(see [Timing](#timing)); showing it later is a flip. Android's Surface fallback draws each frame onto the surface before it takes the next,
 so it converts every frame into one reused bitmap. A desktop hardware frame is downloaded as it is
 converted, once, into one of two buffers the player reuses. Both convert straight to the size the frame is
 drawn at, not the source's (see [Bitmaps at the drawn size](#bitmaps-at-the-drawn-size)). The
@@ -159,13 +253,22 @@ browser's worker converts its frames into RGBA8 bytes, at the drawn size too, be
 the page.
 
 `FFplayConfiguration(threads = …)` sets the software decoder's threads, as `VideoDecoder.open`
-does (see [`codec`](../codec/README.md#decoder-threads)). The player decodes with FFmpeg's frame and
-slice threads, as `ffplay` does, since it shows one video in real time. A `VideoDecoder` uses slice
-threads only, keeping one frame in progress: HEVC with wavefront rows keeps most of its speed there,
-single-slice H.264 decodes as if on one thread, and hardware decoders and libaom are unaffected.
+does (see [`codec`](../codec/README.md#decoder-threads)). `DecoderThreads.Auto` is two frame
+threads for a player: it decodes about a frame ahead of real time rather than as fast as it can, and
+each frame thread holds one decoded picture, so several players at once stay bounded and leave the
+other cores to the app. `DecoderThreads.Fixed(count, types)` sets FFmpeg's `thread_count` and
+`thread_type` exactly; the browser ignores the types.
+
+`FFplayConfiguration(decoder = …)` takes a `CodecSelection`: a `CodecPreference`, or a
+`NamedCodec` that opens exactly that FFmpeg decoder with its options and nothing in its place. A
+named decoder that does not open or fails to decode fails the player with the reason in
+`FFplayFailure.message`; a named platform decoder (`h264_mediacodec`) renders to the native surface
+as the hardware one does. The player opens its decoder through the same helper as `VideoDecoder`, so
+the `AUTO` fallback is one rule for both: a hardware decoder that fails to open falls back to
+software at once, reporting `FAILED`. The browser fails a `NamedCodec` as unsupported.
 
 The player keeps its video decoder between seeks, pauses and plays, and releases it once it has had
-nothing to decode for `FFplayConfiguration(releaseDecoderWhenPaused = …)`, 2 s by default: paused,
+nothing to decode for `FFplayConfiguration(decoderIdleRelease = …)`, 2 s by default: paused,
 ended, waiting for an output, or showing a seek's frame. A scrub, or a play soon after a pause, uses
 the decoder it has and goes on from the frame on screen; a play or seek after the release opens one
 and decodes from the keyframe before the position, as the first seek did. The released decoder's
@@ -247,15 +350,16 @@ pass as the conversion to RGB, on whichever thread converts:
   turn back to the frame's orientation. So the aspect is the frame's, and the bitmap is never larger
   than the frame. A larger step is taken at the next update; a smaller one only when it is two steps
   or more below the current one, so a size wobbling about a step's edge never reallocates. A step
-  change replaces the three bitmaps one per update, through the usual reuse: three allocations per
-  change, none within a step.
+  change replaces the image's bitmaps one per frame, through the usual reuse: one allocation per
+  bitmap per change, none within a step.
 - `ContentScale.Crop` keeps the whole picture: the bitmap covers the placed frame, not only the
   part inside the canvas, capped at the frame's size.
 - Layout never follows the bitmaps: `displaySize` comes from the frame's coded size, sample aspect
   ratio and rotation, and `drawFrameImage` stretches the smaller bitmap into the same rectangle.
-- A paused player whose surface grows keeps showing its small bitmap, scaled up, until the next
-  frame: a play, a seek or a scrub converts at the new size. Re-converting the shown frame would
-  mean keeping a decoded frame per paused player, which is the memory this saves.
+- A player's Canvas output keeps the decoded frame on screen until a newer one replaces it, so a
+  surface that is resized while the player is paused converts that frame again at the new size,
+  off the drawing thread. While it plays, frames already queued before a resize are drawn scaled
+  until frames converted at the new size replace them; nothing is flushed.
 - An `RgbaF16` frame is converted at its own size whatever the target: the converter takes a
   half-float frame into a bitmap pixel for pixel, and refuses another size. On the web the page
   tells the worker the step the canvas draws at, and the worker converts to it; the page copies
@@ -263,17 +367,19 @@ pass as the conversion to RGB, on whichever thread converts:
 - Android's Surface fallback sizes its one bitmap the same way, from where it places the frame on
   the surface.
 
-The bitmaps of one player's Canvas output, three in RGBA8, are then:
+A player's Canvas output keeps `canvasFrames` bitmaps (`frameQueueSize` + 2 unless set: five by
+default, three at `frameQueueSize = 1`; one at `canvasFrames = 1`), each in RGBA8:
 
-| Drawn at | Bitmap | From 1080p | From 4K |
+| Drawn at | Bitmap | Each, from 1080p | Each, from 4K |
 |---|---|---|---|
-| source size | 1920 × 1080 / 3840 × 2160 | 24.9 MB | 99.5 MB |
-| 1920 × 1080 | step 16 / step 8 | 24.9 MB | 24.9 MB |
-| 960 × 540 tile | step 8 / step 4 | 6.2 MB | 6.2 MB |
-| 256 × 144 thumbnail | step 3 (360 × 203) / step 2 (480 × 270) | 0.88 MB | 1.56 MB |
+| source size | 1920 × 1080 / 3840 × 2160 | 8.3 MB | 33.2 MB |
+| 1920 × 1080 | step 16 / step 8 | 8.3 MB | 8.3 MB |
+| 960 × 540 tile | step 8 / step 4 | 2.1 MB | 2.1 MB |
+| 256 × 144 thumbnail | step 3 (360 × 203) / step 2 (480 × 270) | 0.29 MB | 0.52 MB |
 
-Sixteen paused 4K players therefore hold about 100 MB as tiles instead of 1.6 GB. RGBA F16 doubles
-each figure, and Android's Surface fallback holds one bitmap, a third of them. The converter's own
+Sixteen paused 4K players with `frameQueueSize = 1` therefore hold about 100 MB as tiles instead of
+1.6 GB at the source size. RGBA F16 doubles each figure, and Android's Surface fallback holds one
+bitmap. The converter's own
 HDR intermediate is made at the bitmap's size too, so it shrinks with them.
 
 What it does to the conversion's time depends on the route (`scripts/bench-video-decoder.sh convert`
@@ -292,7 +398,10 @@ An SDR frame does not get faster: the same-size YUV to RGBA8 pass is swscale's u
   which is what the renderer uploads it by.
 - On Android 14 (API 34) and later, frames from `VideoOutput.GpuBuffers` lie in GPU memory, and
   `update` shows them with no copy and no bitmap of its own: it wraps the frame's `HardwareBuffer`
-  anew each time, with `Bitmap.wrapHardwareBuffer`, and draws the frame's crop of it, SDR as sRGB.
+  anew each time, with `Bitmap.wrapHardwareBuffer`, and draws the frame's crop of it, SDR in its own
+  primaries (sRGB, Display P3 or BT.2020, with the sRGB curve), which HWUI maps into the canvas.
+  On an S25 a Display P3 buffer drawn this way is up to 16 8-bit codes from the software conversion
+  on flat areas.
   PQ and HLG buffers wrap as linear sRGB and draw through the renderer's own AGSL shader (Android
   13 and later, which `GpuBuffers` already exceeds): the HDR bitmap colour spaces failed the HDR check:
   below, because HWUI tone maps a `BT2020_PQ` bitmap to SDR when it composites offscreen, the

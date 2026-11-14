@@ -1,0 +1,7 @@
+public abstract interface annotation class io/github/aftrolle/ffmpegkmp/bindings/InternalFFmpegKmpApi : java/lang/annotation/Annotation {
+}
+
+public final class io/github/aftrolle/ffmpegkmp/bindings/NativeVideoFrameSink$Companion {
+	public final fun getDiscard ()Lio/github/aftrolle/ffmpegkmp/bindings/NativeVideoFrameSink;
+}
+

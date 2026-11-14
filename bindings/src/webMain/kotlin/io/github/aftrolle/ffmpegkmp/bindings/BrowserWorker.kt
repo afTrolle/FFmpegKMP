@@ -14,7 +14,7 @@ public actual fun createPlatformExecutionBridge(): NativeExecutionBridge =
 public actual fun createPlatformPlayerBridge(
     configuration: NativePlayerConfiguration,
     update: (NativePlayerSnapshot) -> Unit,
-    frame: (NativeVideoFrame) -> Unit,
+    frame: NativeVideoFrameSink,
     platformFrame: (NativePlatformVideoFrame) -> Boolean,
 ): NativePlayerBridge = createBrowserPlayerBridge(configuration, update, frame, platformFrame)
 

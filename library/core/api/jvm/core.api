@@ -1,0 +1,268 @@
+public final class io/github/aftrolle/ffmpegkmp/core/AudioLevel {
+	public static final field Companion Lio/github/aftrolle/ffmpegkmp/core/AudioLevel$Companion;
+	public fun <init> ()V
+	public fun <init> (DZ)V
+	public synthetic fun <init> (DZILkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public final fun component1 ()D
+	public final fun component2 ()Z
+	public final fun copy (DZ)Lio/github/aftrolle/ffmpegkmp/core/AudioLevel;
+	public static synthetic fun copy$default (Lio/github/aftrolle/ffmpegkmp/core/AudioLevel;DZILjava/lang/Object;)Lio/github/aftrolle/ffmpegkmp/core/AudioLevel;
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getEffectiveVolume ()D
+	public final fun getMuted ()Z
+	public final fun getVolume ()D
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class io/github/aftrolle/ffmpegkmp/core/AudioLevel$Companion {
+	public final fun getMuted ()Lio/github/aftrolle/ffmpegkmp/core/AudioLevel;
+	public final fun getUnchanged ()Lio/github/aftrolle/ffmpegkmp/core/AudioLevel;
+}
+
+public abstract class io/github/aftrolle/ffmpegkmp/core/CommandClient : java/lang/AutoCloseable {
+	public fun close ()V
+	public final fun enqueue (Ljava/lang/String;Lio/github/aftrolle/ffmpegkmp/core/CommandIo;)Lio/github/aftrolle/ffmpegkmp/core/ExecutionSession;
+	public final fun enqueue (Ljava/util/List;Lio/github/aftrolle/ffmpegkmp/core/CommandIo;)Lio/github/aftrolle/ffmpegkmp/core/ExecutionSession;
+	public static synthetic fun enqueue$default (Lio/github/aftrolle/ffmpegkmp/core/CommandClient;Ljava/lang/String;Lio/github/aftrolle/ffmpegkmp/core/CommandIo;ILjava/lang/Object;)Lio/github/aftrolle/ffmpegkmp/core/ExecutionSession;
+	public static synthetic fun enqueue$default (Lio/github/aftrolle/ffmpegkmp/core/CommandClient;Ljava/util/List;Lio/github/aftrolle/ffmpegkmp/core/CommandIo;ILjava/lang/Object;)Lio/github/aftrolle/ffmpegkmp/core/ExecutionSession;
+	public final fun execute (Ljava/lang/String;Lio/github/aftrolle/ffmpegkmp/core/CommandIo;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
+	public final fun execute (Ljava/util/List;Lio/github/aftrolle/ffmpegkmp/core/CommandIo;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
+	public static synthetic fun execute$default (Lio/github/aftrolle/ffmpegkmp/core/CommandClient;Ljava/lang/String;Lio/github/aftrolle/ffmpegkmp/core/CommandIo;Lkotlin/coroutines/Continuation;ILjava/lang/Object;)Ljava/lang/Object;
+	public static synthetic fun execute$default (Lio/github/aftrolle/ffmpegkmp/core/CommandClient;Ljava/util/List;Lio/github/aftrolle/ffmpegkmp/core/CommandIo;Lkotlin/coroutines/Continuation;ILjava/lang/Object;)Ljava/lang/Object;
+}
+
+public final class io/github/aftrolle/ffmpegkmp/core/CommandIo {
+	public static final field Companion Lio/github/aftrolle/ffmpegkmp/core/CommandIo$Companion;
+}
+
+public final class io/github/aftrolle/ffmpegkmp/core/CommandIo$Builder {
+	public fun <init> ()V
+	public final fun input (Ljava/lang/String;Lokio/FileHandle;)V
+	public final fun input (Ljava/lang/String;Lokio/Source;)V
+	public final fun output (Ljava/lang/String;Lokio/FileHandle;Z)V
+	public final fun output (Ljava/lang/String;Lokio/Sink;Z)V
+	public static synthetic fun output$default (Lio/github/aftrolle/ffmpegkmp/core/CommandIo$Builder;Ljava/lang/String;Lokio/FileHandle;ZILjava/lang/Object;)V
+	public static synthetic fun output$default (Lio/github/aftrolle/ffmpegkmp/core/CommandIo$Builder;Ljava/lang/String;Lokio/Sink;ZILjava/lang/Object;)V
+	public final fun readWrite (Ljava/lang/String;Lokio/FileHandle;Z)V
+	public static synthetic fun readWrite$default (Lio/github/aftrolle/ffmpegkmp/core/CommandIo$Builder;Ljava/lang/String;Lokio/FileHandle;ZILjava/lang/Object;)V
+}
+
+public final class io/github/aftrolle/ffmpegkmp/core/CommandIo$Companion {
+	public final fun getEmpty ()Lio/github/aftrolle/ffmpegkmp/core/CommandIo;
+	public final fun invoke (Lkotlin/jvm/functions/Function1;)Lio/github/aftrolle/ffmpegkmp/core/CommandIo;
+}
+
+public final class io/github/aftrolle/ffmpegkmp/core/CommandParseException : io/github/aftrolle/ffmpegkmp/core/FFmpegKmpException {
+	public fun <init> (Ljava/lang/String;)V
+}
+
+public final class io/github/aftrolle/ffmpegkmp/core/CommandRuntimeLimits {
+	public static final field Companion Lio/github/aftrolle/ffmpegkmp/core/CommandRuntimeLimits$Companion;
+	public fun <init> ()V
+	public fun <init> (IIIII)V
+	public synthetic fun <init> (IIIIIILkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public final fun component1 ()I
+	public final fun component2 ()I
+	public final fun component3 ()I
+	public final fun component4 ()I
+	public final fun component5 ()I
+	public final fun copy (IIIII)Lio/github/aftrolle/ffmpegkmp/core/CommandRuntimeLimits;
+	public static synthetic fun copy$default (Lio/github/aftrolle/ffmpegkmp/core/CommandRuntimeLimits;IIIIIILjava/lang/Object;)Lio/github/aftrolle/ffmpegkmp/core/CommandRuntimeLimits;
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getMaxCapturedErrorOutputCharacters ()I
+	public final fun getMaxCapturedOutputCharacters ()I
+	public final fun getMaxPendingNativeEvents ()I
+	public final fun getMaxRetainedLogCharacters ()I
+	public final fun getMaxRetainedLogEvents ()I
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class io/github/aftrolle/ffmpegkmp/core/CommandRuntimeLimits$Companion {
+	public final fun getDefault ()Lio/github/aftrolle/ffmpegkmp/core/CommandRuntimeLimits;
+}
+
+public final class io/github/aftrolle/ffmpegkmp/core/ExecutionCaptureStatus {
+	public fun <init> ()V
+	public fun <init> (ZZZJJ)V
+	public synthetic fun <init> (ZZZJJILkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public final fun component1 ()Z
+	public final fun component2 ()Z
+	public final fun component3 ()Z
+	public final fun component4 ()J
+	public final fun component5 ()J
+	public final fun copy (ZZZJJ)Lio/github/aftrolle/ffmpegkmp/core/ExecutionCaptureStatus;
+	public static synthetic fun copy$default (Lio/github/aftrolle/ffmpegkmp/core/ExecutionCaptureStatus;ZZZJJILjava/lang/Object;)Lio/github/aftrolle/ffmpegkmp/core/ExecutionCaptureStatus;
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getErrorOutputTruncated ()Z
+	public final fun getLogsTruncated ()Z
+	public final fun getOmittedLogCharacters ()J
+	public final fun getOmittedLogEvents ()J
+	public final fun getOutputTruncated ()Z
+	public final fun getTruncated ()Z
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public abstract interface class io/github/aftrolle/ffmpegkmp/core/ExecutionEvent {
+}
+
+public final class io/github/aftrolle/ffmpegkmp/core/ExecutionEvent$Log : io/github/aftrolle/ffmpegkmp/core/ExecutionEvent {
+	public fun <init> (Lio/github/aftrolle/ffmpegkmp/core/LogLevel;Ljava/lang/String;)V
+	public final fun component1 ()Lio/github/aftrolle/ffmpegkmp/core/LogLevel;
+	public final fun component2 ()Ljava/lang/String;
+	public final fun copy (Lio/github/aftrolle/ffmpegkmp/core/LogLevel;Ljava/lang/String;)Lio/github/aftrolle/ffmpegkmp/core/ExecutionEvent$Log;
+	public static synthetic fun copy$default (Lio/github/aftrolle/ffmpegkmp/core/ExecutionEvent$Log;Lio/github/aftrolle/ffmpegkmp/core/LogLevel;Ljava/lang/String;ILjava/lang/Object;)Lio/github/aftrolle/ffmpegkmp/core/ExecutionEvent$Log;
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getLevel ()Lio/github/aftrolle/ffmpegkmp/core/LogLevel;
+	public final fun getMessage ()Ljava/lang/String;
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class io/github/aftrolle/ffmpegkmp/core/ExecutionEvent$Output : io/github/aftrolle/ffmpegkmp/core/ExecutionEvent {
+	public fun <init> (Lio/github/aftrolle/ffmpegkmp/core/OutputStream;Ljava/lang/String;)V
+	public final fun component1 ()Lio/github/aftrolle/ffmpegkmp/core/OutputStream;
+	public final fun component2 ()Ljava/lang/String;
+	public final fun copy (Lio/github/aftrolle/ffmpegkmp/core/OutputStream;Ljava/lang/String;)Lio/github/aftrolle/ffmpegkmp/core/ExecutionEvent$Output;
+	public static synthetic fun copy$default (Lio/github/aftrolle/ffmpegkmp/core/ExecutionEvent$Output;Lio/github/aftrolle/ffmpegkmp/core/OutputStream;Ljava/lang/String;ILjava/lang/Object;)Lio/github/aftrolle/ffmpegkmp/core/ExecutionEvent$Output;
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getStream ()Lio/github/aftrolle/ffmpegkmp/core/OutputStream;
+	public final fun getText ()Ljava/lang/String;
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class io/github/aftrolle/ffmpegkmp/core/ExecutionEvent$Progress : io/github/aftrolle/ffmpegkmp/core/ExecutionEvent {
+	public fun <init> ()V
+	public synthetic fun <init> (Ljava/lang/Long;Ljava/lang/Double;Lkotlin/time/Duration;Ljava/lang/Long;Ljava/lang/String;Ljava/lang/Double;ZILkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public synthetic fun <init> (Ljava/lang/Long;Ljava/lang/Double;Lkotlin/time/Duration;Ljava/lang/Long;Ljava/lang/String;Ljava/lang/Double;ZLkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public final fun component1 ()Ljava/lang/Long;
+	public final fun component2 ()Ljava/lang/Double;
+	public final fun component3-FghU774 ()Lkotlin/time/Duration;
+	public final fun component4 ()Ljava/lang/Long;
+	public final fun component5 ()Ljava/lang/String;
+	public final fun component6 ()Ljava/lang/Double;
+	public final fun component7 ()Z
+	public final fun copy-mY9Nd3A (Ljava/lang/Long;Ljava/lang/Double;Lkotlin/time/Duration;Ljava/lang/Long;Ljava/lang/String;Ljava/lang/Double;Z)Lio/github/aftrolle/ffmpegkmp/core/ExecutionEvent$Progress;
+	public static synthetic fun copy-mY9Nd3A$default (Lio/github/aftrolle/ffmpegkmp/core/ExecutionEvent$Progress;Ljava/lang/Long;Ljava/lang/Double;Lkotlin/time/Duration;Ljava/lang/Long;Ljava/lang/String;Ljava/lang/Double;ZILjava/lang/Object;)Lio/github/aftrolle/ffmpegkmp/core/ExecutionEvent$Progress;
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getBitrate ()Ljava/lang/String;
+	public final fun getEnd ()Z
+	public final fun getFps ()Ljava/lang/Double;
+	public final fun getFrame ()Ljava/lang/Long;
+	public final fun getOutTime-FghU774 ()Lkotlin/time/Duration;
+	public final fun getSpeed ()Ljava/lang/Double;
+	public final fun getTotalSizeBytes ()Ljava/lang/Long;
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class io/github/aftrolle/ffmpegkmp/core/ExecutionResult {
+	public synthetic fun <init> (ILjava/lang/String;Ljava/lang/String;Ljava/util/List;JZLio/github/aftrolle/ffmpegkmp/core/ExecutionEvent$Progress;Lio/github/aftrolle/ffmpegkmp/core/ExecutionCaptureStatus;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public synthetic fun <init> (ILjava/lang/String;Ljava/lang/String;Ljava/util/List;JZLio/github/aftrolle/ffmpegkmp/core/ExecutionEvent$Progress;Lio/github/aftrolle/ffmpegkmp/core/ExecutionCaptureStatus;Lkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public final fun component1 ()I
+	public final fun component2 ()Ljava/lang/String;
+	public final fun component3 ()Ljava/lang/String;
+	public final fun component4 ()Ljava/util/List;
+	public final fun component5-UwyO8pc ()J
+	public final fun component6 ()Z
+	public final fun component7 ()Lio/github/aftrolle/ffmpegkmp/core/ExecutionEvent$Progress;
+	public final fun component8 ()Lio/github/aftrolle/ffmpegkmp/core/ExecutionCaptureStatus;
+	public final fun copy-Zb7fWow (ILjava/lang/String;Ljava/lang/String;Ljava/util/List;JZLio/github/aftrolle/ffmpegkmp/core/ExecutionEvent$Progress;Lio/github/aftrolle/ffmpegkmp/core/ExecutionCaptureStatus;)Lio/github/aftrolle/ffmpegkmp/core/ExecutionResult;
+	public static synthetic fun copy-Zb7fWow$default (Lio/github/aftrolle/ffmpegkmp/core/ExecutionResult;ILjava/lang/String;Ljava/lang/String;Ljava/util/List;JZLio/github/aftrolle/ffmpegkmp/core/ExecutionEvent$Progress;Lio/github/aftrolle/ffmpegkmp/core/ExecutionCaptureStatus;ILjava/lang/Object;)Lio/github/aftrolle/ffmpegkmp/core/ExecutionResult;
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getCancelled ()Z
+	public final fun getCaptureStatus ()Lio/github/aftrolle/ffmpegkmp/core/ExecutionCaptureStatus;
+	public final fun getDuration-UwyO8pc ()J
+	public final fun getErrorOutput ()Ljava/lang/String;
+	public final fun getFinalProgress ()Lio/github/aftrolle/ffmpegkmp/core/ExecutionEvent$Progress;
+	public final fun getLogs ()Ljava/util/List;
+	public final fun getOutput ()Ljava/lang/String;
+	public final fun getReturnCode ()I
+	public fun hashCode ()I
+	public final fun isSuccess ()Z
+	public fun toString ()Ljava/lang/String;
+}
+
+public abstract interface class io/github/aftrolle/ffmpegkmp/core/ExecutionSession : java/lang/AutoCloseable {
+	public abstract fun await (Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
+	public abstract fun cancel ()V
+	public abstract fun cancelAndJoin (Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
+	public abstract fun getArguments ()Ljava/util/List;
+	public abstract fun getEvents ()Lkotlinx/coroutines/flow/Flow;
+	public abstract fun getId ()J
+	public abstract fun getState ()Lkotlinx/coroutines/flow/StateFlow;
+}
+
+public abstract interface annotation class io/github/aftrolle/ffmpegkmp/core/ExperimentalFFmpegKmpApi : java/lang/annotation/Annotation {
+}
+
+public class io/github/aftrolle/ffmpegkmp/core/FFmpegKmpException : java/lang/RuntimeException {
+	public fun <init> (Ljava/lang/String;Ljava/lang/Throwable;)V
+	public synthetic fun <init> (Ljava/lang/String;Ljava/lang/Throwable;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
+}
+
+public abstract interface annotation class io/github/aftrolle/ffmpegkmp/core/InternalFFmpegKmpApi : java/lang/annotation/Annotation {
+}
+
+public final class io/github/aftrolle/ffmpegkmp/core/LogLevel : java/lang/Enum {
+	public static final field DEBUG Lio/github/aftrolle/ffmpegkmp/core/LogLevel;
+	public static final field ERROR Lio/github/aftrolle/ffmpegkmp/core/LogLevel;
+	public static final field FATAL Lio/github/aftrolle/ffmpegkmp/core/LogLevel;
+	public static final field INFO Lio/github/aftrolle/ffmpegkmp/core/LogLevel;
+	public static final field PANIC Lio/github/aftrolle/ffmpegkmp/core/LogLevel;
+	public static final field QUIET Lio/github/aftrolle/ffmpegkmp/core/LogLevel;
+	public static final field TRACE Lio/github/aftrolle/ffmpegkmp/core/LogLevel;
+	public static final field UNKNOWN Lio/github/aftrolle/ffmpegkmp/core/LogLevel;
+	public static final field VERBOSE Lio/github/aftrolle/ffmpegkmp/core/LogLevel;
+	public static final field WARNING Lio/github/aftrolle/ffmpegkmp/core/LogLevel;
+	public static fun getEntries ()Lkotlin/enums/EnumEntries;
+	public static fun valueOf (Ljava/lang/String;)Lio/github/aftrolle/ffmpegkmp/core/LogLevel;
+	public static fun values ()[Lio/github/aftrolle/ffmpegkmp/core/LogLevel;
+}
+
+public final class io/github/aftrolle/ffmpegkmp/core/MediaSource {
+	public fun <init> (Ljava/lang/String;Lio/github/aftrolle/ffmpegkmp/core/CommandIo;)V
+	public synthetic fun <init> (Ljava/lang/String;Lio/github/aftrolle/ffmpegkmp/core/CommandIo;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public final fun component1 ()Ljava/lang/String;
+	public final fun component2 ()Lio/github/aftrolle/ffmpegkmp/core/CommandIo;
+	public final fun copy (Ljava/lang/String;Lio/github/aftrolle/ffmpegkmp/core/CommandIo;)Lio/github/aftrolle/ffmpegkmp/core/MediaSource;
+	public static synthetic fun copy$default (Lio/github/aftrolle/ffmpegkmp/core/MediaSource;Ljava/lang/String;Lio/github/aftrolle/ffmpegkmp/core/CommandIo;ILjava/lang/Object;)Lio/github/aftrolle/ffmpegkmp/core/MediaSource;
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getInput ()Ljava/lang/String;
+	public final fun getIo ()Lio/github/aftrolle/ffmpegkmp/core/CommandIo;
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class io/github/aftrolle/ffmpegkmp/core/NativeExecutionException : io/github/aftrolle/ffmpegkmp/core/FFmpegKmpException {
+	public fun <init> (Ljava/lang/String;Ljava/lang/Throwable;)V
+	public synthetic fun <init> (Ljava/lang/String;Ljava/lang/Throwable;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
+}
+
+public final class io/github/aftrolle/ffmpegkmp/core/OutputStream : java/lang/Enum {
+	public static final field STDERR Lio/github/aftrolle/ffmpegkmp/core/OutputStream;
+	public static final field STDOUT Lio/github/aftrolle/ffmpegkmp/core/OutputStream;
+	public static fun getEntries ()Lkotlin/enums/EnumEntries;
+	public static fun valueOf (Ljava/lang/String;)Lio/github/aftrolle/ffmpegkmp/core/OutputStream;
+	public static fun values ()[Lio/github/aftrolle/ffmpegkmp/core/OutputStream;
+}
+
+public final class io/github/aftrolle/ffmpegkmp/core/SessionState : java/lang/Enum {
+	public static final field CANCELLED Lio/github/aftrolle/ffmpegkmp/core/SessionState;
+	public static final field CLOSED Lio/github/aftrolle/ffmpegkmp/core/SessionState;
+	public static final field FAILED Lio/github/aftrolle/ffmpegkmp/core/SessionState;
+	public static final field QUEUED Lio/github/aftrolle/ffmpegkmp/core/SessionState;
+	public static final field RUNNING Lio/github/aftrolle/ffmpegkmp/core/SessionState;
+	public static final field SUCCEEDED Lio/github/aftrolle/ffmpegkmp/core/SessionState;
+	public static fun getEntries ()Lkotlin/enums/EnumEntries;
+	public static fun valueOf (Ljava/lang/String;)Lio/github/aftrolle/ffmpegkmp/core/SessionState;
+	public static fun values ()[Lio/github/aftrolle/ffmpegkmp/core/SessionState;
+}
+
+public final class io/github/aftrolle/ffmpegkmp/core/StagedOutputEmptyException : io/github/aftrolle/ffmpegkmp/core/FFmpegKmpException {
+	public fun <init> (Ljava/lang/String;)V
+}
+
