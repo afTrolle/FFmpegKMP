@@ -1953,10 +1953,20 @@ static int ffmpegkmp_same_color(const AVFrame *first, const AVFrame *second) {
 }
 
 /* swscale between frames of one colour: it must convert layout only and map no colour. */
+/*
+ * Without SWS_FULL_CHR_H_INT swscale writes packed 10-bit RGB through its
+ * 8-bit YUV tables, 6 to 9 codes off a flat 10-bit grey (FFmpeg 9.0.2). The
+ * flags are part of what swscale compares before reusing its graph.
+ */
+static int ffmpegkmp_scale_frame(SwsContext *scaler, AVFrame *destination, const AVFrame *source) {
+    scaler->flags = destination->format == AV_PIX_FMT_X2BGR10 ? SWS_BILINEAR | SWS_FULL_CHR_H_INT : SWS_BILINEAR;
+    return sws_scale_frame(scaler, destination, source);
+}
+
 static int ffmpegkmp_scale(SwsContext *scaler, AVFrame *destination, const AVFrame *source) {
     if (!ffmpegkmp_same_color(destination, source))
         return AVERROR_BUG;
-    return sws_scale_frame(scaler, destination, source);
+    return ffmpegkmp_scale_frame(scaler, destination, source);
 }
 
 /*
@@ -2028,7 +2038,7 @@ static float ffmpegkmp_range_factor(const AVFrame *frame) {
 /* Through swscale's colour management, with `intent` for colours outside the destination's gamut. */
 static int ffmpegkmp_scale_mapped(SwsContext *scaler, AVFrame *destination, const AVFrame *source, int intent) {
     scaler->intent = intent;
-    return sws_scale_frame(scaler, destination, source);
+    return ffmpegkmp_scale_frame(scaler, destination, source);
 }
 
 /*

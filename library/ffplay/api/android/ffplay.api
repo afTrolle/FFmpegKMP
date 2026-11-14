@@ -310,6 +310,11 @@ public final class io/github/aftrolle/ffmpegkmp/ffplay/FrameImageKt {
 	public static synthetic fun drawFrameImage-UxnYL8s$default (Landroidx/compose/ui/graphics/drawscope/DrawScope;Lio/github/aftrolle/ffmpegkmp/ffplay/FrameImage;JJILjava/lang/Object;)V
 }
 
+public final class io/github/aftrolle/ffmpegkmp/ffplay/VideoFrameImageKt {
+	public static final fun extractImageBitmap-O4MFJpo (Lio/github/aftrolle/ffmpegkmp/codec/VideoDecoder$Companion;Lio/github/aftrolle/ffmpegkmp/core/MediaSource;JLio/github/aftrolle/ffmpegkmp/codec/FrameSize;Lio/github/aftrolle/ffmpegkmp/codec/FrameScale;Lio/github/aftrolle/ffmpegkmp/codec/CodecSelection;JLkotlin/coroutines/Continuation;)Ljava/lang/Object;
+	public static synthetic fun extractImageBitmap-O4MFJpo$default (Lio/github/aftrolle/ffmpegkmp/codec/VideoDecoder$Companion;Lio/github/aftrolle/ffmpegkmp/core/MediaSource;JLio/github/aftrolle/ffmpegkmp/codec/FrameSize;Lio/github/aftrolle/ffmpegkmp/codec/FrameScale;Lio/github/aftrolle/ffmpegkmp/codec/CodecSelection;JLkotlin/coroutines/Continuation;ILjava/lang/Object;)Ljava/lang/Object;
+}
+
 public final class io/github/aftrolle/ffmpegkmp/ffplay/VideoFrameImage_androidKt {
 	public static final fun toImageBitmap (Lio/github/aftrolle/ffmpegkmp/codec/VideoFrame;)Landroidx/compose/ui/graphics/ImageBitmap;
 }

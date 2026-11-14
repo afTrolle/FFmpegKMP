@@ -221,7 +221,7 @@ internal class AndroidSurfaceOutput(
             targetSize ?: IntSize(destination.width.roundToInt(), destination.height.roundToInt()),
         )
         // The frame is drawn before this returns, so one bitmap serves every frame of its size and format.
-        val format = frame.bitmapFormat()
+        val format = frame.sdrBitmapFormat()
         val converted = bitmap?.takeIf { it.width == size.width && it.height == size.height && it.format == format }
             ?.apply { write(frame) }
             ?: frame.toFrameBitmap(format, size).also {

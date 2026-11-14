@@ -9,6 +9,8 @@ package io.github.aftrolle.ffmpegkmp.codec
 import io.github.aftrolle.ffmpegkmp.bindings.NativeCallException
 import io.github.aftrolle.ffmpegkmp.bindings.NativePlayerError
 import io.github.aftrolle.ffmpegkmp.bindings.NativeVideoDecoderException
+import io.github.aftrolle.ffmpegkmp.core.ExperimentalFFmpegKmpApi
+import io.github.aftrolle.ffmpegkmp.core.InternalFFmpegKmpApi
 import io.github.aftrolle.ffmpegkmp.core.MediaSource
 import kotlin.time.Duration
 import kotlin.time.TimeSource
@@ -28,8 +30,9 @@ internal expect val frameExtractionSupported: Boolean
  * rest. Every other
  * selection, a [NamedCodec] included, makes one attempt.
  *
- * [afterFrame] gets the result once it is made, before the decoder closes: the tests' hook into the
- * window where a timeout or cancellation must still close it.
+ * [format] picks the frame's format once the source is open; any other than RGBA8 opens the decoder
+ * again in it. [afterFrame] gets the result once it is made, before the decoder closes: the tests'
+ * hook into the window where a timeout or cancellation must still close it.
  */
 internal suspend fun extractUprightFrame(
     source: MediaSource,
@@ -38,6 +41,7 @@ internal suspend fun extractUprightFrame(
     scale: FrameScale,
     decoder: CodecSelection,
     timeout: Duration,
+    format: (VideoInfo) -> FrameFormat = { FrameFormat.Rgba8 },
     afterFrame: suspend (VideoFrame) -> Unit = {},
 ): VideoFrame {
     if (!frameExtractionSupported) {
@@ -46,7 +50,7 @@ internal suspend fun extractUprightFrame(
     require(!position.isNegative()) { "Video position must not be negative: $position" }
     require(timeout.isPositive()) { "The timeout must be positive: $timeout" }
     val started = TimeSource.Monotonic.markNow()
-    val first = Extraction(source, position, size, scale, if (decoder == CodecPreference.AUTO) timeout / 2 else timeout, afterFrame)
+    val first = Extraction(source, position, size, scale, if (decoder == CodecPreference.AUTO) timeout / 2 else timeout, format, afterFrame)
     val failure = try {
         return first.run(decoder)
     } catch (failure: VideoDecodingException) {
@@ -56,7 +60,7 @@ internal suspend fun extractUprightFrame(
     val left = timeout - started.elapsedNow()
     if (!left.isPositive()) throw failure
     try {
-        return Extraction(source, position, size, scale, left, afterFrame).run(CodecPreference.SOFTWARE)
+        return Extraction(source, position, size, scale, left, format, afterFrame).run(CodecPreference.SOFTWARE)
     } catch (second: Throwable) {
         second.addSuppressed(failure)
         throw second
@@ -70,6 +74,7 @@ private class Extraction(
     private val size: FrameSize?,
     private val scale: FrameScale,
     private val timeout: Duration,
+    private val format: (VideoInfo) -> FrameFormat,
     private val afterFrame: suspend (VideoFrame) -> Unit,
 ) {
     /** The decoder that opened, or null when opening did not finish. */
@@ -86,7 +91,15 @@ private class Extraction(
             // Each of the decoder's calls is bounded by the timeout on its own; this bounds them together.
             // Timing out cancels the call under way, which stops its native work.
             withTimeoutOrNull(timeout) {
-                val decoder = VideoDecoder.open(source, VideoOutput.Memory(FrameFormat.Rgba8), selection, timeout)
+                val first = VideoDecoder.open(source, VideoOutput.Memory(FrameFormat.Rgba8), selection, timeout)
+                opened = first.decoderKind
+                val wanted = format(first.info)
+                val decoder = if (wanted == FrameFormat.Rgba8) {
+                    first
+                } else {
+                    withContext(NonCancellable + Dispatchers.Default) { first.close() }
+                    VideoDecoder.open(source, VideoOutput.Memory(wanted), selection, timeout)
+                }
                 try {
                     opened = decoder.decoderKind
                     val info = decoder.info
@@ -136,3 +149,20 @@ private fun VideoDecodingException.isTimeout(): Boolean {
     val native = cause as? NativeVideoDecoderException
     return native?.errorCode == NativePlayerError.TIMED_OUT
 }
+
+/**
+ * [VideoDecoder.extractFrame] in the format [format] picks for the source once it is open, rather
+ * than RGBA8: a display module's way to keep PQ and HLG as they are coded for a platform that shows
+ * them. A format other than RGBA8 opens the decoder a second time.
+ */
+@InternalFFmpegKmpApi
+@ExperimentalFFmpegKmpApi
+public suspend fun VideoDecoder.Companion.extractFrameIn(
+    source: MediaSource,
+    position: Duration,
+    size: FrameSize?,
+    scale: FrameScale,
+    decoder: CodecSelection,
+    timeout: Duration,
+    format: (VideoInfo) -> FrameFormat,
+): VideoFrame = extractUprightFrame(source, position, size, scale, decoder, timeout, format)

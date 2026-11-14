@@ -277,16 +277,14 @@ internal class ComposeCanvasOutput(
         val sampleAspectRatio = frame.sampleAspectRatio
         val later = hardware?.later(frame, video)
         if (later != null) {
-            return image.prepareLate(pts, size, rotation, sampleAspectRatio, video?.let(SdrToneMap::of), later)?.let(::CanvasFrame)
+            return image.prepareLate(pts, size, rotation, sampleAspectRatio, platformHdr = true, take = later)?.let(::CanvasFrame)
         }
         val drawable = hardware?.inGpuMemory(frame, video) ?: frame
-        // PQ and HLG from GPU memory are tone mapped as they are drawn, as the conversion would.
-        val toneMap = if (drawable.gpuBuffer != null) video?.let(SdrToneMap::of) else null
         // The browser's frames come at the drawn size: layout follows the video they show.
         val prepared = image.prepare(
             drawable,
             video?.takeUnless { bitmapsScale }?.let { info -> IntSize(info.width, info.height) },
-            toneMap,
+            platformHdr = true,
         ) ?: return null
         return CanvasFrame(prepared)
     }

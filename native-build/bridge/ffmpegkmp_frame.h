@@ -184,8 +184,9 @@ FFPLAYKMP_EXPORT int ffmpegkmp_frame_convert_to(
  * turned clockwise by `fallback_clockwise_quarter_turns` (0 to 3) instead. The
  * cut is the crop filter's. The new frame is libavfilter's memory, in the
  * source's layout and colour, without a display matrix, and shares nothing
- * with `source`. Packed RGBA8 and BGRA8 only: FFPLAYKMP_ERROR_UNSUPPORTED for
- * other layouts and for hardware frames, which a conversion reads first.
+ * with `source`. Packed RGBA8, BGRA8 and RGBA 10:10:10:2 only:
+ * FFPLAYKMP_ERROR_UNSUPPORTED for other layouts and for hardware frames, which
+ * a conversion reads first.
  */
 FFPLAYKMP_EXPORT int ffmpegkmp_frame_upright(
         const ffmpegkmp_frame *source,
@@ -237,7 +238,8 @@ FFPLAYKMP_EXPORT int32_t ffmpegkmp_frame_gamut_map(
 /*
  * Converts `source` straight into an android.graphics.Bitmap's pixels, locked
  * through AndroidBitmap_lockPixels: an ARGB_8888 bitmap as sRGB RGBA8, an
- * RGBA_F16 one as linear extended sRGB. (ffmpegkmp_android_bitmap.c)
+ * RGBA_F16 one as linear extended sRGB, and one tagged BT.2020 PQ or HLG as
+ * those codes. (ffmpegkmp_android_bitmap.c)
  */
 FFPLAYKMP_EXPORT int ffmpegkmp_frame_convert_into_android_bitmap(
         JNIEnv *env,
