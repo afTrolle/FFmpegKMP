@@ -8,6 +8,37 @@ may break the public API; every break is listed here with a migration note.
 
 ## [Unreleased]
 
+### Added
+
+- `VideoDecoder.extractImageBitmap(...)` (ffplay, experimental): the frame `extractFrame` gives, as an
+  `ImageBitmap` in the colour `toImageBitmap` and `FFplaySurface` show it. On Android 14 and later a PQ
+  or HLG source keeps its codes in a tagged `RGBA_1010102` bitmap, so a poster looks as its playback
+  does; elsewhere it is tone mapped to SDR as `extractFrame` does.
+
+### Changed
+
+- Android 14+: `FFplaySurface` and `toImageBitmap` hand PQ and HLG to the platform instead of tone
+  mapping them. Frames from GPU memory are wrapped in a bitmap tagged `BT2020_PQ` or `BT2020_HLG`, and
+  frames in memory are converted to `RGBA_1010102` with their own codes in a bitmap so tagged, so HWUI
+  tone maps them to SDR in an SDR or wide-gamut window and shows them as HDR in an HDR window. This
+  replaces the GPU tone-map shader and the CPU tone map for playback; `ComposeFrameRenderer` still
+  draws GPU frames as linear light for export. Android 13 and earlier keep FFmpeg's tone map. A
+  tagged bitmap drawn on a software `Canvas` is not tone mapped: draw it on the GPU.
+- Native runtime: converting into or out of an Android bitmap reads its data space
+  (`AndroidBitmap_getDataSpace`, API 30), so a bitmap tagged BT.2020 PQ or HLG converts as such. A
+  consumer's committed runtime has to be rebuilt for this and the fixes below.
+
+### Fixed
+
+- 10-bit YUV converted into packed 10-bit RGB (`RGBA_1010102`) landed 6 to 9 codes low on a flat
+  grey: swscale wrote it through its 8-bit tables. The converter now interpolates chroma fully for
+  that output (`SWS_FULL_CHR_H_INT`), which also corrects 10-bit export canvases. Software and GPU
+  frames of HLG and PQ Main 10 clips now agree within 1-2 8-bit codes on an S25.
+- `extractFrame`'s upright step took only RGBA8 and BGRA8; it also takes `RGBA_1010102`, so a rotated
+  HDR poster turns.
+
+## [0.6.1]
+
 ### Fixed
 
 - The hardware Canvas's PQ and HLG frames no longer draw dark and dull in a wide-gamut or HDR window
@@ -235,6 +266,7 @@ may break the public API; every break is listed here with a migration note.
 
 See the [GitHub release](https://github.com/afTrolle/FFmpegKMP/releases/tag/v0.5.0).
 
-[Unreleased]: https://github.com/afTrolle/FFmpegKMP/compare/v0.6.0...HEAD
+[Unreleased]: https://github.com/afTrolle/FFmpegKMP/compare/v0.6.1...HEAD
+[0.6.1]: https://github.com/afTrolle/FFmpegKMP/compare/v0.6.0...v0.6.1
 [0.6.0]: https://github.com/afTrolle/FFmpegKMP/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/afTrolle/FFmpegKMP/releases/tag/v0.5.0

@@ -148,7 +148,8 @@ private val androidSurfaceNatives = lazy { Loader.load(AndroidPlayerSurface::cla
 
 /**
  * Converts [frame] straight into [bitmap]'s pixels, locked with `AndroidBitmap_lockPixels`: an
- * `ARGB_8888` bitmap as sRGB RGBA8, an `RGBA_F16` one as linear extended sRGB.
+ * `ARGB_8888` bitmap as sRGB RGBA8, an `RGBA_F16` one as linear extended sRGB, and an `RGBA_1010102`
+ * one tagged BT.2020 PQ or HLG (Android 11, API 30, and later) as those codes.
  */
 @InternalFFmpegKmpApi
 public fun convertIntoBitmap(frame: NativeFrame, bitmap: android.graphics.Bitmap) {

@@ -1415,8 +1415,9 @@ int ffmpegkmp_frame_upright(
         goto end;
     }
     pthread_mutex_lock(&handle->lock);
-    /* Packed 8-bit RGB only: the layouts every filter here takes as they are, with no conversion inserted. */
-    result = handle->frame->format == AV_PIX_FMT_RGBA || handle->frame->format == AV_PIX_FMT_BGRA
+    /* Packed RGB in 32-bit words only: the layouts every filter here takes as they are, with no conversion inserted. */
+    result = handle->frame->format == AV_PIX_FMT_RGBA || handle->frame->format == AV_PIX_FMT_BGRA ||
+            handle->frame->format == AV_PIX_FMT_X2BGR10
             ? av_frame_ref(input, handle->frame)
             : FFPLAYKMP_ERROR_UNSUPPORTED;
     pthread_mutex_unlock(&handle->lock);

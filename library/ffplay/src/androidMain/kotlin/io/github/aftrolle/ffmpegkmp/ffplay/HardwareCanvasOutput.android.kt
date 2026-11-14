@@ -36,8 +36,8 @@ internal class ImageReaderCanvasFrames(private val frames: Int) : CanvasHardware
     override val surface: Any get() = images.surface
 
     /**
-     * BT.709 SDR, shown as coded as the conversion shows it, and PQ and HLG, tone mapped as they are
-     * drawn as the conversion maps them ([SdrToneMap]). Not SDR of wider primaries: HWUI's mapping of
+     * BT.709 SDR, shown as coded as the conversion shows it, and PQ and HLG, which the platform shows
+     * as it shows HDR, as the converted frames are. Not SDR of wider primaries: HWUI's mapping of
      * a Display P3 wrap into the canvas's sRGB differs from the conversion's, by 16 8-bit codes on a
      * Samsung S25 where the picture is flat, so those frames come converted in memory.
      */

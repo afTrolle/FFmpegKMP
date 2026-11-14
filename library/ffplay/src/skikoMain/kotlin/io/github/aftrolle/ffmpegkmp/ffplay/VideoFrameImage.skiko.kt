@@ -10,6 +10,7 @@ import androidx.compose.ui.unit.IntRect
 import androidx.compose.ui.unit.IntSize
 import io.github.aftrolle.ffmpegkmp.codec.ColorPrimaries
 import io.github.aftrolle.ffmpegkmp.codec.ColorTransfer
+import io.github.aftrolle.ffmpegkmp.codec.FrameColor
 import io.github.aftrolle.ffmpegkmp.codec.FrameFormat
 import io.github.aftrolle.ffmpegkmp.codec.PixelLayout
 import io.github.aftrolle.ffmpegkmp.codec.VideoFrame
@@ -32,6 +33,8 @@ internal actual fun VideoFrame.toFrameBitmap(format: FrameFormat, size: IntSize)
 
 internal actual fun gpuFrameWraps(): GpuFrameWraps = NoGpuFrameWraps
 
+internal actual fun FrameColor.displayFormat(): FrameFormat = FrameFormat.Rgba8
+
 internal actual fun DrawScope.checkDrawsGpuImages() = Unit
 
 internal actual fun DrawScope.drawCodedImage(
@@ -40,14 +43,13 @@ internal actual fun DrawScope.drawCodedImage(
     dstOffset: IntOffset,
     dstSize: IntSize,
     transfer: ColorTransfer,
-    toneMap: SdrToneMap?,
 ): Unit = throw IllegalStateException("Only Android frames lie in GPU memory")
 
 /** Skia's platforms decode into memory only. */
 private object NoGpuFrameWraps : GpuFrameWraps {
     override val count: Int = 0
 
-    override fun wrap(frame: VideoFrame, toneMap: SdrToneMap?): GpuImage = throw IllegalStateException("Only Android frames lie in GPU memory: $frame")
+    override fun wrap(frame: VideoFrame, platformHdr: Boolean): GpuImage = throw IllegalStateException("Only Android frames lie in GPU memory: $frame")
 
     override fun close() = Unit
 }

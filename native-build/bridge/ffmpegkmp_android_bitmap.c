@@ -20,6 +20,20 @@
 #define ANDROID_BITMAP_FORMAT_RGBA_1010102 10
 #endif
 
+/* Android's BT.2020 PQ and HLG data spaces, which older NDK headers do not name. */
+#define FFMPEGKMP_DATASPACE_BT2020_PQ 163971072
+#define FFMPEGKMP_DATASPACE_BT2020_HLG 168165376
+
+/* AndroidBitmap_getDataSpace arrives in API 30 and the bridge targets 24, so it is looked up once at run time. */
+static int32_t (*ffmpegkmp_bitmap_data_space)(JNIEnv *env, jobject bitmap);
+static pthread_once_t ffmpegkmp_bitmap_data_space_once = PTHREAD_ONCE_INIT;
+
+static void ffmpegkmp_load_bitmap_data_space(void) {
+    void *graphics = dlopen("libjnigraphics.so", RTLD_NOW);
+    if (graphics)
+        *(void **)&ffmpegkmp_bitmap_data_space = dlsym(graphics, "AndroidBitmap_getDataSpace");
+}
+
 /* An RGBA layout as Android draws it: 8- and 10-bit as sRGB, half floats as linear extended sRGB. */
 static void ffmpegkmp_android_rgba_format(int32_t layout, ffmpegkmp_frame_format *format) {
     ffmpegkmp_frame_format_init(format);
@@ -30,8 +44,9 @@ static void ffmpegkmp_android_rgba_format(int32_t layout, ffmpegkmp_frame_format
     format->range = FFMPEGKMP_RANGE_FULL;
 }
 
-/* The format of a bitmap's pixels: ARGB_8888, RGBA_1010102 or RGBA_F16. */
-static int ffmpegkmp_bitmap_format(const AndroidBitmapInfo *info, ffmpegkmp_frame_format *format) {
+/* The format of a bitmap's pixels: ARGB_8888, RGBA_1010102 or RGBA_F16, as BT.2020 PQ or HLG where it is tagged so. */
+static int ffmpegkmp_bitmap_format(JNIEnv *env, jobject bitmap, const AndroidBitmapInfo *info, ffmpegkmp_frame_format *format) {
+    int32_t data_space;
     if (info->format == ANDROID_BITMAP_FORMAT_RGBA_8888)
         ffmpegkmp_android_rgba_format(FFMPEGKMP_LAYOUT_RGBA8, format);
     else if (info->format == ANDROID_BITMAP_FORMAT_RGBA_1010102)
@@ -40,6 +55,12 @@ static int ffmpegkmp_bitmap_format(const AndroidBitmapInfo *info, ffmpegkmp_fram
         ffmpegkmp_android_rgba_format(FFMPEGKMP_LAYOUT_RGBA_F16, format);
     else
         return FFPLAYKMP_ERROR_UNSUPPORTED;
+    pthread_once(&ffmpegkmp_bitmap_data_space_once, ffmpegkmp_load_bitmap_data_space);
+    data_space = ffmpegkmp_bitmap_data_space ? ffmpegkmp_bitmap_data_space(env, bitmap) : 0;
+    if (data_space == FFMPEGKMP_DATASPACE_BT2020_PQ || data_space == FFMPEGKMP_DATASPACE_BT2020_HLG) {
+        format->primaries = FFMPEGKMP_PRIMARIES_BT2020;
+        format->transfer = data_space == FFMPEGKMP_DATASPACE_BT2020_PQ ? FFMPEGKMP_TRANSFER_PQ : FFMPEGKMP_TRANSFER_HLG;
+    }
     return 0;
 }
 
@@ -52,7 +73,7 @@ static int ffmpegkmp_convert_with_bitmap(JNIEnv *env, jobject bitmap, ffmpegkmp_
     int result;
     if (!env || !bitmap || !frame || AndroidBitmap_getInfo(env, bitmap, &info) != ANDROID_BITMAP_RESULT_SUCCESS)
         return FFPLAYKMP_ERROR_INVALID_ARGUMENT;
-    if ((result = ffmpegkmp_bitmap_format(&info, &format)) < 0)
+    if ((result = ffmpegkmp_bitmap_format(env, bitmap, &info, &format)) < 0)
         return result;
     if (AndroidBitmap_lockPixels(env, bitmap, &pixels) != ANDROID_BITMAP_RESULT_SUCCESS || !pixels)
         return FFPLAYKMP_ERROR_INVALID_STATE;

@@ -12,7 +12,6 @@ import android.graphics.ColorSpace
 import android.graphics.RuntimeShader
 import android.graphics.Shader
 import android.os.Build
-import android.util.Half
 import androidx.annotation.RequiresApi
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.ShaderBrush
@@ -26,24 +25,39 @@ import androidx.compose.ui.unit.IntRect
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.toOffset
 import androidx.compose.ui.unit.toSize
-import java.nio.ShortBuffer
 import io.github.aftrolle.ffmpegkmp.bindings.AVCOL_PRI_BT2020
-import io.github.aftrolle.ffmpegkmp.bindings.AVCOL_PRI_BT709
 import io.github.aftrolle.ffmpegkmp.bindings.AVCOL_PRI_SMPTE432
 import io.github.aftrolle.ffmpegkmp.bindings.AVCOL_TRC_ARIB_STD_B67
 import io.github.aftrolle.ffmpegkmp.bindings.AVCOL_TRC_SMPTE2084
-import io.github.aftrolle.ffmpegkmp.bindings.GAMUT_MAP_POINTS
 import io.github.aftrolle.ffmpegkmp.bindings.convertIntoBitmap
-import io.github.aftrolle.ffmpegkmp.bindings.nativeGamutMap
+import io.github.aftrolle.ffmpegkmp.codec.ColorMatrix
 import io.github.aftrolle.ffmpegkmp.codec.ColorPrimaries
+import io.github.aftrolle.ffmpegkmp.codec.ColorRange
 import io.github.aftrolle.ffmpegkmp.codec.ColorTransfer
+import io.github.aftrolle.ffmpegkmp.codec.FrameColor
 import io.github.aftrolle.ffmpegkmp.codec.FrameFormat
+import io.github.aftrolle.ffmpegkmp.codec.PixelLayout
 import io.github.aftrolle.ffmpegkmp.codec.VideoFrame
 import io.github.aftrolle.ffmpegkmp.codec.hardwareBuffer
 
 public actual fun VideoFrame.toImageBitmap(): ImageBitmap = toFrameBitmap(bitmapFormat(), IntSize(width, height)).image
 
-internal actual fun VideoFrame.bitmapFormat(): FrameFormat = imageFormat { it == FrameFormat.Rgba8 || it == FrameFormat.RgbaF16 }
+internal actual fun VideoFrame.bitmapFormat(): FrameFormat = format?.color?.hdrBitmapFormat() ?: sdrBitmapFormat()
+
+internal actual fun FrameColor.displayFormat(): FrameFormat = hdrBitmapFormat() ?: FrameFormat.Rgba8
+
+/**
+ * PQ and HLG from Android 14 as their own codes in 10 bits, which a bitmap tagged BT.2020 PQ or HLG
+ * hands the platform to show as it shows HDR; null for SDR and earlier versions.
+ */
+private fun FrameColor.hdrBitmapFormat(): FrameFormat? = if (isHdr && Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+    FrameFormat(PixelLayout.RGBA_1010102, FrameColor(ColorPrimaries.BT2020, transfer, ColorMatrix.RGB, ColorRange.FULL))
+} else {
+    null
+}
+
+/** The format a CPU canvas draws this frame in: PQ and HLG tone mapped to sRGB by the conversion. */
+internal fun VideoFrame.sdrBitmapFormat(): FrameFormat = imageFormat { it == FrameFormat.Rgba8 || it == FrameFormat.RgbaF16 }
 
 internal actual fun VideoFrame.toFrameBitmap(format: FrameFormat, size: IntSize): FrameBitmap = AndroidFrameBitmap(this, format, size)
 
@@ -59,10 +73,12 @@ internal actual fun DrawScope.checkDrawsGpuImages() = check(drawContext.canvas.n
 /**
  * A new hardware bitmap over the buffer of every frame, which draws that frame with no copy. SDR
  * wraps as its primaries with the sRGB curve, shown as coded as the conversion shows it: sRGB,
- * Display P3, or BT.2020 primaries, which HWUI maps into the canvas's gamut. PQ and HLG wrap as
- * linear sRGB, so that HWUI applies no tone mapping: the GPU converts the buffer's YUV to RGB with
- * the matrix its data space names, and [drawCodedImage]'s shader takes the signal's codes back out
- * of whatever canvas it draws on with `toLinearSrgb`. A wrap made once for a buffer would go on
+ * Display P3, or BT.2020 primaries, which HWUI maps into the canvas's gamut. PQ and HLG wrap, for
+ * the platform to show, as BT.2020 PQ or HLG, which HWUI tone maps for an SDR or wide-gamut canvas
+ * and shows with headroom in an HDR window; otherwise as linear sRGB, so that HWUI applies no tone
+ * mapping: the GPU converts the buffer's YUV to RGB with the matrix its data space names, and
+ * [drawCodedImage]'s shader takes the signal's codes back out of whatever canvas it draws on with
+ * `toLinearSrgb`. A wrap made once for a buffer would go on
  * drawing its first frame, since the GPU texture HWUI makes of a hardware bitmap is cached with the
  * bitmap and never learns that the decoder wrote the buffer again. The last two wraps stay open, as
  * [FrameImage] keeps the last two frames, since a drawing may still use the previous one.
@@ -73,14 +89,16 @@ private class HardwareFrameBitmaps : GpuFrameWraps {
     override var count: Int = 0
         private set
 
-    override fun wrap(frame: VideoFrame, toneMap: SdrToneMap?): GpuImage {
+    override fun wrap(frame: VideoFrame, platformHdr: Boolean): GpuImage {
         val gpu = checkNotNull(frame.gpuBuffer) { "The frame lies in no GPU buffer: $frame" }
         val transfer = when (gpu.colorTransfer) {
             AVCOL_TRC_SMPTE2084 -> ColorTransfer.PQ
             AVCOL_TRC_ARIB_STD_B67 -> ColorTransfer.HLG
             else -> ColorTransfer.SRGB
         }
+        val tagged = platformHdr && transfer != ColorTransfer.SRGB
         val colorSpace = when {
+            tagged -> hdrColorSpace(transfer)
             transfer != ColorTransfer.SRGB -> ColorSpace.get(ColorSpace.Named.LINEAR_SRGB)
             gpu.colorPrimaries == AVCOL_PRI_SMPTE432 -> ColorSpace.get(ColorSpace.Named.DISPLAY_P3)
             gpu.colorPrimaries == AVCOL_PRI_BT2020 -> bt2020Srgb
@@ -91,7 +109,7 @@ private class HardwareFrameBitmaps : GpuFrameWraps {
         count++
         live.addLast(wrapped)
         while (live.size > 2) live.removeFirst().recycle()
-        return GpuImage(wrapped.asImageBitmap(), transfer, toneMap.takeIf { transfer != ColorTransfer.SRGB })
+        return GpuImage(wrapped.asImageBitmap(), if (tagged) ColorTransfer.SRGB else transfer)
     }
 
     override fun close() {
@@ -110,16 +128,21 @@ private val bt2020Srgb: ColorSpace by lazy {
     ColorSpace.Rgb("BT.2020 (sRGB curve)", bt2020.primaries, bt2020.whitePoint, checkNotNull(srgb.transferParameters))
 }
 
+/** Android's BT.2020 PQ or HLG, which HWUI tone maps or shows as HDR as the canvas and window decide. */
+private fun hdrColorSpace(transfer: ColorTransfer): ColorSpace {
+    check(Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) { "PQ and HLG bitmaps need Android 14 (API 34)" }
+    return ColorSpace.get(if (transfer == ColorTransfer.HLG) ColorSpace.Named.BT2020_HLG else ColorSpace.Named.BT2020_PQ)
+}
+
 internal actual fun DrawScope.drawCodedImage(
     image: ImageBitmap,
     source: IntRect,
     dstOffset: IntOffset,
     dstSize: IntSize,
     transfer: ColorTransfer,
-    toneMap: SdrToneMap?,
 ) {
     check(Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) { "PQ and HLG frames in GPU memory need Android 13 (API 33)" }
-    drawCodedRect(image.asAndroidBitmap(), source, dstOffset, dstSize, transfer, toneMap)
+    drawCodedRect(image.asAndroidBitmap(), source, dstOffset, dstSize, transfer)
 }
 
 @RequiresApi(Build.VERSION_CODES.TIRAMISU)
@@ -129,9 +152,8 @@ private fun DrawScope.drawCodedRect(
     dstOffset: IntOffset,
     dstSize: IntSize,
     transfer: ColorTransfer,
-    toneMap: SdrToneMap?,
 ) {
-    val shader = if (toneMap == null) CodedShaders.getValue(transfer) else CodedShaders.toneMapped(transfer)
+    val shader = CodedShaders.getValue(transfer)
     val scale = Offset(source.width.toFloat() / dstSize.width, source.height.toFloat() / dstSize.height)
     val origin = Offset(source.left - dstOffset.x * scale.x, source.top - dstOffset.y * scale.y)
     // A shader's uniforms and input are set and read when the draw records, so renderers on other threads may share it.
@@ -139,19 +161,6 @@ private fun DrawScope.drawCodedRect(
         shader.setInputShader("image", BitmapShader(bitmap, Shader.TileMode.CLAMP, Shader.TileMode.CLAMP).apply {
             filterMode = BitmapShader.FILTER_MODE_LINEAR
         })
-        if (toneMap != null) {
-            shader.setFloatUniform("peak", toneMap.peakNits.toFloat())
-            shader.setFloatUniform("sourceMax", toneMap.sourceMax.toFloat())
-            shader.setFloatUniform("target", toneMap.target.toFloat())
-            shader.setFloatUniform("knee", toneMap.knee.toFloat())
-            val narrow = GamutLattices.of(toneMap.primaries, ColorPrimaries.BT709)
-            val wide = GamutLattices.of(toneMap.primaries, ColorPrimaries.DISPLAY_P3)
-            shader.setFloatUniform("narrowGamut", if (narrow != null) 1f else 0f)
-            shader.setFloatUniform("wideGamut", if (wide != null) 1f else 0f)
-            shader.setFloatUniform("wideIsP3", if (wide != null || toneMap.primaries == ColorPrimaries.DISPLAY_P3) 1f else 0f)
-            shader.setInputShader("narrowLattice", GamutLattices.shader(narrow))
-            shader.setInputShader("wideLattice", GamutLattices.shader(wide))
-        }
         shader.setFloatUniform("origin", origin.x, origin.y)
         shader.setFloatUniform("scale", scale.x, scale.y)
         shader.setFloatUniform("crop", source.left.toFloat(), source.top.toFloat(), source.right.toFloat(), source.bottom.toFloat())
@@ -159,89 +168,13 @@ private fun DrawScope.drawCodedRect(
     }
 }
 
-/** One shader per coded transfer, which the `hlg` uniform selects, as linear light and tone mapped to SDR. */
+/** One shader per coded transfer, which the `hlg` uniform selects. */
 @RequiresApi(Build.VERSION_CODES.TIRAMISU)
 private object CodedShaders {
     private val hlg = mapOf(ColorTransfer.PQ to 0f, ColorTransfer.HLG to 1f)
     private val byTransfer = hlg.mapValues { (_, hlg) -> RuntimeShader(CODED_IMAGE_SHADER).apply { setFloatUniform("hlg", hlg) } }
-    private val toneMappedByTransfer by lazy {
-        hlg.mapValues { (_, hlg) -> RuntimeShader(TONE_MAPPED_IMAGE_SHADER).apply { setFloatUniform("hlg", hlg) } }
-    }
-
     fun getValue(transfer: ColorTransfer): RuntimeShader = byTransfer.getValue(transfer)
-
-    fun toneMapped(transfer: ColorTransfer): RuntimeShader = toneMappedByTransfer.getValue(transfer)
 }
-
-/**
- * The converter's gamut maps for sRGB-curve codes, one per pair of primaries, tiled for
- * [TONE_MAPPED_IMAGE_SHADER]: the lattice's 65 slices of 65 × 65 points, one per blue, 8 to a row in
- * 9 rows, 520 × 585, since 65 × 65 side by side is wider than many GPUs take. Half floats, tagged
- * linear so that the shader reads them back as they are with `toLinearSrgb` on any canvas; 2.4 MB
- * each, made once for the process.
- */
-@RequiresApi(Build.VERSION_CODES.TIRAMISU)
-private object GamutLattices {
-    private val made = mutableMapOf<Pair<ColorPrimaries, ColorPrimaries>, Bitmap>()
-
-    /** A pixel the shader is given where it maps no gamut, as an input it must have. */
-    private val none: Bitmap by lazy { Bitmap.createBitmap(1, 1, Bitmap.Config.RGBA_F16, false, linear) }
-
-    /**
-     * The lattice from [from] into [to]; null where [from] fits in [to] as it is: the same primaries, or BT.709 into
-     * Display P3.
-     */
-    fun of(from: ColorPrimaries, to: ColorPrimaries): Bitmap? = when {
-        from == to || from == ColorPrimaries.BT709 -> null
-        else -> synchronized(made) { made.getOrPut(from to to) { tile(from, to) } }
-    }
-
-    /** [lattice] as the shader's input, read point by point. */
-    fun shader(lattice: Bitmap?): BitmapShader = BitmapShader(lattice ?: none, Shader.TileMode.CLAMP, Shader.TileMode.CLAMP).apply {
-        filterMode = BitmapShader.FILTER_MODE_NEAREST
-    }
-
-    private fun tile(source: ColorPrimaries, target: ColorPrimaries): Bitmap {
-        val points = nativeGamutMap(source.avcol, target.avcol, AVCOL_TRC_IEC61966_2_1)
-        val side = GAMUT_MAP_POINTS
-        val width = side * LATTICE_COLUMNS
-        val height = side * ((side + LATTICE_COLUMNS - 1) / LATTICE_COLUMNS)
-        val halves = ShortArray(width * height * 4)
-        for (blue in 0 until side) {
-            val left = blue % LATTICE_COLUMNS * side
-            val top = blue / LATTICE_COLUMNS * side
-            for (green in 0 until side) {
-                for (red in 0 until side) {
-                    val point = ((blue * side + green) * side + red) * 3
-                    val pixel = ((top + green) * width + left + red) * 4
-                    for (channel in 0 until 3) halves[pixel + channel] = Half.toHalf(points[point + channel])
-                    halves[pixel + 3] = HALF_ONE
-                }
-            }
-        }
-        return Bitmap.createBitmap(width, height, Bitmap.Config.RGBA_F16, false, linear).apply {
-            copyPixelsFromBuffer(ShortBuffer.wrap(halves))
-        }
-    }
-
-    private val ColorPrimaries.avcol: Int
-        get() = when (this) {
-            ColorPrimaries.BT709 -> AVCOL_PRI_BT709
-            ColorPrimaries.DISPLAY_P3 -> AVCOL_PRI_SMPTE432
-            ColorPrimaries.BT2020 -> AVCOL_PRI_BT2020
-        }
-
-    private val linear get() = ColorSpace.get(ColorSpace.Named.LINEAR_EXTENDED_SRGB)
-    private const val LATTICE_COLUMNS = 8
-    private val HALF_ONE = Half.toHalf(1f)
-}
-
-/** Linear Display P3 to linear sRGB, both D65. */
-private val DISPLAY_P3_TO_SRGB = doubleArrayOf(
-    1.2249401, -0.2249404, 0.0,
-    -0.0420569, 1.0420571, 0.0,
-    -0.0196376, -0.0786361, 1.0982735,
-)
 
 /**
  * PQ (ST 2084) or HLG codes, read out of a linear sRGB wrap with `toLinearSrgb` and so as the GPU's
@@ -274,110 +207,6 @@ half4 main(float2 coord) {
 """
 
 /**
- * PQ or HLG codes, as [CODED_IMAGE_SHADER] reads them, tone mapped to SDR as the CPU converter maps the
- * same frame ([SdrToneMap]): light in the source's own primaries, 1.0 at 203 nits; on the brightest
- * component, BT.2390's EETF in PQ to SDR white at the clip's `peak`, with `sourceMax`, `target` and
- * `knee` its signals; clipped and sRGB encoded; then through the converter's gamut map, the lattices
- * [GamutLattices] tiles, looked up tetrahedrally with four fetches, as the converter does: trilinear
- * filtering would tint greys. An sRGB canvas takes the map into BT.709 (`narrowLattice`, where
- * `narrowGamut` is set); a canvas of wider primaries, or of linear light, as a wide-gamut or HDR window
- * draws on, the map into Display P3 (`wideLattice`, where `wideGamut` is set), which `wideIsP3` says
- * the codes are then in. The result reaches the canvas through `fromLinearSrgb`, so each canvas shows
- * the codes the converter would make for it.
- */
-private val TONE_MAPPED_IMAGE_SHADER = """
-uniform shader image;
-uniform shader narrowLattice;
-uniform shader wideLattice;
-uniform float2 origin;
-uniform float2 scale;
-uniform float4 crop;
-uniform float hlg;
-uniform float peak;
-uniform float sourceMax;
-uniform float target;
-uniform float knee;
-uniform float narrowGamut;
-uniform float wideGamut;
-uniform float wideIsP3;
-
-float pqSignal(float nits) {
-    float power = pow(clamp(nits / 10000.0, 0.0, 1.0), 0.1593017578125);
-    return pow((0.8359375 + 18.8515625 * power) / (1.0 + 18.6875 * power), 78.84375);
-}
-
-float pqNits(float signal) {
-    float root = pow(clamp(signal, 0.0, 1.0), 1.0 / 78.84375);
-    return pow(max(root - 0.8359375, 0.0) / (18.8515625 - 18.6875 * root), 1.0 / 0.1593017578125) * 10000.0;
-}
-
-float eetf(float x) {
-    float e1 = pqSignal(clamp(x, 0.0, 1.0) * peak) / sourceMax;
-    float e2 = e1;
-    if (target < 1.0 && e1 > knee) {
-        float t = (e1 - knee) / (1.0 - knee);
-        float t2 = t * t;
-        float t3 = t2 * t;
-        e2 = (2.0 * t3 - 3.0 * t2 + 1.0) * knee + (t3 - 2.0 * t2 + t) * (1.0 - knee) + (-2.0 * t3 + 3.0 * t2) * target;
-    }
-    return pqNits(e2 * sourceMax) / 203.0;
-}
-
-float3 latticePoint(float3 at, bool wide) {
-    float2 point = float2(mod(at.b, 8.0), floor(at.b / 8.0)) * 65.0 + at.rg + 0.5;
-    return float3(toLinearSrgb(wide ? wideLattice.eval(point).rgb : narrowLattice.eval(point).rgb));
-}
-
-float3 decodeSrgb(float3 code) {
-    return mix(code / 12.92, pow((code + 0.055) / 1.055, float3(2.4)), step(float3(0.04045), code));
-}
-
-// Wider than sRGB: other primaries, or linear light, which an extended-range canvas holds.
-bool wideCanvas() {
-    half3 red = fromLinearSrgb(half3(1.0, 0.0, 0.0));
-    half3 grey = fromLinearSrgb(half3(0.5));
-    return abs(red.g) > 0.01 || abs(red.b) > 0.01 || abs(grey.g - 0.5) < 0.01;
-}
-
-float3 mapGamut(float3 code, bool wide) {
-    float3 position = code * 64.0;
-    float3 cell = min(floor(position), float3(63.0));
-    float3 f = position - cell;
-    float high = max(f.r, max(f.g, f.b));
-    float low = min(f.r, min(f.g, f.b));
-    float middle = f.r + f.g + f.b - high - low;
-    float3 first = f.r >= f.g && f.r >= f.b ? float3(1.0, 0.0, 0.0) : (f.g >= f.b ? float3(0.0, 1.0, 0.0) : float3(0.0, 0.0, 1.0));
-    float3 last = f.r < f.g && f.r < f.b ? float3(1.0, 0.0, 0.0) : (f.g < f.b ? float3(0.0, 1.0, 0.0) : float3(0.0, 0.0, 1.0));
-    return (1.0 - high) * latticePoint(cell, wide) + (high - middle) * latticePoint(cell + first, wide) +
-        (middle - low) * latticePoint(cell + float3(1.0) - last, wide) + low * latticePoint(cell + float3(1.0), wide);
-}
-
-half4 main(float2 coord) {
-    float2 at = clamp(coord * scale + origin, crop.xy + 0.5, crop.zw - 0.5);
-    float3 code = clamp(float3(toLinearSrgb(image.eval(at).rgb)), 0.0, 1.0);
-    float3 light;
-    if (hlg > 0.5) {
-        float3 scene = mix(code * code / 3.0, (exp((code - 0.55991073) / 0.17883277) + 0.28466892) / 12.0, step(float3(0.5), code));
-        light = scene * pow(dot(scene, float3(0.2627, 0.6780, 0.0593)), 0.2) * (1000.0 / 203.0);
-    } else {
-        float3 signal = pow(code, float3(1.0 / 78.84375));
-        light = pow(max(signal - 0.8359375, 0.0) / (18.8515625 - 18.6875 * signal), float3(1.0 / 0.1593017578125)) * (10000.0 / 203.0);
-    }
-    float brightest = max(light.r, max(light.g, light.b));
-    float3 mapped = brightest > 0.0 ? clamp(light * (eetf(brightest * 203.0 / peak) / brightest), 0.0, 1.0) : float3(0.0);
-    float3 srgb = mix(mapped * 12.92, 1.055 * pow(mapped, float3(1.0 / 2.4)) - 0.055, step(float3(0.0031308), mapped));
-    float3 shown;
-    if (wideCanvas()) {
-        shown = decodeSrgb(wideGamut > 0.5 ? mapGamut(srgb, true) : srgb);
-        if (wideIsP3 > 0.5) shown = ${Bt2020Matrices.agsl(DISPLAY_P3_TO_SRGB, "shown")};
-    } else {
-        shown = decodeSrgb(narrowGamut > 0.5 ? mapGamut(srgb, false) : srgb);
-    }
-    return half4(fromLinearSrgb(half3(shown)), 1.0);
-}
-"""
-
-/**
  * An Android bitmap of [size] holding [frame], converted straight into its pixels, locked with
  * `AndroidBitmap_lockPixels`, and scaled to the bitmap's size in the same pass. Unlocking them
  * gives the bitmap a new generation, which is what tells the renderer to upload it again after a
@@ -386,17 +215,19 @@ half4 main(float2 coord) {
 private class AndroidFrameBitmap(frame: VideoFrame, override val format: FrameFormat, size: IntSize) : FrameBitmap {
     override val width = size.width
     override val height = size.height
-    private val bitmap = if (format == FrameFormat.RgbaF16) {
-        check(Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) { "RGBA_F16 bitmaps need Android 8.0 (API 26)" }
-        Bitmap.createBitmap(
-            width,
-            height,
-            Bitmap.Config.RGBA_F16,
-            true,
-            ColorSpace.get(ColorSpace.Named.LINEAR_EXTENDED_SRGB),
-        )
-    } else {
-        Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
+    private val bitmap = when {
+        format.color.isHdr -> Bitmap.createBitmap(width, height, Bitmap.Config.RGBA_1010102, true, hdrColorSpace(format.color.transfer))
+        format == FrameFormat.RgbaF16 -> {
+            check(Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) { "RGBA_F16 bitmaps need Android 8.0 (API 26)" }
+            Bitmap.createBitmap(
+                width,
+                height,
+                Bitmap.Config.RGBA_F16,
+                true,
+                ColorSpace.get(ColorSpace.Named.LINEAR_EXTENDED_SRGB),
+            )
+        }
+        else -> Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
     }
     override val image: ImageBitmap = bitmap.asImageBitmap()
 
@@ -415,6 +246,3 @@ private class AndroidFrameBitmap(frame: VideoFrame, override val format: FrameFo
 
     override fun close() = bitmap.recycle()
 }
-
-/** `AVCOL_TRC_IEC61966_2_1`: sRGB, the curve an SDR canvas's codes are in. */
-private const val AVCOL_TRC_IEC61966_2_1 = 13

@@ -17,12 +17,8 @@ import androidx.compose.ui.unit.Density
 import androidx.test.platform.app.InstrumentationRegistry
 import io.github.aftrolle.ffmpegkmp.codec.CodecPreference
 import io.github.aftrolle.ffmpegkmp.codec.DecoderKind
-import io.github.aftrolle.ffmpegkmp.codec.FrameColor
 import io.github.aftrolle.ffmpegkmp.codec.FrameFormat
-import io.github.aftrolle.ffmpegkmp.codec.PixelLayout
-import io.github.aftrolle.ffmpegkmp.codec.VideoDecoder
 import io.github.aftrolle.ffmpegkmp.codec.VideoFrame
-import io.github.aftrolle.ffmpegkmp.codec.VideoOutput
 import io.github.aftrolle.ffmpegkmp.core.CommandIo
 import io.github.aftrolle.ffmpegkmp.core.MediaSource
 import java.util.concurrent.ExecutionException
@@ -60,7 +56,7 @@ class HardwareCanvasDeviceTest {
 
     /**
      * The colour check: a frame drawn from GPU memory against the same frame converted in software, both on an 8-bit
-     * sRGB canvas: BT.709 and Display P3 shown as coded, HLG and PQ tone mapped. Only pixels where the software
+     * sRGB canvas: BT.709 and Display P3 shown as coded, HLG and PQ tagged for the platform, which tone maps both alike. Only pixels where the software
      * picture is flat are held to the tolerance, since the GPU and swscale site chroma differently at edges; the worst
      * of all pixels is printed beside it. Each fixture is checked, and the failures reported together.
      */
@@ -106,7 +102,7 @@ class HardwareCanvasDeviceTest {
         }
     }
 
-    private suspend fun assertLooksAsConverted(fixture: Fixture) {
+    private suspend fun assertLooksAsConverted(fixture: Fixture, canvas: FrameFormat = FrameFormat.Rgba8) {
         if (!fixture.fromGpu) {
             // Visibly converted in software instead: a software decoder, no zero copy.
             canvasPlayer(fixture.name, hardware = true, takesHardware = false).use { session ->
@@ -124,52 +120,34 @@ class HardwareCanvasDeviceTest {
             }
             assertTrue(output.zeroCopy, "${fixture.name}: $output")
             within("seek") { session.player.seekTo(fixture.at) }
-            session.drawn()
+            session.drawn(canvas)
         }
         val software = canvasPlayer(fixture.name, hardware = false).use { session ->
             assertEquals(DecoderKind.SOFTWARE, session.player.snapshot.value.output?.decoder)
             within("seek") { session.player.seekTo(fixture.at) }
-            session.drawn()
+            session.drawn(canvas)
         }
-        assertClose("${fixture.name} from GPU memory against software", gpu, software)
+        assertClose("${fixture.name} from GPU memory against software on ${canvas.layout}", gpu, software, fixture.flatTolerance)
     }
 
     /**
-     * On a canvas wider than sRGB, here linear extended sRGB as an HDR window draws on, PQ and HLG frames from GPU
-     * memory are tone mapped into Display P3, as the conversion maps the same frame into Display P3 codes, rather
-     * than into BT.709 as for an sRGB canvas. Each fixture is checked, and the failures reported together.
+     * The colour check on a canvas wider than sRGB, here linear extended sRGB as an HDR window draws on: a frame from
+     * GPU memory looks as the software decoder's does there too, since both reach the platform tagged as they are.
      */
     @Test
-    fun hdrFramesFromGpuMemoryAreToneMappedIntoDisplayP3OnAWideCanvas() = runBlocking {
+    fun onAWideCanvasFramesFromGpuMemoryLookAsTheSoftwareConversionShowsThem() = runBlocking {
         assumeHardwareCanvas()
         val failures = FIXTURES.filter { it.fromGpu }.mapNotNull { fixture ->
-            runCatching { assertWideAsConverted(fixture) }.exceptionOrNull()?.message
+            runCatching { assertLooksAsConverted(fixture, FrameFormat.RgbaF16) }.exceptionOrNull()?.message
         }
         assertTrue(failures.isEmpty(), failures.joinToString("\n"))
-    }
-
-    private suspend fun assertWideAsConverted(fixture: Fixture) {
-        val gpu = canvasPlayer(fixture.name, hardware = true).use { session ->
-            val snapshot = session.player.snapshot.value
-            if (snapshot.video?.color?.isHdr != true) return
-            if (snapshot.output?.decoder != DecoderKind.HARDWARE) {
-                println("HardwareCanvasDeviceTest: ${fixture.name} plays on a ${snapshot.output?.decoder} decoder, skipping")
-                return
-            }
-            within("seek") { session.player.seekTo(fixture.at) }
-            session.drawn(FrameFormat.RgbaF16)
-        }
-        val converted = VideoDecoder.open(source(fixture.name), VideoOutput.Memory(DISPLAY_P3)).use { decoder ->
-            decoder.frameAt(fixture.at).use { frame -> Picture(frame.width, frame.height, rgba(frame)) }
-        }
-        assertClose("${fixture.name} from GPU memory on a wide canvas against the Display P3 conversion", gpu, converted)
     }
 
     /**
      * [gpu] against [reference]: only pixels where the reference is flat are held to the tolerance, since the GPU and
      * swscale site chroma differently at edges; the worst of all pixels is printed beside it.
      */
-    private fun assertClose(what: String, gpu: Picture, software: Picture) {
+    private fun assertClose(what: String, gpu: Picture, software: Picture, flatTolerance: Int) {
         var worst = 0
         var worstFlat = 0
         var flat = 0
@@ -194,7 +172,7 @@ class HardwareCanvasDeviceTest {
         val summary = "$what: worst $worstFlat codes over $flat flat pixels, worst $worst over all, mean %.2f".format(mean)
         Log.i(TAG, summary)
         assertTrue(flat > width * height / 50, "$summary: too few flat pixels")
-        assertTrue(worstFlat <= FLAT_TOLERANCE && mean <= MEAN_TOLERANCE, summary)
+        assertTrue(worstFlat <= flatTolerance && mean <= MEAN_TOLERANCE, summary)
     }
 
     /** A player showing [name] on a Canvas output, with or without its hardware frames, paused at its first frame. */
@@ -304,8 +282,11 @@ class HardwareCanvasDeviceTest {
         }
     }
 
-    /** A fixture at [at]; [fromGpu] false for one the hardware Canvas leaves to the conversion. */
-    private class Fixture(val name: String, val at: Duration, val fromGpu: Boolean = true)
+    /**
+     * A fixture at [at]; [fromGpu] false for one the hardware Canvas leaves to the conversion, and [flatTolerance] the
+     * worst 8-bit code its flat pixels may differ by.
+     */
+    private class Fixture(val name: String, val at: Duration, val fromGpu: Boolean = true, val flatTolerance: Int = FLAT_TOLERANCE)
 
     private companion object {
         /** 128x128 H.264 at 30 fps, five seconds, its 12-bit frame number drawn in the top rows. */
@@ -318,13 +299,13 @@ class HardwareCanvasDeviceTest {
             // HWUI maps Display P3 into sRGB unlike the conversion: up to 16 codes apart on an S25.
             Fixture("sdr-display-p3.mp4", 0.5.seconds, fromGpu = false),
             Fixture("hdr-hlg.mp4", 0.5.seconds),
-            Fixture("hdr10-pq.mp4", 0.5.seconds),
+            // 8-bit 4:2:0 with highlights near PQ's peak, where the GPU's chroma and swscale's interpolated chroma
+            // tone map up to 14 codes apart on an S25 in a small patch; the mean stays under 0.3.
+            Fixture("hdr10-pq.mp4", 0.5.seconds, flatTolerance = 16),
             // Main 10 HEVC, which hardware decoders hand out in P010 buffers that carry their own data space.
             Fixture("video-decoder/hlg-large.mp4", 0.5.seconds),
             Fixture("video-decoder/hdr10-pq-patches.mp4", 0.5.seconds),
         )
-
-        val DISPLAY_P3 = FrameFormat(PixelLayout.RGBA8, FrameColor.DisplayP3)
 
         /** Linear sRGB to linear Display P3, both D65. */
         val SRGB_TO_DISPLAY_P3 = doubleArrayOf(

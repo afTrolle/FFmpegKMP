@@ -266,10 +266,10 @@ public class FrameImage internal constructor(
      * replaced. A frame in GPU memory is kept as it is. [videoSize] is [updateIfOpen]'s.
      *
      * Exactly one [present] or [release] must follow. Returns null once this image is closed, having
-     * closed [frame]; throws, having closed it, when it cannot be converted. A PQ or HLG frame in GPU
-     * memory is drawn with [toneMap], for an SDR canvas, where one is given.
+     * closed [frame]; throws, having closed it, when it cannot be converted. With [platformHdr], a PQ or
+     * HLG frame in GPU memory is shown as the platform shows HDR, rather than as linear light.
      */
-    internal fun prepare(frame: VideoFrame, videoSize: IntSize? = null, toneMap: SdrToneMap? = null): Prepared? {
+    internal fun prepare(frame: VideoFrame, videoSize: IntSize? = null, platformHdr: Boolean = false): Prepared? {
         val frameSize = videoSize ?: IntSize(frame.width, frame.height)
         val claim = try {
             val format = if (frame.gpuBuffer == null) frame.bitmapFormat() else null
@@ -291,7 +291,7 @@ public class FrameImage internal constructor(
             return null
         }
         val bitmap = if (claim === NO_BITMAP || claim === DEFERRED) null else convert(frame, claim)
-        val prepared = Prepared(frame.pts, bitmap, frame, frameSize, frame.rotationDegrees, frame.sampleAspectRatio, toneMap)
+        val prepared = Prepared(frame.pts, bitmap, frame, frameSize, frame.rotationDegrees, frame.sampleAspectRatio, platformHdr)
         if (lock.withLock { closed }) {
             retire(prepared)
             return null
@@ -309,11 +309,11 @@ public class FrameImage internal constructor(
         frameSize: IntSize,
         rotationDegrees: Double,
         sampleAspectRatio: Double,
-        toneMap: SdrToneMap?,
+        platformHdr: Boolean,
         take: () -> VideoFrame,
     ): Prepared? = lock.withLock {
         if (closed) return@withLock null
-        Prepared(pts, null, null, frameSize, rotationDegrees, sampleAspectRatio, toneMap).also { it.late = take }
+        Prepared(pts, null, null, frameSize, rotationDegrees, sampleAspectRatio, platformHdr).also { it.late = take }
     }
 
     /**
@@ -395,11 +395,11 @@ public class FrameImage internal constructor(
         } else {
             val frame = checkNotNull(prepared.frame)
             val buffer = checkNotNull(frame.gpuBuffer)
-            val wrapped = wraps.wrap(frame, prepared.toneMap)
+            val wrapped = wraps.wrap(frame, prepared.platformHdr)
             val source = IntRect(buffer.cropLeft, buffer.cropTop, buffer.cropRight, buffer.cropBottom)
             Shown(
                 wrapped.image, source, source.size, prepared.rotationDegrees, prepared.sampleAspectRatio, gpu = true,
-                wrapped.transfer, wrapped.toneMap,
+                wrapped.transfer,
             )
         }
         flip(prepared, shown)
@@ -580,7 +580,7 @@ public class FrameImage internal constructor(
     /**
      * The [source] rectangle of [image], which holds a frame of [frameSize] at that size or smaller,
      * drawn turned and stretched; [gpu] when the image lies in GPU memory, where [transfer] says how
-     * its pixels are coded: PQ and HLG ones are drawn as light, or with [toneMap] tone mapped to SDR.
+     * its pixels are coded: PQ and HLG ones are drawn as light.
      */
     internal class Shown(
         val image: ImageBitmap,
@@ -590,7 +590,6 @@ public class FrameImage internal constructor(
         val sampleAspectRatio: Double,
         val gpu: Boolean,
         val transfer: ColorTransfer = ColorTransfer.SRGB,
-        val toneMap: SdrToneMap? = null,
     ) {
         /** The frame's, whatever size [image] holds it at, so that layout never follows the bitmaps. */
         val displaySize: Size = displaySize(frameSize.width, frameSize.height, sampleAspectRatio, rotationDegrees)
@@ -599,7 +598,7 @@ public class FrameImage internal constructor(
     /**
      * A frame [prepare] made drawable: converted into [bitmap], one of the ring's, or for a frame in
      * GPU memory, null, the frame itself shown through a wrap of its buffer. [frameSize] is the
-     * video's size, as [Shown.frameSize]; [toneMap] is [prepare]'s.
+     * video's size, as [Shown.frameSize]; [platformHdr] is [prepare]'s.
      */
     internal class Prepared(
         val pts: Duration,
@@ -608,7 +607,7 @@ public class FrameImage internal constructor(
         val frameSize: IntSize,
         val rotationDegrees: Double,
         val sampleAspectRatio: Double,
-        val toneMap: SdrToneMap? = null,
+        val platformHdr: Boolean = false,
     ) {
         /**
          * The frame it was made from, kept until it leaves the screen, so that [redraw] can convert
@@ -654,7 +653,7 @@ public fun DrawScope.drawFrameImage(
 ) {
     val shown = image.shown ?: return
     if (shown.gpu) checkDrawsGpuImages()
-    drawUpright(shown.image, shown.source, shown.rotationDegrees, Rect(topLeft, size), shown.transfer, shown.toneMap)
+    drawUpright(shown.image, shown.source, shown.rotationDegrees, Rect(topLeft, size), shown.transfer)
 }
 
 /** Draws [source] of [image] turned upright by [rotationDegrees], so that it fills [destination]. */
@@ -664,7 +663,6 @@ internal fun DrawScope.drawUpright(
     rotationDegrees: Double,
     destination: Rect,
     transfer: ColorTransfer = ColorTransfer.SRGB,
-    toneMap: SdrToneMap? = null,
 ) {
     val turn = uprightTurn(rotationDegrees)
     val target = destination.beforeTurn(turn)
@@ -672,7 +670,7 @@ internal fun DrawScope.drawUpright(
     val dstSize = IntSize(target.width.roundToInt(), target.height.roundToInt())
     withTransform({ rotate(turn, destination.center) }) {
         when (transfer) {
-            ColorTransfer.PQ, ColorTransfer.HLG -> drawCodedImage(image, source, dstOffset, dstSize, transfer, toneMap)
+            ColorTransfer.PQ, ColorTransfer.HLG -> drawCodedImage(image, source, dstOffset, dstSize, transfer)
             else -> drawImage(image, srcOffset = source.topLeft, srcSize = source.size, dstOffset = dstOffset, dstSize = dstSize)
         }
     }
