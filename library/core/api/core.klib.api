@@ -139,6 +139,33 @@ sealed interface io.github.aftrolle.ffmpegkmp.core/ExecutionEvent { // io.github
     }
 }
 
+sealed interface io.github.aftrolle.ffmpegkmp.core/MemoryLimit { // io.github.aftrolle.ffmpegkmp.core/MemoryLimit|null[0]
+    final class Bytes : io.github.aftrolle.ffmpegkmp.core/MemoryLimit { // io.github.aftrolle.ffmpegkmp.core/MemoryLimit.Bytes|null[0]
+        constructor <init>(kotlin/Long) // io.github.aftrolle.ffmpegkmp.core/MemoryLimit.Bytes.<init>|<init>(kotlin.Long){}[0]
+
+        final val bytes // io.github.aftrolle.ffmpegkmp.core/MemoryLimit.Bytes.bytes|{}bytes[0]
+            final fun <get-bytes>(): kotlin/Long // io.github.aftrolle.ffmpegkmp.core/MemoryLimit.Bytes.bytes.<get-bytes>|<get-bytes>(){}[0]
+
+        final fun component1(): kotlin/Long // io.github.aftrolle.ffmpegkmp.core/MemoryLimit.Bytes.component1|component1(){}[0]
+        final fun copy(kotlin/Long = ...): io.github.aftrolle.ffmpegkmp.core/MemoryLimit.Bytes // io.github.aftrolle.ffmpegkmp.core/MemoryLimit.Bytes.copy|copy(kotlin.Long){}[0]
+        final fun equals(kotlin/Any?): kotlin/Boolean // io.github.aftrolle.ffmpegkmp.core/MemoryLimit.Bytes.equals|equals(kotlin.Any?){}[0]
+        final fun hashCode(): kotlin/Int // io.github.aftrolle.ffmpegkmp.core/MemoryLimit.Bytes.hashCode|hashCode(){}[0]
+        final fun toString(): kotlin/String // io.github.aftrolle.ffmpegkmp.core/MemoryLimit.Bytes.toString|toString(){}[0]
+    }
+
+    final object Default : io.github.aftrolle.ffmpegkmp.core/MemoryLimit { // io.github.aftrolle.ffmpegkmp.core/MemoryLimit.Default|null[0]
+        final fun equals(kotlin/Any?): kotlin/Boolean // io.github.aftrolle.ffmpegkmp.core/MemoryLimit.Default.equals|equals(kotlin.Any?){}[0]
+        final fun hashCode(): kotlin/Int // io.github.aftrolle.ffmpegkmp.core/MemoryLimit.Default.hashCode|hashCode(){}[0]
+        final fun toString(): kotlin/String // io.github.aftrolle.ffmpegkmp.core/MemoryLimit.Default.toString|toString(){}[0]
+    }
+
+    final object None : io.github.aftrolle.ffmpegkmp.core/MemoryLimit { // io.github.aftrolle.ffmpegkmp.core/MemoryLimit.None|null[0]
+        final fun equals(kotlin/Any?): kotlin/Boolean // io.github.aftrolle.ffmpegkmp.core/MemoryLimit.None.equals|equals(kotlin.Any?){}[0]
+        final fun hashCode(): kotlin/Int // io.github.aftrolle.ffmpegkmp.core/MemoryLimit.None.hashCode|hashCode(){}[0]
+        final fun toString(): kotlin/String // io.github.aftrolle.ffmpegkmp.core/MemoryLimit.None.toString|toString(){}[0]
+    }
+}
+
 abstract class io.github.aftrolle.ffmpegkmp.core/CommandClient : kotlin/AutoCloseable { // io.github.aftrolle.ffmpegkmp.core/CommandClient|null[0]
     final fun enqueue(kotlin.collections/List<kotlin/String>, io.github.aftrolle.ffmpegkmp.core/CommandIo = ...): io.github.aftrolle.ffmpegkmp.core/ExecutionSession<io.github.aftrolle.ffmpegkmp.core/ExecutionResult> // io.github.aftrolle.ffmpegkmp.core/CommandClient.enqueue|enqueue(kotlin.collections.List<kotlin.String>;io.github.aftrolle.ffmpegkmp.core.CommandIo){}[0]
     final fun enqueue(kotlin/String, io.github.aftrolle.ffmpegkmp.core/CommandIo = ...): io.github.aftrolle.ffmpegkmp.core/ExecutionSession<io.github.aftrolle.ffmpegkmp.core/ExecutionResult> // io.github.aftrolle.ffmpegkmp.core/CommandClient.enqueue|enqueue(kotlin.String;io.github.aftrolle.ffmpegkmp.core.CommandIo){}[0]
@@ -288,6 +315,15 @@ final class io.github.aftrolle.ffmpegkmp.core/ExecutionResult { // io.github.aft
     final fun toString(): kotlin/String // io.github.aftrolle.ffmpegkmp.core/ExecutionResult.toString|toString(){}[0]
 }
 
+final class io.github.aftrolle.ffmpegkmp.core/FFmpegKmpConfig { // io.github.aftrolle.ffmpegkmp.core/FFmpegKmpConfig|null[0]
+    constructor <init>(io.github.aftrolle.ffmpegkmp.core/MemoryLimit = ..., io.github.aftrolle.ffmpegkmp.core/MemoryLimit = ...) // io.github.aftrolle.ffmpegkmp.core/FFmpegKmpConfig.<init>|<init>(io.github.aftrolle.ffmpegkmp.core.MemoryLimit;io.github.aftrolle.ffmpegkmp.core.MemoryLimit){}[0]
+
+    final val nativeMemoryLimit // io.github.aftrolle.ffmpegkmp.core/FFmpegKmpConfig.nativeMemoryLimit|{}nativeMemoryLimit[0]
+        final fun <get-nativeMemoryLimit>(): io.github.aftrolle.ffmpegkmp.core/MemoryLimit // io.github.aftrolle.ffmpegkmp.core/FFmpegKmpConfig.nativeMemoryLimit.<get-nativeMemoryLimit>|<get-nativeMemoryLimit>(){}[0]
+    final val processMemoryLimit // io.github.aftrolle.ffmpegkmp.core/FFmpegKmpConfig.processMemoryLimit|{}processMemoryLimit[0]
+        final fun <get-processMemoryLimit>(): io.github.aftrolle.ffmpegkmp.core/MemoryLimit // io.github.aftrolle.ffmpegkmp.core/FFmpegKmpConfig.processMemoryLimit.<get-processMemoryLimit>|<get-processMemoryLimit>(){}[0]
+}
+
 final class io.github.aftrolle.ffmpegkmp.core/MediaSource { // io.github.aftrolle.ffmpegkmp.core/MediaSource|null[0]
     constructor <init>(kotlin/String, io.github.aftrolle.ffmpegkmp.core/CommandIo = ...) // io.github.aftrolle.ffmpegkmp.core/MediaSource.<init>|<init>(kotlin.String;io.github.aftrolle.ffmpegkmp.core.CommandIo){}[0]
 
@@ -314,4 +350,8 @@ final class io.github.aftrolle.ffmpegkmp.core/StagedOutputEmptyException : io.gi
 
 open class io.github.aftrolle.ffmpegkmp.core/FFmpegKmpException : kotlin/RuntimeException { // io.github.aftrolle.ffmpegkmp.core/FFmpegKmpException|null[0]
     constructor <init>(kotlin/String, kotlin/Throwable? = ...) // io.github.aftrolle.ffmpegkmp.core/FFmpegKmpException.<init>|<init>(kotlin.String;kotlin.Throwable?){}[0]
+}
+
+final object io.github.aftrolle.ffmpegkmp.core/FFmpegKmp { // io.github.aftrolle.ffmpegkmp.core/FFmpegKmp|null[0]
+    final fun configure(io.github.aftrolle.ffmpegkmp.core/FFmpegKmpConfig) // io.github.aftrolle.ffmpegkmp.core/FFmpegKmp.configure|configure(io.github.aftrolle.ffmpegkmp.core.FFmpegKmpConfig){}[0]
 }

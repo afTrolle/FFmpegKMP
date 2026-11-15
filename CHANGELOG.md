@@ -10,6 +10,10 @@ may break the public API; every break is listed here with a migration note.
 
 ### Added
 
+- `FFmpegKmp.configure(FFmpegKmpConfig(...))` (core): sets up the native runtime before its first use.
+  `processMemoryLimit` and `nativeMemoryLimit`, as `MemoryLimit.Default`, `None` or `Bytes(n)`, are
+  JavaCPP's `maxPhysicalBytes` and `maxBytes` on JVM and Android; iOS and the browser have none.
+  Configuring after the runtime has loaded with other limits throws `IllegalStateException`.
 - `VideoDecoder.extractImageBitmap(...)` (ffplay, experimental): the frame `extractFrame` gives, as an
   `ImageBitmap` in the colour `toImageBitmap` and `FFplaySurface` show it. On Android 14 and later a PQ
   or HLG source keeps its codes in a tagged `RGBA_1010102` bitmap, so a poster looks as its playback
@@ -24,6 +28,9 @@ may break the public API; every break is listed here with a migration note.
 
 ### Changed
 
+- On Android the native runtime no longer limits the process's physical memory unless the app sets
+  `org.bytedeco.javacpp.maxPhysicalBytes` or a `processMemoryLimit`. JavaCPP's default, four times
+  the Java heap, stopped a few 4K decoders with garbage collections that cannot free their memory.
 - **Breaking:** `VideoOutput.GpuBuffers` is a class, `GpuBuffers(memory = Memory())`: `memory` is how
   the frames a software decoder hands out instead come, converted and scaled as with `Memory`, and
   `VideoDecoder.resize` now scales them rather than throwing; MediaCodec's GPU frames keep their own

@@ -101,11 +101,15 @@ private fun configuredJniPath(): String? =
  */
 internal object JavaCppBridgeLoader {
     private var firstFailure: Throwable? = null
-    private var loaded = false
+
+    @Volatile
+    var loaded = false
+        private set
 
     fun load() = synchronized(this) {
         if (loaded) return@synchronized
         firstFailure?.let(::throwUnavailable)
+        JavaCppMemory.beforeLoad()
         try {
             val configuredPath = configuredJniPath()
             if (configuredPath != null) {
@@ -125,6 +129,7 @@ internal object JavaCppBridgeLoader {
             firstFailure = failure
             throwUnavailable(failure)
         }
+        JavaCppMemory.verify()
     }
 
     private fun throwUnavailable(failure: Throwable): Nothing {
