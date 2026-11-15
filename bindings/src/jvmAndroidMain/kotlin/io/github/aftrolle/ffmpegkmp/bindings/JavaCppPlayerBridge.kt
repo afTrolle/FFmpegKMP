@@ -6,19 +6,14 @@ package io.github.aftrolle.ffmpegkmp.bindings
 import io.github.aftrolle.ffmpegkmp.bindings.generated.bridge.ffmpegkmp_frame
 import io.github.aftrolle.ffmpegkmp.bindings.generated.bridge.ffplaykmp_configuration
 import io.github.aftrolle.ffmpegkmp.bindings.generated.bridge.ffplaykmp_input_hint
-import io.github.aftrolle.ffmpegkmp.bindings.generated.bridge.ffplaykmp_io_callback
 import io.github.aftrolle.ffmpegkmp.bindings.generated.bridge.ffplaykmp_output_capabilities
 import io.github.aftrolle.ffmpegkmp.bindings.generated.bridge.ffplaykmp_platform_video_frame
-import io.github.aftrolle.ffmpegkmp.bindings.generated.bridge.ffplaykmp_platform_video_frame_callback
 import io.github.aftrolle.ffmpegkmp.bindings.generated.bridge.ffplaykmp_player
 import io.github.aftrolle.ffmpegkmp.bindings.generated.bridge.ffplaykmp_snapshot
 import io.github.aftrolle.ffmpegkmp.bindings.generated.bridge.ffplaykmp_statistics
-import io.github.aftrolle.ffmpegkmp.bindings.generated.bridge.ffplaykmp_state_callback
 import io.github.aftrolle.ffmpegkmp.bindings.generated.bridge.ffplaykmp_video_frame
-import io.github.aftrolle.ffmpegkmp.bindings.generated.bridge.ffplaykmp_video_frame_callback
 import io.github.aftrolle.ffmpegkmp.bindings.generated.bridge.global.bridge
 import org.bytedeco.javacpp.BytePointer
-import org.bytedeco.javacpp.Pointer
 
 internal fun createJavaCppPlayerBridge(
     configuration: NativePlayerConfiguration,
@@ -45,26 +40,18 @@ private class JavaCppPlayerEngine(
     private val platformFrame: (NativePlatformVideoFrame) -> Boolean,
     private val platformOutputTarget: (ffplaykmp_player, Any?, Boolean) -> Int,
 ) : PlayerEngineCalls {
-    private val stateCallback: ffplaykmp_state_callback
-    private val frameCallback: ffplaykmp_video_frame_callback
-    private val platformFrameCallback: ffplaykmp_platform_video_frame_callback
-    private val ioCallback: ffplaykmp_io_callback
+    private val callbacks: JavaCppCallbacks.Registration
     private val player: ffplaykmp_player
     @Volatile
     private var mounts = MountTable.Empty
 
     init {
         JavaCppBridgeLoader.load()
-        stateCallback = object : ffplaykmp_state_callback() {
-            override fun call(opaque: Pointer?, snapshot: ffplaykmp_snapshot?) {
-                if (snapshot != null && guard.isOpen) update(snapshot.toNativeSnapshot())
-            }
-        }
-        frameCallback = object : ffplaykmp_video_frame_callback() {
-            override fun call(opaque: Pointer?, nativeFrame: ffplaykmp_video_frame?): Int {
-                if (nativeFrame == null) return 0
+        callbacks = JavaCppCallbacks.register(
+            state = { snapshot -> if (guard.isOpen) update(snapshot.toNativeSnapshot()) },
+            videoFrame = { nativeFrame ->
                 // A throw would abort the process from the player's thread, as it does on Kotlin/Native.
-                return runCatching {
+                runCatching {
                     dispatchVideoFrame(
                         frame,
                         nativeFrame.event(),
@@ -88,18 +75,16 @@ private class JavaCppPlayerEngine(
                             }
                     }
                 }.getOrDefault(0)
-            }
-        }
-        platformFrameCallback = object : ffplaykmp_platform_video_frame_callback() {
-            override fun call(opaque: Pointer?, nativeFrame: ffplaykmp_platform_video_frame?): Int {
-                if (nativeFrame == null || !guard.isOpen) return 0
-                val handle = nativeFrame.handle() ?: return 0
+            },
+            platformFrame = platformFrame@{ nativeFrame ->
+                if (!guard.isOpen) return@platformFrame 0
+                val handle = nativeFrame.handle() ?: return@platformFrame 0
                 val kind = when (nativeFrame.kind()) {
                     bridge.FFPLAYKMP_PLATFORM_FRAME_CV_PIXEL_BUFFER ->
                         NativePlatformVideoFrameKind.CV_PIXEL_BUFFER
-                    else -> return 0
+                    else -> return@platformFrame 0
                 }
-                return if (
+                if (
                     platformFrame(
                         NativePlatformVideoFrame(
                             kind = kind,
@@ -111,9 +96,9 @@ private class JavaCppPlayerEngine(
                         ),
                     )
                 ) 1 else 0
-            }
-        }
-        ioCallback = mountedIoCallback { mounts }
+            },
+            mounts = { mounts },
+        )
         val nativeConfiguration = ffplaykmp_configuration()
         bridge.ffplaykmp_configuration_default(nativeConfiguration)
         nativeConfiguration.decoder_preference(configuration.decoderPreference.ordinal)
@@ -128,26 +113,19 @@ private class JavaCppPlayerEngine(
             .takeIf(ByteArray::isNotEmpty)?.let { BytePointer(*it) }
         decoderName?.let(nativeConfiguration::decoder_name)
         decoderOptions?.let { nativeConfiguration.decoder_options(it).decoder_options_size(it.capacity().toInt()) }
-        val created = bridge.ffplaykmp_player_create(nativeConfiguration, stateCallback, null)
+        val created = bridge.ffplaykmp_player_create(nativeConfiguration, JavaCppCallbacks.state, callbacks.opaque)
         decoderName?.close()
         decoderOptions?.close()
         player = created
             ?: run {
                 nativeConfiguration.close()
-                ioCallback.close()
-                platformFrameCallback.close()
-                frameCallback.close()
-                stateCallback.close()
+                callbacks.close()
                 throw NativeBridgeUnavailableException("FFmpegKMP native player allocation failed")
             }
         nativeConfiguration.close()
-        bridge.ffplaykmp_player_set_io_callback(player, ioCallback, null)
-        bridge.ffplaykmp_player_set_video_frame_callback(player, frameCallback, null)
-        bridge.ffplaykmp_player_set_platform_video_frame_callback(
-            player,
-            platformFrameCallback,
-            null,
-        )
+        bridge.ffplaykmp_player_set_io_callback(player, JavaCppCallbacks.io, callbacks.opaque)
+        bridge.ffplaykmp_player_set_video_frame_callback(player, JavaCppCallbacks.videoFrame, callbacks.opaque)
+        bridge.ffplaykmp_player_set_platform_video_frame_callback(player, JavaCppCallbacks.platformFrame, callbacks.opaque)
     }
 
     override fun mount(mounts: List<NativeMountedIo>) {
@@ -221,10 +199,7 @@ private class JavaCppPlayerEngine(
 
     override fun release() {
         bridge.ffplaykmp_player_destroy(player)
-        ioCallback.close()
-        platformFrameCallback.close()
-        frameCallback.close()
-        stateCallback.close()
+        callbacks.close()
     }
 }
 

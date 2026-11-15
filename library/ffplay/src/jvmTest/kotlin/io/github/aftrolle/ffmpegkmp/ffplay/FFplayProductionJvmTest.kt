@@ -210,6 +210,100 @@ class FFplayProductionJvmTest {
         }
     }
 
+    /**
+     * A player that found the budget full keeps its software decoder through a loop and a seek, though
+     * a place was given back meanwhile, and tries hardware again for a new output.
+     */
+    @Test
+    fun aBudgetFallbackStaysThroughSeekAndLoopAndANewOutputTriesHardware() = withBudget(extra = 1) {
+        val holder = budgetPlayer()
+        val late = budgetPlayer()
+        try {
+            holder.prepare(fixtureSource("hardware-h264.mp4"))
+            late.prepare(fixtureSource("hardware-h264.mp4"))
+            assertEquals(DecoderFallbackReason.BUDGET, late.snapshot.value.output?.decoderFallback)
+            holder.close()
+            val opens = nativePlayerStatistics().codecOpens
+
+            late.play()
+            withTimeout(3_000) { late.snapshot.first { it.state == FFplayState.ENDED } }
+            late.seekTo(Duration.ZERO)
+            late.play()
+            withTimeout(3_000) { late.snapshot.first { it.position >= 200.milliseconds } }
+            late.seekTo(100.milliseconds)
+            late.pause()
+            assertEquals(opens, nativePlayerStatistics().codecOpens, "decoders opened through the loop and the seek")
+            assertEquals(DecoderKind.SOFTWARE, late.snapshot.value.output?.decoder)
+            assertEquals(DecoderFallbackReason.BUDGET, late.snapshot.value.output?.decoderFallback)
+
+            late.attachOutput(budgetOutput(CodecPreference.AUTO))
+            val moved = withTimeout(2_000) { late.snapshot.first { it.output?.decoder == DecoderKind.HARDWARE } }
+            assertNull(moved.output?.decoderFallback)
+        } finally {
+            holder.close()
+            late.close()
+        }
+    }
+
+    /** A player that found the budget full tries hardware again as its decoder reopens after the idle release. */
+    @Test
+    fun theReopenAfterAnIdleReleaseTriesHardware() = withBudget(extra = 1) {
+        val holder = budgetPlayer()
+        val late = budgetPlayer(releaseDecoder = 300.milliseconds)
+        try {
+            holder.prepare(fixtureSource("hardware-h264.mp4"))
+            late.prepare(fixtureSource("hardware-h264.mp4"))
+            assertEquals(DecoderFallbackReason.BUDGET, late.snapshot.value.output?.decoderFallback)
+            holder.close()
+            val closes = nativePlayerStatistics().codecCloses
+            withTimeout(3_000) { while (nativePlayerStatistics().codecCloses == closes) delay(10) }
+
+            late.play()
+            val reopened = withTimeout(2_000) { late.snapshot.first { it.output?.decoder == DecoderKind.HARDWARE } }
+            assertNull(reopened.output?.decoderFallback)
+        } finally {
+            holder.close()
+            late.close()
+        }
+    }
+
+    /**
+     * A playing player whose output stops refreshing it, as a Canvas no longer drawn, releases its
+     * decoder after its idle release, a second at least, while it stays playing, and plays on once
+     * refreshed again.
+     */
+    @Test
+    fun aPlayingPlayerNobodyRefreshesReleasesItsDecoder() = runBlocking {
+        val output = ProductionOutput(drivesRefresh = true)
+        val player = FFplayPlayer(
+            FFplayConfiguration(decoder = CodecPreference.SOFTWARE, audio = false, decoderIdleRelease = 300.milliseconds),
+        )
+        player.attachOutput(output)
+        try {
+            player.prepare(fixtureSource("playback-gop-6s.mp4"))
+            player.play()
+            withTimeout(3_000) {
+                while (player.snapshot.value.position < 200.milliseconds) {
+                    output.refresh()
+                    delay(10)
+                }
+            }
+            val closes = nativePlayerStatistics().codecCloses
+            withTimeout(3_000) { while (nativePlayerStatistics().codecCloses == closes) delay(10) }
+            assertEquals(FFplayState.PLAYING, player.snapshot.value.state)
+
+            val stalled = player.snapshot.value.position
+            withTimeout(3_000) {
+                while (player.snapshot.value.position <= stalled) {
+                    output.refresh()
+                    delay(10)
+                }
+            }
+        } finally {
+            player.close()
+        }
+    }
+
     /** Players and video decoders take places in one budget, and a closed decoder's place goes to the next player. */
     @Test
     fun playersAndVideoDecodersShareOneBudget() = withBudget(extra = 2) {
@@ -367,9 +461,22 @@ class FFplayProductionJvmTest {
 private class ProductionOutput(
     override val capabilities: FFplayOutputCapabilities = FFplayOutputCapabilities(),
     override val kind: FFplayRendererKind = FFplayRendererKind.COMPOSE_CANVAS,
+    override val drivesRefresh: Boolean = false,
 ) : FFplayVideoOutput {
     var framesReceived = 0
         private set
+
+    @Volatile
+    private var driver: FFplayRefreshDriver? = null
+
+    override fun bindRefresh(driver: FFplayRefreshDriver?) {
+        this.driver = driver
+    }
+
+    /** One display frame, while this output [drivesRefresh]. */
+    fun refresh() {
+        checkNotNull(driver) { "The player does not refresh this output" }.refresh(-1, 0)
+    }
 
     /** Each frame's presentation time, in order. */
     val presented: MutableList<Duration> = java.util.concurrent.CopyOnWriteArrayList()

@@ -14,6 +14,7 @@ import io.github.aftrolle.ffmpegkmp.codec.ColorMatrix
 import io.github.aftrolle.ffmpegkmp.codec.ColorTransfer
 import io.github.aftrolle.ffmpegkmp.codec.FrameColor
 import io.github.aftrolle.ffmpegkmp.codec.FrameFormat
+import io.github.aftrolle.ffmpegkmp.codec.FrameExtractor
 import io.github.aftrolle.ffmpegkmp.codec.FrameScale
 import io.github.aftrolle.ffmpegkmp.codec.FrameSize
 import io.github.aftrolle.ffmpegkmp.codec.PixelLayout
@@ -56,6 +57,17 @@ public expect fun VideoFrame.toImageBitmap(): ImageBitmap
  */
 @ExperimentalFFmpegKmpApi
 public suspend fun VideoDecoder.Companion.extractImageBitmap(
+    source: MediaSource,
+    position: Duration = Duration.ZERO,
+    size: FrameSize? = null,
+    scale: FrameScale = FrameScale.FIT,
+    decoder: CodecSelection = CodecPreference.AUTO,
+    timeout: Duration = 10.seconds,
+): ImageBitmap = extractFrameIn(source, position, size, scale, decoder, timeout) { it.color.displayFormat() }.use { it.toImageBitmap() }
+
+/** [VideoDecoder.extractImageBitmap]'s image, from the decoder [FrameExtractor] keeps between its frames. */
+@ExperimentalFFmpegKmpApi
+public suspend fun FrameExtractor.extractImageBitmap(
     source: MediaSource,
     position: Duration = Duration.ZERO,
     size: FrameSize? = null,

@@ -2,6 +2,7 @@
 package io.github.aftrolle.ffmpegkmp.codec
 
 import kotlin.math.pow
+import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
 
 /** Reads the 12-bit frame number the fixture generator draws as 16x16 cells in the top rows. */
@@ -66,4 +67,24 @@ internal fun halfToDouble(bits: Int): Double {
         else -> (1 + mantissa / 1024.0) * 2.0.pow(exponent - 15)
     }
     return if (bits and 0x8000 != 0) -magnitude else magnitude
+}
+
+/** The frame's visible bytes, plane after plane, without row padding. */
+internal fun VideoFrame.pixels(): ByteArray {
+    val layout = assertNotNull(format).layout
+    val rowBytes = when (layout) {
+        PixelLayout.RGBA8, PixelLayout.BGRA8 -> listOf(width * 4)
+        PixelLayout.RGBA_F16 -> listOf(width * 8)
+        PixelLayout.NV12 -> listOf(width, width)
+        else -> error("No byte comparison for $layout")
+    }
+    return assertNotNull(
+        usePlanes { planes ->
+            assertEquals(rowBytes.size, planes.size)
+            planes.zip(rowBytes).flatMap { (plane, visible) ->
+                val bytes = ByteArray(plane.bytes.size).also { plane.bytes.copyInto(it) }
+                (0 until plane.rows).map { row -> bytes.copyOfRange(row * plane.rowBytes, row * plane.rowBytes + visible) }
+            }.fold(ByteArray(0)) { all, row -> all + row }
+        },
+    )
 }

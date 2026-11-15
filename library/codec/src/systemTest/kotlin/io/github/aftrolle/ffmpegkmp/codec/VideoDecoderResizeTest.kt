@@ -214,26 +214,6 @@ class VideoDecoderResizeTest {
         }
     }
 
-    /** The frame's visible bytes, plane after plane, without row padding. */
-    private fun VideoFrame.pixels(): ByteArray {
-        val layout = assertNotNull(format).layout
-        val rowBytes = when (layout) {
-            PixelLayout.RGBA8, PixelLayout.BGRA8 -> listOf(width * 4)
-            PixelLayout.RGBA_F16 -> listOf(width * 8)
-            PixelLayout.NV12 -> listOf(width, width)
-            else -> error("No byte comparison for $layout")
-        }
-        return assertNotNull(
-            usePlanes { planes ->
-                assertEquals(rowBytes.size, planes.size)
-                planes.zip(rowBytes).flatMap { (plane, visible) ->
-                    val bytes = ByteArray(plane.bytes.size).also { plane.bytes.copyInto(it) }
-                    (0 until plane.rows).map { row -> bytes.copyOfRange(row * plane.rowBytes, row * plane.rowBytes + visible) }
-                }.fold(ByteArray(0)) { all, row -> all + row }
-            },
-        )
-    }
-
     private class Case(val clip: String, val format: FrameFormat, val preference: CodecPreference = CodecPreference.SOFTWARE)
 
     /** [decoder]'s frame at [position] is the one a decoder of [case] opened at [size] returns there. */

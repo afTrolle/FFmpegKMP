@@ -381,7 +381,10 @@ private class GpuCanvas(
             renderer.obtainRenderRequest().setColorSpace(colorSpace).draw({ it.run() }) { continuation.resume(it) }
         }
         check(result.status == HardwareBufferRenderer.RenderResult.SUCCESS) { "the GPU could not draw the frame (${result.status})" }
-        result.fence.use { fence -> check(fence.await(java.time.Duration.ofSeconds(5))) { "the GPU did not finish the frame" } }
+        // Off the main thread, which draws the app's own frames while the GPU finishes this one.
+        result.fence.use { fence ->
+            withContext(Dispatchers.IO) { check(fence.await(java.time.Duration.ofSeconds(5))) { "the GPU did not finish the frame" } }
+        }
     }
 
     override fun close() {

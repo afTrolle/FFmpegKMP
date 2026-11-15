@@ -34,20 +34,20 @@ internal fun createJavaCppMediaWriter(
     describeTrack: TrackDescriber? = null,
 ): NativeMediaWriter {
     JavaCppBridgeLoader.load()
-    val ioCallback = (output as? NativeWriterOutput.Mounted)
+    val callbacks = (output as? NativeWriterOutput.Mounted)
         ?.let { MountTable(listOf(NativeMountedIo(it.name, it.resource))) }
-        ?.let { mounts -> mountedIoCallback { mounts } }
+        ?.let { mounts -> JavaCppCallbacks.register(mounts = { mounts }) }
     val error = IntArray(1)
     val url = output.url()
     val writer = bridge.ffmpegkmp_writer_create(
-        url, container.ordinal, if (fastStart) 1 else 0, timeoutMicros, ioCallback, null, error,
+        url, container.ordinal, if (fastStart) 1 else 0, timeoutMicros, if (callbacks != null) JavaCppCallbacks.io else null, callbacks?.opaque, error,
     )
         ?.takeUnless(ffmpegkmp_writer::isNull)
     if (writer == null) {
-        ioCallback?.close()
+        callbacks?.close()
         throw NativeMediaWriterException("Could not open '$url' for writing (error ${error[0]})", error[0])
     }
-    return GuardedMediaWriter(JavaCppMediaWriterEngine(writer, ioCallback, timeoutMicros, openEncoder, describeTrack), url)
+    return GuardedMediaWriter(JavaCppMediaWriterEngine(writer, callbacks, timeoutMicros, openEncoder, describeTrack), url)
 }
 
 @InternalFFmpegKmpApi
@@ -68,8 +68,7 @@ public actual suspend fun platformVideoEncoderFor(config: NativeVideoEncoderConf
 
 private class JavaCppMediaWriterEngine(
     private val writer: ffmpegkmp_writer,
-    /** Kept reachable for the writer's lifetime: native code calls back into it. */
-    private val ioCallback: ffplaykmp_io_callback?,
+    private val callbacks: JavaCppCallbacks.Registration?,
     private val timeoutMicros: Long,
     private val openEncoder: PacketEncoderFactory?,
     private val describeTrack: TrackDescriber?,
@@ -175,7 +174,7 @@ private class JavaCppMediaWriterEngine(
 
     override fun release() {
         bridge.ffmpegkmp_writer_destroy(writer)
-        ioCallback?.close()
+        callbacks?.close()
     }
 }
 

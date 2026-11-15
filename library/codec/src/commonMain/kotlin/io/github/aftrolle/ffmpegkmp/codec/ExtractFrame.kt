@@ -30,9 +30,10 @@ internal expect val frameExtractionSupported: Boolean
  * rest. Every other
  * selection, a [NamedCodec] included, makes one attempt.
  *
- * [format] picks the frame's format once the source is open; any other than RGBA8 opens the decoder
- * again in it. [afterFrame] gets the result once it is made, before the decoder closes: the tests'
- * hook into the window where a timeout or cancellation must still close it.
+ * [format] picks the frame's format once the source is open, which the open decoder is switched to
+ * with its size. [decoders] opens each attempt's decoder and takes it back. [afterFrame] gets the result once
+ * it is made, before the decoder closes: the tests' hook into the window where a timeout or
+ * cancellation must still close it.
  */
 internal suspend fun extractUprightFrame(
     source: MediaSource,
@@ -42,6 +43,7 @@ internal suspend fun extractUprightFrame(
     decoder: CodecSelection,
     timeout: Duration,
     format: (VideoInfo) -> FrameFormat = { FrameFormat.Rgba8 },
+    decoders: ExtractionDecoders = OneShotDecoders,
     afterFrame: suspend (VideoFrame) -> Unit = {},
 ): VideoFrame {
     if (!frameExtractionSupported) {
@@ -50,7 +52,7 @@ internal suspend fun extractUprightFrame(
     require(!position.isNegative()) { "Video position must not be negative: $position" }
     require(timeout.isPositive()) { "The timeout must be positive: $timeout" }
     val started = TimeSource.Monotonic.markNow()
-    val first = Extraction(source, position, size, scale, if (decoder == CodecPreference.AUTO) timeout / 2 else timeout, format, afterFrame)
+    val first = Extraction(source, position, size, scale, if (decoder == CodecPreference.AUTO) timeout / 2 else timeout, format, decoders, afterFrame)
     val failure = try {
         return first.run(decoder)
     } catch (failure: VideoDecodingException) {
@@ -60,14 +62,30 @@ internal suspend fun extractUprightFrame(
     val left = timeout - started.elapsedNow()
     if (!left.isPositive()) throw failure
     try {
-        return Extraction(source, position, size, scale, left, format, afterFrame).run(CodecPreference.SOFTWARE)
+        return Extraction(source, position, size, scale, left, format, decoders, afterFrame).run(CodecPreference.SOFTWARE)
     } catch (second: Throwable) {
         second.addSuppressed(failure)
         throw second
     }
 }
 
-/** One attempt: a decoder opened, resized, asked for its frame, and closed. */
+/** Where an extraction's decoders come from and go back to. */
+internal interface ExtractionDecoders {
+    suspend fun open(source: MediaSource, output: VideoOutput.Memory, selection: CodecSelection, timeout: Duration): VideoDecoder
+
+    /** Takes back [decoder], which [open] opened or reopened, once its attempt is over; it [failed] or made its frame. */
+    fun finish(decoder: VideoDecoder, failed: Boolean)
+}
+
+/** A decoder of its own for each attempt, closed after it. */
+internal object OneShotDecoders : ExtractionDecoders {
+    override suspend fun open(source: MediaSource, output: VideoOutput.Memory, selection: CodecSelection, timeout: Duration) =
+        VideoDecoder.open(source, output, selection, timeout)
+
+    override fun finish(decoder: VideoDecoder, failed: Boolean) = decoder.close()
+}
+
+/** One attempt: a decoder opened, resized, asked for its frame, and handed back. */
 private class Extraction(
     private val source: MediaSource,
     private val position: Duration,
@@ -75,6 +93,7 @@ private class Extraction(
     private val scale: FrameScale,
     private val timeout: Duration,
     private val format: (VideoInfo) -> FrameFormat,
+    private val decoders: ExtractionDecoders,
     private val afterFrame: suspend (VideoFrame) -> Unit,
 ) {
     /** The decoder that opened, or null when opening did not finish. */
@@ -91,30 +110,24 @@ private class Extraction(
             // Each of the decoder's calls is bounded by the timeout on its own; this bounds them together.
             // Timing out cancels the call under way, which stops its native work.
             withTimeoutOrNull(timeout) {
-                val first = VideoDecoder.open(source, VideoOutput.Memory(FrameFormat.Rgba8), selection, timeout)
-                opened = first.decoderKind
-                val wanted = format(first.info)
-                val decoder = if (wanted == FrameFormat.Rgba8) {
-                    first
-                } else {
-                    withContext(NonCancellable + Dispatchers.Default) { first.close() }
-                    VideoDecoder.open(source, VideoOutput.Memory(wanted), selection, timeout)
-                }
+                val decoder = decoders.open(source, VideoOutput.Memory(FrameFormat.Rgba8), selection, timeout)
+                var failed = true
                 try {
                     opened = decoder.decoderKind
                     val info = decoder.info
                     val fit = frameFit(info.width, info.height, info.sampleAspectRatio, info.rotationDegrees, size, scale)
-                    // Always, even at the coded size: nothing is converted before frameAt, and the frame then
-                    // comes at exactly this size whatever the stream does.
-                    decoder.resize(fit.decodeSize)
+                    // Always, even at the coded size and in RGBA8: nothing is converted before frameAt, and the
+                    // frame then comes in exactly this format and size whatever the stream does.
+                    decoder.reformat(VideoOutput.Memory(format(info), fit.decodeSize))
                     decoder.frameAt(position).use { frame ->
                         // Off the caller's thread, which may be the UI's; the result is kept as soon as it exists.
                         withContext(Dispatchers.Default) { result = frame.upright(fit) }
                     }
                     afterFrame(checkNotNull(result))
+                    failed = false
                 } finally {
                     // Closing waits a bounded time for an interrupted native call to unwind; not on the caller's thread.
-                    withContext(NonCancellable + Dispatchers.Default) { decoder.close() }
+                    withContext(NonCancellable + Dispatchers.Default) { decoders.finish(decoder, failed) }
                 }
             } ?: run {
                 timedOut = true

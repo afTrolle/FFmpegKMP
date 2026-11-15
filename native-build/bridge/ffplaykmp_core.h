@@ -182,8 +182,8 @@ int ffplaykmp_video_codec_open(
  * `*fallback` gets why a decoder that was to be hardware under AUTO is
  * software: UNSUPPORTED (this host has none for the codec), FAILED, BUDGET or
  * `earlier`; NONE otherwise, also when the output wanted no hardware. A caller
- * that keeps state across opens (the player's per-source hardware_failed and
- * Surface budget_fallback) updates it from `*fallback` and passes it back as
+ * that keeps state across opens (the player's fallback, kept until its next
+ * startup, and Surface budget_fallback) updates it from `*fallback` and passes it back as
  * `earlier`; a caller that retries in software after a hardware decoder failed
  * to decode passes FAILED.
  *

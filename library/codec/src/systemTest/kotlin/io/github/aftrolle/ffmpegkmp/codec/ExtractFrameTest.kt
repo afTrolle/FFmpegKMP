@@ -155,6 +155,22 @@ class ExtractFrameTest {
         }
     }
 
+    /** A format picked once the source is open is the open decoder's from then on: the input is opened once. */
+    @Test
+    fun aFormatPickedFromTheSourceOpensItOnce() = runBlocking<Unit> {
+        val before = nativePlayerStatistics().inputOpens
+        extractUprightFrame(
+            source("hdr10-pq.mp4"), 3.seconds / 30, FrameSize(48, 48), FrameScale.FIT, CodecPreference.SOFTWARE, 10.seconds,
+            // Android's posters of HDR sources: the source's own transfer in 10 bits.
+            format = { FrameFormat(PixelLayout.RGBA_1010102, FrameColor(ColorPrimaries.BT2020, it.color.transfer, ColorMatrix.RGB, ColorRange.FULL)) },
+        ).use { frame ->
+            assertEquals(PixelLayout.RGBA_1010102, frame.format?.layout)
+            assertEquals(ColorTransfer.PQ, frame.format?.color?.transfer)
+            assertEquals(FrameSize(48, 32), FrameSize(frame.width, frame.height))
+        }
+        assertEquals(1, nativePlayerStatistics().inputOpens - before)
+    }
+
     /** Under AUTO, on this host's decoder (VideoToolbox takes this H.264 clip on macOS): the AUTO decoder's frame. */
     @Test
     fun autoExtractsWithTheHostsDecoder() = runBlocking<Unit> {

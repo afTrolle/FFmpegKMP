@@ -11,6 +11,9 @@ import io.github.aftrolle.ffmpegkmp.bindings.generated.bridge.ffmpegkmp_frame_st
 import io.github.aftrolle.ffmpegkmp.bindings.generated.bridge.global.bridge
 import org.bytedeco.javacpp.BytePointer
 import org.bytedeco.javacpp.FloatPointer
+import java.lang.ref.PhantomReference
+import java.lang.ref.ReferenceQueue
+import java.util.concurrent.ConcurrentHashMap
 
 /** Takes ownership of [handle], one `ffmpegkmp_frame` reference. */
 internal class JavaCppFrame(internal val handle: ffmpegkmp_frame) : NativeFrame {
@@ -19,6 +22,7 @@ internal class JavaCppFrame(internal val handle: ffmpegkmp_frame) : NativeFrame 
     override val format: NativeFrameFormat?
     override val mappable: Boolean
     override val pixelBuffer: Any? = null
+    private val leak = FrameLeaks.track(this, handle)
 
     init {
         val info = ffmpegkmp_frame_info()
@@ -106,8 +110,40 @@ internal class JavaCppFrame(internal val handle: ffmpegkmp_frame) : NativeFrame 
     }
 
     override fun close() {
+        leak.closed()
         bridge.ffmpegkmp_frame_unref(handle)
         handle.setNull()
+    }
+}
+
+/**
+ * Frees the frames the garbage collector finds unclosed, and says where each was made: a frame
+ * left open holds its decoder's memory, and a MediaCodec frame holds the codec itself open after
+ * the player or decoder that made it has closed. Looked for as frames are made.
+ */
+private object FrameLeaks {
+    private val collected = ReferenceQueue<JavaCppFrame>()
+    private val open: MutableSet<Leak> = ConcurrentHashMap.newKeySet()
+
+    fun track(frame: JavaCppFrame, handle: ffmpegkmp_frame): Leak {
+        while (true) (collected.poll() as Leak? ?: break).free()
+        return Leak(frame, handle).also(open::add)
+    }
+
+    class Leak(frame: JavaCppFrame, private val handle: ffmpegkmp_frame) : PhantomReference<JavaCppFrame>(frame, collected) {
+        private val madeAt = Throwable("A frame was garbage-collected without being closed; it was made here")
+
+        fun closed() {
+            open.remove(this)
+            clear()
+        }
+
+        fun free() {
+            if (!open.remove(this)) return
+            println("FFmpegKMP: ${madeAt.stackTraceToString()}")
+            bridge.ffmpegkmp_frame_unref(handle)
+            handle.setNull()
+        }
     }
 }
 

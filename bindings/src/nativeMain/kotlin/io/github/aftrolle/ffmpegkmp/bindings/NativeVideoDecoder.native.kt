@@ -17,6 +17,8 @@ import io.github.aftrolle.ffmpegkmp.bindings.cinterop.ffmpegkmp_video_decoder_de
 import io.github.aftrolle.ffmpegkmp.bindings.cinterop.ffmpegkmp_video_decoder_frame_at
 import io.github.aftrolle.ffmpegkmp.bindings.cinterop.ffmpegkmp_video_decoder_get_info
 import io.github.aftrolle.ffmpegkmp.bindings.cinterop.ffmpegkmp_video_decoder_seek
+import io.github.aftrolle.ffmpegkmp.bindings.cinterop.ffmpegkmp_video_decoder_reopen
+import io.github.aftrolle.ffmpegkmp.bindings.cinterop.ffmpegkmp_video_decoder_set_memory_format
 import io.github.aftrolle.ffmpegkmp.bindings.cinterop.ffmpegkmp_video_decoder_set_size
 import io.github.aftrolle.ffmpegkmp.bindings.cinterop.ffmpegkmp_video_decoder_error
 import io.github.aftrolle.ffmpegkmp.bindings.cinterop.ffmpegkmp_video_decoder_set_named_decoder
@@ -121,7 +123,7 @@ public actual fun createPlatformVideoDecoder(
 
 private class CInteropVideoDecoderEngine(
     private val decoder: CPointer<ffmpegkmp_video_decoder>,
-    private val mounts: StableRef<MountTable>,
+    private var mounts: StableRef<MountTable>,
 ) : VideoDecoderEngineCalls {
     private val frame = nativeHeap.alloc<ffmpegkmp_decoded_frame>().also { ffmpegkmp_decoded_frame_init(it.ptr) }
 
@@ -158,6 +160,36 @@ private class CInteropVideoDecoderEngine(
     }
 
     override fun setSize(width: Int, height: Int) = ffmpegkmp_video_decoder_set_size(decoder, width, height)
+
+    override fun setFormat(memoryFormat: NativeFrameFormat?, width: Int, height: Int): Int = memScoped {
+        ffmpegkmp_video_decoder_set_memory_format(decoder, memoryFormat?.toNative(this)?.ptr, width, height)
+    }
+
+    override fun reopen(
+        source: NativePlayerSource,
+        memoryFormat: NativeFrameFormat?,
+        memoryWidth: Int,
+        memoryHeight: Int,
+        timeoutMicros: Long,
+    ): Int {
+        val next = StableRef.create(MountTable(source.mounts, replayableSources = true))
+        val result = memScoped {
+            ffmpegkmp_video_decoder_reopen(
+                decoder,
+                source.protocolInput(),
+                memoryFormat?.toNative(this)?.ptr,
+                memoryWidth,
+                memoryHeight,
+                timeoutMicros,
+                staticCFunction(::receiveMountedIo),
+                next.asCPointer(),
+            )
+        }
+        // The old input is closed by the call, so its mounts are read no more once it returns.
+        val done = if (result >= 0) mounts.also { mounts = next } else next
+        done.dispose()
+        return result
+    }
 
     override fun interrupt() = ffmpegkmp_video_decoder_interrupt(decoder)
 

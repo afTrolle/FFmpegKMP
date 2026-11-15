@@ -236,6 +236,19 @@ sealed interface io.github.aftrolle.ffmpegkmp.codec/MediaOutput { // io.github.a
 }
 
 sealed interface io.github.aftrolle.ffmpegkmp.codec/VideoOutput { // io.github.aftrolle.ffmpegkmp.codec/VideoOutput|null[0]
+    final class GpuBuffers : io.github.aftrolle.ffmpegkmp.codec/VideoOutput { // io.github.aftrolle.ffmpegkmp.codec/VideoOutput.GpuBuffers|null[0]
+        constructor <init>(io.github.aftrolle.ffmpegkmp.codec/VideoOutput.Memory = ...) // io.github.aftrolle.ffmpegkmp.codec/VideoOutput.GpuBuffers.<init>|<init>(io.github.aftrolle.ffmpegkmp.codec.VideoOutput.Memory){}[0]
+
+        final val memory // io.github.aftrolle.ffmpegkmp.codec/VideoOutput.GpuBuffers.memory|{}memory[0]
+            final fun <get-memory>(): io.github.aftrolle.ffmpegkmp.codec/VideoOutput.Memory // io.github.aftrolle.ffmpegkmp.codec/VideoOutput.GpuBuffers.memory.<get-memory>|<get-memory>(){}[0]
+
+        final fun component1(): io.github.aftrolle.ffmpegkmp.codec/VideoOutput.Memory // io.github.aftrolle.ffmpegkmp.codec/VideoOutput.GpuBuffers.component1|component1(){}[0]
+        final fun copy(io.github.aftrolle.ffmpegkmp.codec/VideoOutput.Memory = ...): io.github.aftrolle.ffmpegkmp.codec/VideoOutput.GpuBuffers // io.github.aftrolle.ffmpegkmp.codec/VideoOutput.GpuBuffers.copy|copy(io.github.aftrolle.ffmpegkmp.codec.VideoOutput.Memory){}[0]
+        final fun equals(kotlin/Any?): kotlin/Boolean // io.github.aftrolle.ffmpegkmp.codec/VideoOutput.GpuBuffers.equals|equals(kotlin.Any?){}[0]
+        final fun hashCode(): kotlin/Int // io.github.aftrolle.ffmpegkmp.codec/VideoOutput.GpuBuffers.hashCode|hashCode(){}[0]
+        final fun toString(): kotlin/String // io.github.aftrolle.ffmpegkmp.codec/VideoOutput.GpuBuffers.toString|toString(){}[0]
+    }
+
     final class Memory : io.github.aftrolle.ffmpegkmp.codec/VideoOutput { // io.github.aftrolle.ffmpegkmp.codec/VideoOutput.Memory|null[0]
         constructor <init>(io.github.aftrolle.ffmpegkmp.codec/FrameFormat? = ..., io.github.aftrolle.ffmpegkmp.codec/FrameSize? = ...) // io.github.aftrolle.ffmpegkmp.codec/VideoOutput.Memory.<init>|<init>(io.github.aftrolle.ffmpegkmp.codec.FrameFormat?;io.github.aftrolle.ffmpegkmp.codec.FrameSize?){}[0]
 
@@ -250,12 +263,6 @@ sealed interface io.github.aftrolle.ffmpegkmp.codec/VideoOutput { // io.github.a
         final fun equals(kotlin/Any?): kotlin/Boolean // io.github.aftrolle.ffmpegkmp.codec/VideoOutput.Memory.equals|equals(kotlin.Any?){}[0]
         final fun hashCode(): kotlin/Int // io.github.aftrolle.ffmpegkmp.codec/VideoOutput.Memory.hashCode|hashCode(){}[0]
         final fun toString(): kotlin/String // io.github.aftrolle.ffmpegkmp.codec/VideoOutput.Memory.toString|toString(){}[0]
-    }
-
-    final object GpuBuffers : io.github.aftrolle.ffmpegkmp.codec/VideoOutput { // io.github.aftrolle.ffmpegkmp.codec/VideoOutput.GpuBuffers|null[0]
-        final fun equals(kotlin/Any?): kotlin/Boolean // io.github.aftrolle.ffmpegkmp.codec/VideoOutput.GpuBuffers.equals|equals(kotlin.Any?){}[0]
-        final fun hashCode(): kotlin/Int // io.github.aftrolle.ffmpegkmp.codec/VideoOutput.GpuBuffers.hashCode|hashCode(){}[0]
-        final fun toString(): kotlin/String // io.github.aftrolle.ffmpegkmp.codec/VideoOutput.GpuBuffers.toString|toString(){}[0]
     }
 }
 
@@ -366,6 +373,13 @@ final class io.github.aftrolle.ffmpegkmp.codec/FrameColor { // io.github.aftroll
         final val Srgb // io.github.aftrolle.ffmpegkmp.codec/FrameColor.Companion.Srgb|{}Srgb[0]
             final fun <get-Srgb>(): io.github.aftrolle.ffmpegkmp.codec/FrameColor // io.github.aftrolle.ffmpegkmp.codec/FrameColor.Companion.Srgb.<get-Srgb>|<get-Srgb>(){}[0]
     }
+}
+
+final class io.github.aftrolle.ffmpegkmp.codec/FrameExtractor : kotlin/AutoCloseable { // io.github.aftrolle.ffmpegkmp.codec/FrameExtractor|null[0]
+    constructor <init>(kotlin.time/Duration = ...) // io.github.aftrolle.ffmpegkmp.codec/FrameExtractor.<init>|<init>(kotlin.time.Duration){}[0]
+
+    final fun close() // io.github.aftrolle.ffmpegkmp.codec/FrameExtractor.close|close(){}[0]
+    final suspend fun extractFrame(io.github.aftrolle.ffmpegkmp.core/MediaSource, kotlin.time/Duration = ..., io.github.aftrolle.ffmpegkmp.codec/FrameSize? = ..., io.github.aftrolle.ffmpegkmp.codec/FrameScale = ..., io.github.aftrolle.ffmpegkmp.codec/CodecSelection = ..., kotlin.time/Duration = ...): io.github.aftrolle.ffmpegkmp.codec/VideoFrame // io.github.aftrolle.ffmpegkmp.codec/FrameExtractor.extractFrame|extractFrame(io.github.aftrolle.ffmpegkmp.core.MediaSource;kotlin.time.Duration;io.github.aftrolle.ffmpegkmp.codec.FrameSize?;io.github.aftrolle.ffmpegkmp.codec.FrameScale;io.github.aftrolle.ffmpegkmp.codec.CodecSelection;kotlin.time.Duration){}[0]
 }
 
 final class io.github.aftrolle.ffmpegkmp.codec/FrameFormat { // io.github.aftrolle.ffmpegkmp.codec/FrameFormat|null[0]
@@ -561,6 +575,7 @@ final class io.github.aftrolle.ffmpegkmp.codec/VideoDecoder : kotlin/AutoCloseab
     final fun close() // io.github.aftrolle.ffmpegkmp.codec/VideoDecoder.close|close(){}[0]
     final fun frames(kotlin.time/Duration = ..., kotlin.time/Duration = ..., io.github.aftrolle.ffmpegkmp.codec/FrameStep = ...): kotlinx.coroutines.flow/Flow<io.github.aftrolle.ffmpegkmp.codec/VideoFrame> // io.github.aftrolle.ffmpegkmp.codec/VideoDecoder.frames|frames(kotlin.time.Duration;kotlin.time.Duration;io.github.aftrolle.ffmpegkmp.codec.FrameStep){}[0]
     final suspend fun frameAt(kotlin.time/Duration): io.github.aftrolle.ffmpegkmp.codec/VideoFrame // io.github.aftrolle.ffmpegkmp.codec/VideoDecoder.frameAt|frameAt(kotlin.time.Duration){}[0]
+    final suspend fun reopen(io.github.aftrolle.ffmpegkmp.core/MediaSource, io.github.aftrolle.ffmpegkmp.codec/VideoOutput = ..., kotlin.time/Duration = ...): io.github.aftrolle.ffmpegkmp.codec/VideoDecoder // io.github.aftrolle.ffmpegkmp.codec/VideoDecoder.reopen|reopen(io.github.aftrolle.ffmpegkmp.core.MediaSource;io.github.aftrolle.ffmpegkmp.codec.VideoOutput;kotlin.time.Duration){}[0]
     final suspend fun resize(io.github.aftrolle.ffmpegkmp.codec/FrameSize?) // io.github.aftrolle.ffmpegkmp.codec/VideoDecoder.resize|resize(io.github.aftrolle.ffmpegkmp.codec.FrameSize?){}[0]
     final suspend fun seekTo(kotlin.time/Duration) // io.github.aftrolle.ffmpegkmp.codec/VideoDecoder.seekTo|seekTo(kotlin.time.Duration){}[0]
 

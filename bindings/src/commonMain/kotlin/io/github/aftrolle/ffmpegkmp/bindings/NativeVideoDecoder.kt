@@ -47,7 +47,7 @@ public class NativeVideoStream(
 
 /**
  * The native pull decoder (`ffmpegkmp_decoder.c`), or WebCodecs in a worker in the browser.
- * [start], [seek], [frameAt], [setSize] and [close] must not overlap and, on Android, must run on the thread
+ * [start], [seek], [frameAt], [setSize], [setFormat], [reopen] and [close] must not overlap and, on Android, must run on the thread
  * that started it. [interrupt], [abort] and [timeLeftMicros] are safe from any thread. Only the
  * browser's calls suspend; the native ones block their thread.
  */
@@ -66,6 +66,29 @@ public interface NativeVideoDecoder : AutoCloseable {
      * buffers, and the browser.
      */
     public suspend fun setSize(width: Int, height: Int)
+
+    /**
+     * [setSize] with the format too: [memoryFormat] is the format of the frames handed out in memory from now on, null
+     * for frames as decoded, at [width] × [height], 0 and 0 for the source's size, as [createPlatformVideoDecoder]
+     * takes them. Decodes nothing and does not seek. Throws [UnsupportedOperationException] in the browser.
+     */
+    public suspend fun setFormat(memoryFormat: NativeFrameFormat?, width: Int, height: Int): Unit =
+        throw UnsupportedOperationException("This decoder does not change its format")
+
+    /**
+     * Closes the input and readies the decoder for [source], which the next [start] opens, as a decoder created for it
+     * with [memoryFormat], [memoryWidth] × [memoryHeight] and [timeoutMicros], as [createPlatformVideoDecoder] takes them,
+     * would be; the output, decoder preference or name, threads and ring stay. That [start] keeps the open codec,
+     * flushed, when the new video stream is coded the same way, and closes it otherwise. Frames handed out keep their
+     * memory. Throws [UnsupportedOperationException] for GPU buffer output and in the browser.
+     */
+    public suspend fun reopen(
+        source: NativePlayerSource,
+        memoryFormat: NativeFrameFormat?,
+        memoryWidth: Int,
+        memoryHeight: Int,
+        timeoutMicros: Long,
+    ): Unit = throw UnsupportedOperationException("This decoder does not reopen")
 
     /**
      * Fails the in-flight call, whose caller no longer wants it; later calls work, the next one
@@ -93,8 +116,9 @@ public class NativeVideoDecoderException(
 
 /**
  * Creates a decoder for [source] without reading it; [NativeVideoDecoder.start] opens it.
- * [memoryFormat] is the [NativeVideoDecoderOutput.MEMORY] frames' format, null for frames as
- * decoded, and [memoryWidth] and [memoryHeight] its frames' size, 0 for the source's: frames are
+ * [memoryFormat] is the format of the frames handed out in memory, null for frames as decoded:
+ * every [NativeVideoDecoderOutput.MEMORY] frame, and a [NativeVideoDecoderOutput.GPU_BUFFERS]
+ * decoder's software frames, and [memoryWidth] and [memoryHeight] its frames' size, 0 for the source's: frames are
  * scaled to it as they are converted, with the sample aspect ratio that keeps their display
  * aspect. [decoderThreads] is the software decoder's thread count, 0 for FFmpeg's automatic count,
  * and [decoderThreadType] its `thread_type`, FF_THREAD_FRAME (1) and FF_THREAD_SLICE (2) bits,
@@ -135,6 +159,20 @@ internal interface VideoDecoderEngineCalls {
     /** Describes the frame at [positionNanos] with a new reference to it, or throws [NativeVideoDecoderException]. */
     fun frameAt(positionNanos: Long): NativeDecodedFrame
     fun setSize(width: Int, height: Int): Int
+
+    /** [NativeVideoDecoder.setFormat]'s native call. */
+    fun setFormat(memoryFormat: NativeFrameFormat?, width: Int, height: Int): Int =
+        throw UnsupportedOperationException("This decoder does not change its format")
+
+    /** [NativeVideoDecoder.reopen]'s native call. */
+    fun reopen(
+        source: NativePlayerSource,
+        memoryFormat: NativeFrameFormat?,
+        memoryWidth: Int,
+        memoryHeight: Int,
+        timeoutMicros: Long,
+    ): Int = throw UnsupportedOperationException("This decoder does not reopen")
+
     fun interrupt()
     fun abort()
     fun timeLeft(): Long
@@ -148,7 +186,7 @@ internal interface VideoDecoderEngineCalls {
 
 internal class GuardedVideoDecoder(
     private val engine: VideoDecoderEngineCalls,
-    private val input: String,
+    private var input: String,
 ) : NativeVideoDecoder {
     private val guard = NativeHandleGuard()
 
@@ -179,6 +217,25 @@ internal class GuardedVideoDecoder(
 
     override suspend fun setSize(width: Int, height: Int) = guard.use(::closedError) {
         requireNative(engine.setSize(width, height), "resize frames to ${width}x$height", ::NativeVideoDecoderException)
+    }
+
+    override suspend fun setFormat(memoryFormat: NativeFrameFormat?, width: Int, height: Int) = guard.use(::closedError) {
+        requireNative(engine.setFormat(memoryFormat, width, height), "change the frames' format", ::NativeVideoDecoderException)
+    }
+
+    override suspend fun reopen(
+        source: NativePlayerSource,
+        memoryFormat: NativeFrameFormat?,
+        memoryWidth: Int,
+        memoryHeight: Int,
+        timeoutMicros: Long,
+    ) = guard.use(::closedError) {
+        requireNative(
+            engine.reopen(source, memoryFormat, memoryWidth, memoryHeight, timeoutMicros),
+            "reopen the decoder for '${source.input}'",
+            ::NativeVideoDecoderException,
+        )
+        input = source.input
     }
 
     override fun interrupt() = guard.use({}) { engine.interrupt() }

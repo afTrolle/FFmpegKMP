@@ -207,6 +207,15 @@ public final class io/github/aftrolle/ffmpegkmp/codec/FrameColor$Companion {
 	public final fun getSrgb ()Lio/github/aftrolle/ffmpegkmp/codec/FrameColor;
 }
 
+public final class io/github/aftrolle/ffmpegkmp/codec/FrameExtractor : java/lang/AutoCloseable {
+	public fun <init> ()V
+	public synthetic fun <init> (JILkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public synthetic fun <init> (JLkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public fun close ()V
+	public final fun extractFrame-R9a1eEo (Lio/github/aftrolle/ffmpegkmp/core/MediaSource;JLio/github/aftrolle/ffmpegkmp/codec/FrameSize;Lio/github/aftrolle/ffmpegkmp/codec/FrameScale;Lio/github/aftrolle/ffmpegkmp/codec/CodecSelection;JLkotlin/coroutines/Continuation;)Ljava/lang/Object;
+	public static synthetic fun extractFrame-R9a1eEo$default (Lio/github/aftrolle/ffmpegkmp/codec/FrameExtractor;Lio/github/aftrolle/ffmpegkmp/core/MediaSource;JLio/github/aftrolle/ffmpegkmp/codec/FrameSize;Lio/github/aftrolle/ffmpegkmp/codec/FrameScale;Lio/github/aftrolle/ffmpegkmp/codec/CodecSelection;JLkotlin/coroutines/Continuation;ILjava/lang/Object;)Ljava/lang/Object;
+}
+
 public final class io/github/aftrolle/ffmpegkmp/codec/FrameFormat {
 	public static final field Companion Lio/github/aftrolle/ffmpegkmp/codec/FrameFormat$Companion;
 	public fun <init> (Lio/github/aftrolle/ffmpegkmp/codec/PixelLayout;Lio/github/aftrolle/ffmpegkmp/codec/FrameColor;)V
@@ -445,6 +454,8 @@ public final class io/github/aftrolle/ffmpegkmp/codec/VideoDecoder : java/lang/A
 	public final fun getDecoderKind ()Lio/github/aftrolle/ffmpegkmp/codec/DecoderKind;
 	public final fun getDuration-FghU774 ()Lkotlin/time/Duration;
 	public final fun getInfo ()Lio/github/aftrolle/ffmpegkmp/codec/VideoInfo;
+	public final fun reopen-exY8QGI (Lio/github/aftrolle/ffmpegkmp/core/MediaSource;Lio/github/aftrolle/ffmpegkmp/codec/VideoOutput;JLkotlin/coroutines/Continuation;)Ljava/lang/Object;
+	public static synthetic fun reopen-exY8QGI$default (Lio/github/aftrolle/ffmpegkmp/codec/VideoDecoder;Lio/github/aftrolle/ffmpegkmp/core/MediaSource;Lio/github/aftrolle/ffmpegkmp/codec/VideoOutput;JLkotlin/coroutines/Continuation;ILjava/lang/Object;)Ljava/lang/Object;
 	public final fun resize (Lio/github/aftrolle/ffmpegkmp/codec/FrameSize;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public final fun seekTo-VtjQ1oo (JLkotlin/coroutines/Continuation;)Ljava/lang/Object;
 }
@@ -542,8 +553,14 @@ public abstract interface class io/github/aftrolle/ffmpegkmp/codec/VideoOutput {
 }
 
 public final class io/github/aftrolle/ffmpegkmp/codec/VideoOutput$GpuBuffers : io/github/aftrolle/ffmpegkmp/codec/VideoOutput {
-	public static final field INSTANCE Lio/github/aftrolle/ffmpegkmp/codec/VideoOutput$GpuBuffers;
+	public fun <init> ()V
+	public fun <init> (Lio/github/aftrolle/ffmpegkmp/codec/VideoOutput$Memory;)V
+	public synthetic fun <init> (Lio/github/aftrolle/ffmpegkmp/codec/VideoOutput$Memory;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public final fun component1 ()Lio/github/aftrolle/ffmpegkmp/codec/VideoOutput$Memory;
+	public final fun copy (Lio/github/aftrolle/ffmpegkmp/codec/VideoOutput$Memory;)Lio/github/aftrolle/ffmpegkmp/codec/VideoOutput$GpuBuffers;
+	public static synthetic fun copy$default (Lio/github/aftrolle/ffmpegkmp/codec/VideoOutput$GpuBuffers;Lio/github/aftrolle/ffmpegkmp/codec/VideoOutput$Memory;ILjava/lang/Object;)Lio/github/aftrolle/ffmpegkmp/codec/VideoOutput$GpuBuffers;
 	public fun equals (Ljava/lang/Object;)Z
+	public final fun getMemory ()Lio/github/aftrolle/ffmpegkmp/codec/VideoOutput$Memory;
 	public fun hashCode ()I
 	public fun toString ()Ljava/lang/String;
 }

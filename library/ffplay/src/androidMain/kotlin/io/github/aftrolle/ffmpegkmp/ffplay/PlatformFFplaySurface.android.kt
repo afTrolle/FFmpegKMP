@@ -7,12 +7,13 @@ import android.view.Display
 import android.view.Surface
 import androidx.compose.foundation.AndroidExternalSurface
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
@@ -26,8 +27,10 @@ import io.github.aftrolle.ffmpegkmp.codec.ColorPrimaries
 import io.github.aftrolle.ffmpegkmp.codec.ColorTransfer
 import io.github.aftrolle.ffmpegkmp.codec.VideoFrame
 import io.github.aftrolle.ffmpegkmp.codec.VideoInfo
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.withContext
 import kotlin.math.roundToInt
 
 @Composable
@@ -62,17 +65,16 @@ internal actual fun PlatformFFplaySurface(
     output.updateVideoInfo(video)
     remember(output, hostView.display) { output.updateDisplayCapabilities(hostView.display) }
 
-    LaunchedEffect(output, video, contentScale) {
-        // Re-negotiate once stream display metadata is known, and when the scale decides whether
-        // direct presentation is possible. Transformed streams deliberately use the software path
-        // because a raw MediaCodec Surface cannot apply FFmpeg's matrix; until the stream is known
-        // the output offers MediaCodec the Surface (see AndroidSurfaceOutput.capabilities).
-        player.attachOutput(output)
-    }
-
-    DisposableEffect(player, output) {
-        onDispose {
-            player.detachOutput(output)
+    val currentContentScale by rememberUpdatedState(contentScale)
+    LaunchedEffect(player, output) {
+        try {
+            // Re-negotiate once stream display metadata is known, and when the scale decides whether
+            // direct presentation is possible. Transformed streams deliberately use the software path
+            // because a raw MediaCodec Surface cannot apply FFmpeg's matrix; until the stream is known
+            // the output offers MediaCodec the Surface (see AndroidSurfaceOutput.capabilities).
+            snapshotFlow { video to currentContentScale }.collect { player.attachOutputOnWorker(output) }
+        } finally {
+            withContext(NonCancellable + blockingDispatcher) { player.detachOutput(output) }
             output.detachSurface()
         }
     }
@@ -85,14 +87,15 @@ internal actual fun PlatformFFplaySurface(
         ) {
             onSurface { surface, width, height ->
                 output.attachSurface(surface, width, height)
-                player.attachOutput(output)
                 surface.onChanged { changedWidth, changedHeight ->
                     output.resize(changedWidth, changedHeight)
                 }
+                // Waits for an attach still running on this surface before the surface goes.
                 surface.onDestroyed {
                     player.detachOutput(output)
                     output.detachSurface(this)
                 }
+                player.attachOutputOnWorker(output)
             }
         }
     }

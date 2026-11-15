@@ -15,7 +15,11 @@ import io.github.aftrolle.ffmpegkmp.bindings.setNativeDecoderBudget
  * [VideoDecoder] at [VideoDecoder.close], a player once it has been idle for its
  * `decoderIdleRelease` grace, or when it stops or closes. A decoder that finds every place
  * taken does not wait: under [CodecPreference.AUTO] it decodes in software and reports
- * [DecoderFallbackReason.BUDGET], under [CodecPreference.REQUIRE_HARDWARE] it fails.
+ * [DecoderFallbackReason.BUDGET], under [CodecPreference.REQUIRE_HARDWARE] it fails. An
+ * `FFplayPlayer` keeps the software decoder until its next startup (a prepare, an output change, a
+ * new Android Surface, or the reopen after its idle release), when it asks the budget again; a
+ * seek, a loop, a play or a pause does not. On Android a Surface the canvas drew software frames on
+ * takes no MediaCodec until a new Surface.
  *
  * Hardware decoders are few and do not degrade gracefully: past what the device sustains, a
  * platform either refuses a new one (a Galaxy S25 Ultra opens eight 4K MediaCodec decoders and

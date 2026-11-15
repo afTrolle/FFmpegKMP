@@ -82,7 +82,7 @@ class ParallelDecoderBudgetDeviceTest {
         val opened = coroutineScope {
             (1..count).map {
                 async(Dispatchers.Default) {
-                    runCatching { VideoDecoder.open(MediaSource(clip.path), VideoOutput.GpuBuffers, CodecPreference.AUTO, 30.seconds) }
+                    runCatching { VideoDecoder.open(MediaSource(clip.path), VideoOutput.GpuBuffers(), CodecPreference.AUTO, 30.seconds) }
                 }
             }.awaitAll()
         }

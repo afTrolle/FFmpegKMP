@@ -8,7 +8,6 @@ package io.github.aftrolle.ffmpegkmp.ffplay
 
 import androidx.compose.foundation.Canvas
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.RememberObserver
 import androidx.compose.runtime.remember
@@ -31,6 +30,8 @@ import kotlin.time.Duration.Companion.nanoseconds
 import kotlinx.coroutines.DelicateCoroutinesApi
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.GlobalScope
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.combine
@@ -122,17 +123,21 @@ internal fun ComposeCanvasFFplaySurface(
 ) {
     val output = remember(player) { ComposeCanvasOutput(player, playerClockNanos, hardwareFrames?.invoke()) }
     output.targetSize = targetSize
-    DisposableEffect(player, output) {
-        player.attachOutput(output)
-        onDispose {
-            player.detachOutput(output)
+    LaunchedEffect(player, output) {
+        try {
+            launch { output.redrawWhileStill() }
+            launch { output.driveRefresh() }
+            // A stream prepared already is negotiated for now, rather than attached twice once its video is known.
+            output.negotiatesFor(player.snapshot.value.video)
+            player.attachOutputOnWorker(output)
+            output.negotiateWithStream()
+            awaitCancellation()
+        } finally {
+            // Releasing a hardware output waits for a prepare running on the player, which must not wait for a buffer.
+            output.cancelHardwareWaits()
+            withContext(NonCancellable + blockingDispatcher) { player.detachOutput(output) }
             output.close()
         }
-    }
-    LaunchedEffect(output) {
-        launch { output.redrawWhileStill() }
-        launch { output.negotiateWithStream() }
-        output.driveRefresh()
     }
     Canvas(modifier) {
         drawRect(backgroundColor)
@@ -195,6 +200,9 @@ internal interface CanvasHardwareFrames : AutoCloseable {
 
     /** The most hardware frames queued at once of a player that queues [frameQueueSize], each holding a buffer. */
     fun queueLimit(frameQueueSize: Int): Int = frameQueueSize
+
+    /** Ends any wait for a buffer, and those after it, as the output goes: their frames fail instead. */
+    fun cancel() {}
 }
 
 /**
@@ -261,7 +269,7 @@ internal class ComposeCanvasOutput(
     suspend fun negotiateWithStream() {
         if (hardware == null) return
         player.snapshot.map { it.video }.distinctUntilChanged().collect { video ->
-            if (negotiatesFor(video)) player.attachOutput(this)
+            if (negotiatesFor(video)) player.attachOutputOnWorker(this)
         }
     }
 
@@ -313,8 +321,10 @@ internal class ComposeCanvasOutput(
     /**
      * Refreshes the player once per display frame of the composition's frame clock while it plays,
      * at the frame's time where that is on the player's clock, the frame becoming visible one
-     * display frame later; waits, asking for no frames, while it does not play. Runs while the
-     * surface is composed and attached.
+     * display frame after the drawing that first shows it; waits, asking for no frames, while it does
+     * not play. Where the platform tells when a display frame is drawn ([displayFrameDrawn]), the
+     * refresh runs off the drawing thread once it is, choosing the frame for the next display frame.
+     * Runs while the surface is composed and attached.
      */
     suspend fun driveRefresh() {
         val interval = DisplayFrameInterval()
@@ -322,16 +332,36 @@ internal class ComposeCanvasOutput(
             if (driver == null) return@collectLatest
             while (true) {
                 driver.awaitFrames()
-                withFrameNanos { frameTimeNanos ->
+                val offFrame = withFrameNanos { frameTimeNanos ->
                     val periodNanos = interval.next(frameTimeNanos)
+                    val drawn = displayFrameDrawn()
+                    val laterNanos = if (drawn == null) 0L else periodNanos
                     val clockNanos = playerClockNanos?.invoke()
                     val nowUs = if (clockNanos != null && abs(clockNanos - frameTimeNanos) < CLOCK_AGREEMENT_NANOS) {
                         frameTimeNanos / 1_000
                     } else {
                         -1L
                     }
-                    // A followed clock is asked about the frame's own time, the same for every player in it.
-                    driver.refresh(nowUs, periodNanos / 1_000, frameTimeNanos.nanoseconds)
+                    // A followed clock is asked about the time of the display frame that draws the refresh's frame,
+                    // the same for every player in it.
+                    val refresh = { driver.refresh(nowUs, (periodNanos + laterNanos) / 1_000, (frameTimeNanos + laterNanos).nanoseconds) }
+                    if (drawn == null) {
+                        refresh()
+                        null
+                    } else {
+                        drawn to refresh
+                    }
+                }
+                // The refresh takes the image's lock and may wait for a buffer, so it stays off the drawing thread.
+                // TODO: each player allocates about ten short-lived objects here per display frame (the Deferred, the
+                //  pair, the lambdas and withContext's coroutine, some 500 bytes) and hops to a worker and back. With
+                //  many players on a fast display, a reusable Runnable per output, posted through the main looper to
+                //  one shared refresh thread without the coroutine waiting for it, would allocate nothing and hop once.
+                offFrame?.let { (drawn, refresh) ->
+                    withContext(Dispatchers.Default) {
+                        drawn.await()
+                        refresh()
+                    }
                 }
             }
         }
@@ -369,6 +399,11 @@ internal class ComposeCanvasOutput(
     }
 
     override fun discard() = image.clear()
+
+    /** Ends the hardware's waits for buffers, as the composition that drives this output is cancelled. */
+    fun cancelHardwareWaits() {
+        hardware?.cancel()
+    }
 
     /** Frees the bitmaps; the hardware's buffers go back as the frames that hold them close. */
     override fun close() {
