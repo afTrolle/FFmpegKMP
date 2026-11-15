@@ -140,6 +140,11 @@ private class JavaCppVideoDecoderEngine(
 
     override fun setSize(width: Int, height: Int) = bridge.ffmpegkmp_video_decoder_set_size(decoder, width, height)
 
+    override fun setFormat(memoryFormat: NativeFrameFormat?, width: Int, height: Int): Int {
+        fun set(format: ffmpegkmp_frame_format?) = bridge.ffmpegkmp_video_decoder_set_memory_format(decoder, format, width, height)
+        return if (memoryFormat != null) memoryFormat.withNative(::set) else set(null)
+    }
+
     override fun reopen(
         source: NativePlayerSource,
         memoryFormat: NativeFrameFormat?,

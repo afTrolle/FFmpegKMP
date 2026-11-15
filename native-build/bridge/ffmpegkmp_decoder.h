@@ -213,6 +213,20 @@ FFPLAYKMP_EXPORT int ffmpegkmp_video_decoder_set_size(
         int32_t width,
         int32_t height);
 /*
+ * Changes the format and size of the frames handed out in memory from now on,
+ * to those create takes: NULL for frames as decoded, 0 and 0 for the source's
+ * size, and a size only with a memory format. As set_size, of which this is
+ * the general form, it decodes nothing and does not seek: the next frame_at
+ * converts the current frame again, into the frame a decoder created with
+ * this format and size returns. Frames handed out before keep their format,
+ * size and pixels, and the pooled memory of the old ones is freed.
+ */
+FFPLAYKMP_EXPORT int ffmpegkmp_video_decoder_set_memory_format(
+        ffmpegkmp_video_decoder *decoder,
+        const ffmpegkmp_frame_format *memory_format,
+        int32_t width,
+        int32_t height);
+/*
  * Makes the frame at `position_ns` current and describes it, with a new
  * reference to its pixels. Returns without decoding or converting when the
  * current frame still covers the position, decodes forward when it lies ahead

@@ -167,7 +167,7 @@ public class VideoDecodingException(message: String, cause: Throwable? = null) :
  */
 public class VideoDecoder private constructor(
     private val native: NativeVideoDecoder,
-    private val output: VideoOutput,
+    @Volatile private var output: VideoOutput,
     stream: NativeVideoStream,
     private val thread: DecoderThread,
     private val timeout: Duration,
@@ -237,6 +237,21 @@ public class VideoDecoder private constructor(
         // The same rules as opening at that size.
         VideoOutput.Memory(memory.format, size)
         call("resize frames to ${size ?: "the source's size"}") { native.setSize(size?.width ?: 0, size?.height ?: 0) }
+    }
+
+    /**
+     * [resize] with the format too: the frames that come in memory are handed out as [memory] says from now on, as if
+     * the decoder had been opened with it. It decodes nothing and does not seek, so a caller that picks its format
+     * from [info] opens the source once.
+     */
+    internal suspend fun reformat(memory: VideoOutput.Memory) {
+        call("change the frames' format") {
+            native.setFormat(memory.format?.toNative(), memory.size?.width ?: 0, memory.size?.height ?: 0)
+        }
+        output = when (val current = output) {
+            is VideoOutput.Memory -> memory
+            is VideoOutput.GpuBuffers -> current.copy(memory = memory)
+        }
     }
 
     /**

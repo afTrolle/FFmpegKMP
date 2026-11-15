@@ -47,7 +47,7 @@ public class NativeVideoStream(
 
 /**
  * The native pull decoder (`ffmpegkmp_decoder.c`), or WebCodecs in a worker in the browser.
- * [start], [seek], [frameAt], [setSize], [reopen] and [close] must not overlap and, on Android, must run on the thread
+ * [start], [seek], [frameAt], [setSize], [setFormat], [reopen] and [close] must not overlap and, on Android, must run on the thread
  * that started it. [interrupt], [abort] and [timeLeftMicros] are safe from any thread. Only the
  * browser's calls suspend; the native ones block their thread.
  */
@@ -66,6 +66,14 @@ public interface NativeVideoDecoder : AutoCloseable {
      * buffers, and the browser.
      */
     public suspend fun setSize(width: Int, height: Int)
+
+    /**
+     * [setSize] with the format too: [memoryFormat] is the format of the frames handed out in memory from now on, null
+     * for frames as decoded, at [width] × [height], 0 and 0 for the source's size, as [createPlatformVideoDecoder]
+     * takes them. Decodes nothing and does not seek. Throws [UnsupportedOperationException] in the browser.
+     */
+    public suspend fun setFormat(memoryFormat: NativeFrameFormat?, width: Int, height: Int): Unit =
+        throw UnsupportedOperationException("This decoder does not change its format")
 
     /**
      * Closes the input and readies the decoder for [source], which the next [start] opens, as a decoder created for it
@@ -152,6 +160,10 @@ internal interface VideoDecoderEngineCalls {
     fun frameAt(positionNanos: Long): NativeDecodedFrame
     fun setSize(width: Int, height: Int): Int
 
+    /** [NativeVideoDecoder.setFormat]'s native call. */
+    fun setFormat(memoryFormat: NativeFrameFormat?, width: Int, height: Int): Int =
+        throw UnsupportedOperationException("This decoder does not change its format")
+
     /** [NativeVideoDecoder.reopen]'s native call. */
     fun reopen(
         source: NativePlayerSource,
@@ -205,6 +217,10 @@ internal class GuardedVideoDecoder(
 
     override suspend fun setSize(width: Int, height: Int) = guard.use(::closedError) {
         requireNative(engine.setSize(width, height), "resize frames to ${width}x$height", ::NativeVideoDecoderException)
+    }
+
+    override suspend fun setFormat(memoryFormat: NativeFrameFormat?, width: Int, height: Int) = guard.use(::closedError) {
+        requireNative(engine.setFormat(memoryFormat, width, height), "change the frames' format", ::NativeVideoDecoderException)
     }
 
     override suspend fun reopen(

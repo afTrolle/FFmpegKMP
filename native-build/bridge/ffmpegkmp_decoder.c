@@ -859,6 +859,38 @@ int ffmpegkmp_video_decoder_start(ffmpegkmp_video_decoder *decoder) {
     return 0;
 }
 
+/*
+ * Makes `memory_format` (NULL for frames as decoded) at `width` x `height` (0 and 0 for the source's size) the
+ * format of the frames handed out in memory from now on. When it differs, the frame handed out last is let go,
+ * so the next hand-out converts the current frame again, and the ring of the old format and size goes; frames
+ * the caller holds keep their memory.
+ */
+static void ffmpegkmp_set_memory(
+        ffmpegkmp_video_decoder *decoder,
+        const ffmpegkmp_frame_format *memory_format,
+        int32_t width,
+        int32_t height) {
+    const int same = decoder->has_memory_format == (memory_format != NULL) && width == decoder->width &&
+            height == decoder->height && (!memory_format || (memory_format->layout == decoder->memory_format.layout &&
+                    memory_format->primaries == decoder->memory_format.primaries &&
+                    memory_format->transfer == decoder->memory_format.transfer &&
+                    memory_format->matrix == decoder->memory_format.matrix &&
+                    memory_format->range == decoder->memory_format.range));
+    if (same)
+        return;
+    decoder->has_memory_format = memory_format != NULL;
+    if (memory_format && memory_format != &decoder->memory_format) {
+        decoder->memory_format = *memory_format;
+        decoder->memory_format.size = sizeof(decoder->memory_format);
+    }
+    decoder->width = width;
+    decoder->height = height;
+    ffmpegkmp_frame_unref(decoder->presented);
+    decoder->presented = NULL;
+    decoder->presented_serial = 0;
+    ffmpegkmp_frame_pool_trim(decoder->pool);
+}
+
 int ffmpegkmp_video_decoder_reopen(
         ffmpegkmp_video_decoder *decoder,
         const char *input,
@@ -869,7 +901,6 @@ int ffmpegkmp_video_decoder_reopen(
         ffplaykmp_io_callback io_callback,
         void *io_opaque) {
     char *url;
-    int format_changed;
     if (!decoder || !input || !*input || timeout_us < 0 || decoder->output != FFMPEGKMP_VIDEO_OUTPUT_MEMORY ||
             (memory_format && !ffmpegkmp_frame_format_is_valid(memory_format)) ||
             width < 0 || height < 0 || (width > 0) != (height > 0) || (width > 0 && !memory_format))
@@ -892,22 +923,8 @@ int ffmpegkmp_video_decoder_reopen(
         decoder->previous_fallback = decoder->info.decoder_fallback;
     }
     ffplaykmp_close_input(&decoder->input);
-    format_changed = decoder->has_memory_format != (memory_format != NULL) || width != decoder->width ||
-            height != decoder->height || (memory_format && (memory_format->layout != decoder->memory_format.layout ||
-                    memory_format->primaries != decoder->memory_format.primaries ||
-                    memory_format->transfer != decoder->memory_format.transfer ||
-                    memory_format->matrix != decoder->memory_format.matrix ||
-                    memory_format->range != decoder->memory_format.range));
     /* The ring of the old format and size goes, as a resize lets it go; frames handed out keep their memory. */
-    if (format_changed)
-        ffmpegkmp_frame_pool_trim(decoder->pool);
-    decoder->has_memory_format = memory_format != NULL;
-    if (memory_format) {
-        decoder->memory_format = *memory_format;
-        decoder->memory_format.size = sizeof(decoder->memory_format);
-    }
-    decoder->width = width;
-    decoder->height = height;
+    ffmpegkmp_set_memory(decoder, memory_format, width, height);
     av_free(decoder->url);
     decoder->url = url;
     decoder->host.callback = io_callback;
@@ -943,27 +960,31 @@ int ffmpegkmp_video_decoder_seek(ffmpegkmp_video_decoder *decoder, int64_t posit
     return ffmpegkmp_end_call(decoder, ffmpegkmp_position(decoder, position_ns, 1));
 }
 
-int ffmpegkmp_video_decoder_set_size(ffmpegkmp_video_decoder *decoder, int32_t width, int32_t height) {
+int ffmpegkmp_video_decoder_set_memory_format(
+        ffmpegkmp_video_decoder *decoder,
+        const ffmpegkmp_frame_format *memory_format,
+        int32_t width,
+        int32_t height) {
     int result;
-    /* The sizes create takes: none, or both positive, and only with a memory format. */
-    if (!decoder || width < 0 || height < 0 || (width > 0) != (height > 0) ||
-            (width > 0 && !decoder->has_memory_format))
+    /* The formats and sizes create takes: a size is none, or both sides positive, and only with a memory format. */
+    if (!decoder || (memory_format && !ffmpegkmp_frame_format_is_valid(memory_format)) ||
+            width < 0 || height < 0 || (width > 0) != (height > 0) || (width > 0 && !memory_format))
         return FFPLAYKMP_ERROR_INVALID_ARGUMENT;
     if ((result = ffmpegkmp_begin_call(decoder)) < 0)
         return result;
-    if (width != decoder->width || height != decoder->height) {
-        decoder->width = width;
-        decoder->height = height;
-        /* Frames are converted as they are handed out, so the next frame_at converts the current frame again at
-         * the new size, without decoding. The old size's ring goes, so a decoder resized again and again holds one
-         * size's: frames the caller still has keep their memory until they close, and a resize back allocates
-         * again. The pool's other memory, a hardware frame's download, is made again by the next conversion. */
-        ffmpegkmp_frame_unref(decoder->presented);
-        decoder->presented = NULL;
-        decoder->presented_serial = 0;
-        ffmpegkmp_frame_pool_trim(decoder->pool);
-    }
+    /* Frames are converted as they are handed out, so the next frame_at converts the current frame again in the
+     * new format and size, without decoding. The old ring goes, so a decoder changed again and again holds one
+     * format and size's: frames the caller still has keep their memory until they close, and a change back
+     * allocates again. The pool's other memory, a hardware frame's download, is made again by the next conversion. */
+    ffmpegkmp_set_memory(decoder, memory_format, width, height);
     return ffmpegkmp_end_call(decoder, 0);
+}
+
+int ffmpegkmp_video_decoder_set_size(ffmpegkmp_video_decoder *decoder, int32_t width, int32_t height) {
+    if (!decoder)
+        return FFPLAYKMP_ERROR_INVALID_ARGUMENT;
+    return ffmpegkmp_video_decoder_set_memory_format(
+            decoder, decoder->has_memory_format ? &decoder->memory_format : NULL, width, height);
 }
 
 int ffmpegkmp_video_decoder_frame_at(

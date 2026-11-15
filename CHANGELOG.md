@@ -44,8 +44,10 @@ may break the public API; every break is listed here with a migration note.
   replaces the GPU tone-map shader and the CPU tone map for playback; `ComposeFrameRenderer` still
   draws GPU frames as linear light for export. Android 13 and earlier keep FFmpeg's tone map. A
   tagged bitmap drawn on a software `Canvas` is not tone mapped: draw it on the GPU.
-- `extractFrame` and `extractImageBitmap` reopen the decoder for a format other than RGBA8 instead
-  of opening a second one.
+- `extractFrame` and `extractImageBitmap` switch the open decoder to a format other than RGBA8
+  instead of opening a second one: the source is opened once. Native runtime:
+  `ffmpegkmp_video_decoder_set_memory_format`, of which `ffmpegkmp_video_decoder_set_size` is now a
+  special case.
 - Native runtime: converting into or out of an Android bitmap reads its data space
   (`AndroidBitmap_getDataSpace`, API 30), so a bitmap tagged BT.2020 PQ or HLG converts as such. A
   consumer's committed runtime has to be rebuilt for this and the fixes below.

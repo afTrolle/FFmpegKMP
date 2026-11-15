@@ -63,6 +63,8 @@ internal class GpuBufferVideoDecoder(
     // Scales the software frames only: MediaCodec's are its own buffers, drawn at any size by the GPU.
     override suspend fun setSize(width: Int, height: Int) = decoder.setSize(width, height)
 
+    override suspend fun setFormat(memoryFormat: NativeFrameFormat?, width: Int, height: Int) = decoder.setFormat(memoryFormat, width, height)
+
     override fun interrupt() {
         interrupted = true
         decoder.interrupt()

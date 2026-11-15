@@ -296,6 +296,9 @@ from GPU memory instead (see above). `VideoDecoder.resize`
 decoder: frames are converted as they are handed out, so the next one is the
 decoded frame converted again at the new size, with nothing decoded or sought,
 and `ffmpegkmp_frame_pool_trim` frees the old size's ring.
+`ffmpegkmp_video_decoder_set_memory_format` is its general form, changing the
+format with the size, which frame extraction uses to pick its format from the
+open source's colour without opening it again.
 `VideoDecoder.extractFrame` builds on it: it opens a decoder, resizes it to the
 size the box needs, takes one exact frame and turns it upright with libavfilter
 (`ffmpegkmp_frame_upright`: `transpose`, `hflip` and `vflip` chosen from the

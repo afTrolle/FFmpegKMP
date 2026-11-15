@@ -30,8 +30,8 @@ internal expect val frameExtractionSupported: Boolean
  * rest. Every other
  * selection, a [NamedCodec] included, makes one attempt.
  *
- * [format] picks the frame's format once the source is open; any other than RGBA8 reopens the decoder
- * in it. [decoders] opens each attempt's decoder and takes it back. [afterFrame] gets the result once
+ * [format] picks the frame's format once the source is open, which the open decoder is switched to
+ * with its size. [decoders] opens each attempt's decoder and takes it back. [afterFrame] gets the result once
  * it is made, before the decoder closes: the tests' hook into the window where a timeout or
  * cancellation must still close it.
  */
@@ -110,19 +110,15 @@ private class Extraction(
             // Each of the decoder's calls is bounded by the timeout on its own; this bounds them together.
             // Timing out cancels the call under way, which stops its native work.
             withTimeoutOrNull(timeout) {
-                var decoder = decoders.open(source, VideoOutput.Memory(FrameFormat.Rgba8), selection, timeout)
+                val decoder = decoders.open(source, VideoOutput.Memory(FrameFormat.Rgba8), selection, timeout)
                 var failed = true
                 try {
                     opened = decoder.decoderKind
-                    val wanted = format(decoder.info)
-                    // A failed reopen closes the decoder it was called on, which finishing then leaves as it is.
-                    if (wanted != FrameFormat.Rgba8) decoder = decoder.reopen(source, VideoOutput.Memory(wanted))
-                    opened = decoder.decoderKind
                     val info = decoder.info
                     val fit = frameFit(info.width, info.height, info.sampleAspectRatio, info.rotationDegrees, size, scale)
-                    // Always, even at the coded size: nothing is converted before frameAt, and the frame then
-                    // comes at exactly this size whatever the stream does.
-                    decoder.resize(fit.decodeSize)
+                    // Always, even at the coded size and in RGBA8: nothing is converted before frameAt, and the
+                    // frame then comes in exactly this format and size whatever the stream does.
+                    decoder.reformat(VideoOutput.Memory(format(info), fit.decodeSize))
                     decoder.frameAt(position).use { frame ->
                         // Off the caller's thread, which may be the UI's; the result is kept as soon as it exists.
                         withContext(Dispatchers.Default) { result = frame.upright(fit) }
