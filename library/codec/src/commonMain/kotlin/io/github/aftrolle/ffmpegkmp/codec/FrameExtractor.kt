@@ -14,7 +14,6 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
@@ -86,15 +85,23 @@ public class FrameExtractor(private val idle: Duration = 2.seconds) : AutoClosea
 
     override fun close() {
         closed = true
-        releases.cancel()
-        // A call under way drops the decoder itself once it sees the extractor closed.
         if (calls.tryLock()) {
             try {
-                decoders.drop()
+                dropClosed()
             } finally {
                 calls.unlock()
             }
+        } else {
+            // A call or the idle release holds the lock, and a call may have read `closed` before it was set and
+            // left the decoder to an idle release: this drops it once the lock is free, whatever its holder did.
+            releases.launch { calls.withLock { dropClosed() } }
         }
+    }
+
+    /** Under the lock, once closed: no call opens a decoder after it. */
+    private fun dropClosed() {
+        release?.cancel()
+        decoders.drop()
     }
 }
 
