@@ -138,16 +138,6 @@ int ffplaykmp_find_video_stream(AVFormatContext *format, const AVCodec **codec);
 int ffplaykmp_decoder_thread_count(int threads);
 
 /*
- * How many hardware decoder places have been given back, and limits raised,
- * since the process started: a change says hardware may open where it found
- * the budget full or busy before. Wraps.
- */
-uint32_t ffplaykmp_decoder_budget_freed(void);
-
-/* Whether the hardware decoder budget has a place free now. */
-int ffplaykmp_decoder_budget_has_room(void);
-
-/*
  * Opens `stream_index`'s decoder. When `hardware` is requested but this host
  * has no hardware decoder for the codec, the software decoder is opened and
  * codec->hardware stays 0; `require_hardware` turns that into
@@ -192,8 +182,8 @@ int ffplaykmp_video_codec_open(
  * `*fallback` gets why a decoder that was to be hardware under AUTO is
  * software: UNSUPPORTED (this host has none for the codec), FAILED, BUDGET or
  * `earlier`; NONE otherwise, also when the output wanted no hardware. A caller
- * that keeps state across opens (the player's per-source hardware_failed and
- * Surface budget_fallback) updates it from `*fallback` and passes it back as
+ * that keeps state across opens (the player's fallback, kept until its next
+ * startup, and Surface budget_fallback) updates it from `*fallback` and passes it back as
  * `earlier`; a caller that retries in software after a hardware decoder failed
  * to decode passes FAILED.
  *

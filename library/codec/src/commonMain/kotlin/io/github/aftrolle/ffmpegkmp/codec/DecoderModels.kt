@@ -68,14 +68,18 @@ public enum class DecoderFallbackReason {
     /** The platform has no hardware decoder for the stream. */
     UNSUPPORTED,
 
-    /** The hardware decoder failed to open or to decode; the source stays in software. */
+    /**
+     * The hardware decoder failed to open or to decode. A player stays in software until its next
+     * startup: a prepare, a new output, or the reopen after its idle release.
+     */
     FAILED,
 
     /**
      * Every hardware decoder [DecoderBudget] allows was open when this one opened. A player asks
-     * the budget again the next time it opens a decoder (after its idle release, or for a new
-     * output), except on an Android Surface its software frames were drawn on, which MediaCodec can
-     * no longer take: there it stays in software until the Surface changes.
+     * the budget again at its next startup (a prepare, a new output, or the reopen after its idle
+     * release), not on a seek, a loop, a play or a pause, except on an Android Surface its software
+     * frames were drawn on, which MediaCodec can no longer take: there it stays in software until
+     * the Surface changes.
      */
     BUDGET,
 }

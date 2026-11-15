@@ -284,7 +284,7 @@ class VideoDecoderSystemTest {
     @Test
     fun invalidRequestsFail() = runBlocking<Unit> {
         assertFailsWith<IllegalArgumentException> {
-            VideoDecoder.open(MediaSource("cfr-30.mp4"), VideoOutput.GpuBuffers)
+            VideoDecoder.open(MediaSource("cfr-30.mp4"), VideoOutput.GpuBuffers())
         }
         assertFailsWith<VideoDecodingException> {
             VideoDecoder.open(MediaSource((directory / "missing.mp4").toString()))

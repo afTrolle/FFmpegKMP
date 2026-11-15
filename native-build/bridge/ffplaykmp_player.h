@@ -48,9 +48,10 @@ typedef enum ffplaykmp_decoder_kind {
 /*
  * Why a player whose output wanted a hardware decoder decodes in software:
  * this host has no hardware decoder for the stream, opening or decoding with
- * it failed, after which AUTO keeps to software for the source, or the
- * process's hardware decoder budget (ffplaykmp_decoder_budget_set) was full
- * when the decoder opened.
+ * it failed, or the process's hardware decoder budget
+ * (ffplaykmp_decoder_budget_set) was full when the decoder opened. After a
+ * failure or a full budget AUTO keeps to software until the next prepare,
+ * output, Surface, or reopen after an idle release.
  */
 typedef enum ffplaykmp_decoder_fallback {
     FFPLAYKMP_DECODER_FALLBACK_NONE = 0,

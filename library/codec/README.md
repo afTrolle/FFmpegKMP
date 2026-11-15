@@ -211,8 +211,9 @@ blocked in; elsewhere such a read has to return on its own first.
   gives; frames already handed out keep theirs, and `frames()` may still deliver its one frame
   decoded ahead at the old size. The decoder frees the old size's ring, so a decoder resized again
   and again holds one size's frames, and a resize back allocates again. It throws
-  `UnsupportedOperationException` in the browser, which does not resize yet, and for `GpuBuffers`,
-  whose frames the GPU scales as it draws them.
+  `UnsupportedOperationException` in the browser, which does not resize yet. On a `GpuBuffers`
+  decoder it scales the frames that come in memory, a software decoder's, into
+  `GpuBuffers(memory)`'s format; MediaCodec's frames the GPU scales as it draws them.
 
   ```kotlin
   // A tile that grows while the decoder stays open.

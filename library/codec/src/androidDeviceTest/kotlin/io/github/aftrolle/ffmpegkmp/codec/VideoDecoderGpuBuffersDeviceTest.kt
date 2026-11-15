@@ -45,6 +45,29 @@ class VideoDecoderGpuBuffersDeviceTest {
     }
 
     @Test
+    fun aResizeScalesTheSoftwareFramesIntoTheirMemoryFormatAndLeavesMediaCodecsAlone() = runBlocking {
+        assumeGpuBuffers()
+        val output = VideoOutput.GpuBuffers(VideoOutput.Memory(FrameFormat.Rgba8))
+        open("cfr-30-h264-128.mp4", CodecPreference.SOFTWARE, output = output).use { decoder ->
+            assertEquals(DecoderKind.SOFTWARE, decoder.decoderKind)
+            decoder.resize(FrameSize(64, 32))
+            decoder.frameAt(1.seconds).use { frame ->
+                assertNull(frame.hardwareBuffer)
+                assertEquals(FrameFormat.Rgba8, frame.format)
+                assertEquals(64 to 32, frame.width to frame.height)
+            }
+        }
+        open("cfr-30-h264-128.mp4", output = output).use { decoder ->
+            assertEquals(DecoderKind.HARDWARE, decoder.decoderKind, "MediaCodec decodes H.264 on every device")
+            decoder.resize(FrameSize(64, 32))
+            decoder.frameAt(1.seconds).use { frame ->
+                val crop = assertNotNull(frame.hardwareBufferCrop)
+                assertEquals(128 to 128, crop.width() to crop.height())
+            }
+        }
+    }
+
+    @Test
     fun theSamePositionAgainGivesTheSameBuffer() = runBlocking {
         assumeGpuBuffers()
         open("cfr-30-h264-128.mp4").use { decoder ->
@@ -130,9 +153,10 @@ class VideoDecoderGpuBuffersDeviceTest {
         name: String,
         preference: CodecPreference = CodecPreference.AUTO,
         timeout: Duration = 5.seconds,
+        output: VideoOutput.GpuBuffers = VideoOutput.GpuBuffers(),
     ): VideoDecoder {
         val bytes = checkNotNull(javaClass.getResourceAsStream("/video-decoder/$name")) { "Missing fixture $name" }
             .use { it.readBytes() }
-        return VideoDecoder.open(MediaSource(name, CommandIo { input(name, Buffer().write(bytes)) }), VideoOutput.GpuBuffers, preference, timeout)
+        return VideoDecoder.open(MediaSource(name, CommandIo { input(name, Buffer().write(bytes)) }), output, preference, timeout)
     }
 }

@@ -114,12 +114,13 @@ public sealed interface VideoOutput {
      * (1.0 at 203 nits), so a canvas that keeps values above 1.0 shows the highlights.
      *
      * Where no hardware decoder takes the source under [CodecPreference.AUTO], frames come in
-     * memory as decoded instead, as with [Memory], and [VideoDecoder.decoderKind] reports
-     * [DecoderKind.SOFTWARE]. Elsewhere and on earlier Android
+     * memory instead, as [memory] says, and [VideoDecoder.decoderKind] reports
+     * [DecoderKind.SOFTWARE]: as decoded by default, or converted and scaled as with [Memory], which
+     * [VideoDecoder.resize] changes. MediaCodec's frames keep their own size. Elsewhere and on earlier Android
      * versions, [VideoDecoder.open] fails with [IllegalArgumentException]; the browser fails it with
      * a [VideoDecodingException].
      */
-    public data object GpuBuffers : VideoOutput
+    public data class GpuBuffers(val memory: Memory = Memory()) : VideoOutput
 }
 
 /** Which frames [VideoDecoder.frames] delivers. */
@@ -211,7 +212,9 @@ public class VideoDecoder private constructor(
 
     /**
      * Changes the size of the frames the decoder hands out from now on, as if it had been opened
-     * with `VideoOutput.Memory(format, size)`: null is the source's own size. The frame [frameAt]
+     * with `VideoOutput.Memory(format, size)`: null is the source's own size. For
+     * [VideoOutput.GpuBuffers] it is the size of the frames that come in memory, with
+     * [VideoOutput.GpuBuffers.memory]'s format; MediaCodec's GPU frames are not scaled. The frame [frameAt]
      * returns next, the same position included, comes at the new size and is the same, byte for
      * byte, as a decoder opened at that size returns. Frames are converted as they are handed out,
      * so this decodes nothing and does not seek: the decoder's current frame is converted again.
@@ -226,13 +229,11 @@ public class VideoDecoder private constructor(
      * safe between the emissions of a [frames] collection; one cancelled once the decoder's thread
      * has taken it may still have changed the size. Throws [IllegalArgumentException] for a
      * size [VideoOutput.Memory] rejects with the decoder's format: any size without a format, and
-     * an odd one for the 4:2:0 layouts. Throws [UnsupportedOperationException] for
-     * [VideoOutput.GpuBuffers], whose frames are MediaCodec's own buffers and are not scaled, and in
-     * the browser, which does not resize an open decoder yet.
+     * an odd one for the 4:2:0 layouts. Throws [UnsupportedOperationException] in the browser,
+     * which does not resize an open decoder yet.
      */
     public suspend fun resize(size: FrameSize?) {
-        val memory = output as? VideoOutput.Memory
-            ?: throw UnsupportedOperationException("GPU buffer frames are MediaCodec's own buffers and are not scaled")
+        val memory = output.memory
         // The same rules as opening at that size.
         VideoOutput.Memory(memory.format, size)
         call("resize frames to ${size ?: "the source's size"}") { native.setSize(size?.width ?: 0, size?.height ?: 0) }
@@ -314,6 +315,48 @@ public class VideoDecoder private constructor(
         }
     }
 
+    /**
+     * Switches this decoder to [source], returning it as a decoder that [open] would have opened for [source] with [output]
+     * and [timeout], the codec selection, threads and ring kept; this one is closed by then, whether the switch works or
+     * fails. It keeps the decoder's thread and, when the new video is coded as the old one was (codec, size, profile and
+     * setup bytes), its open codec, flushed, and with it any place in [DecoderBudget]: switching between a project's
+     * videos opens no new MediaCodec session. Otherwise, and when [CodecPreference.AUTO] had opened a software codec
+     * because the hardware one failed or [DecoderBudget] was full, it closes the codec and opens one for [source].
+     * Frames handed out before keep their memory until they close.
+     *
+     * It waits for this decoder's other calls, and [timeout] bounds it as it bounds [open]. Throws
+     * [UnsupportedOperationException] for [VideoOutput.GpuBuffers], as this decoder's output or [output], and in the
+     * browser.
+     */
+    @ExperimentalFFmpegKmpApi
+    public suspend fun reopen(
+        source: MediaSource,
+        output: VideoOutput = this.output,
+        timeout: Duration = this.timeout,
+    ): VideoDecoder {
+        require(timeout.isPositive()) { "The timeout must be positive: $timeout" }
+        if (this.output !is VideoOutput.Memory || output !is VideoOutput.Memory) {
+            throw UnsupportedOperationException("A decoder of GPU buffers does not reopen")
+        }
+        val stream = try {
+            call("open '${source.input}'") {
+                native.reopen(
+                    source = NativePlayerSource(source.input, source.io.toNativeMounts()),
+                    memoryFormat = output.format?.toNative(),
+                    memoryWidth = output.size?.width ?: 0,
+                    memoryHeight = output.size?.height ?: 0,
+                    timeoutMicros = timeout.toNativeMicros(),
+                )
+                native.start()
+            }
+        } catch (failure: Throwable) {
+            close()
+            throw failure
+        }
+        check(closed.compareAndSet(expectedValue = false, newValue = true)) { "The video decoder is closed" }
+        return VideoDecoder(native, output, stream, thread, timeout)
+    }
+
     override fun close() {
         if (closed.compareAndSet(expectedValue = false, newValue = true)) thread.release(native)
     }
@@ -392,15 +435,15 @@ public class VideoDecoder private constructor(
                         source = NativePlayerSource(source.input, source.io.toNativeMounts()),
                         output = when (output) {
                             is VideoOutput.Memory -> NativeVideoDecoderOutput.MEMORY
-                            VideoOutput.GpuBuffers -> NativeVideoDecoderOutput.GPU_BUFFERS
+                            is VideoOutput.GpuBuffers -> NativeVideoDecoderOutput.GPU_BUFFERS
                         },
-                        memoryFormat = (output as? VideoOutput.Memory)?.format?.toNative(),
-                        memoryWidth = (output as? VideoOutput.Memory)?.size?.width ?: 0,
-                        memoryHeight = (output as? VideoOutput.Memory)?.size?.height ?: 0,
+                        memoryFormat = output.memory.format?.toNative(),
+                        memoryWidth = output.memory.size?.width ?: 0,
+                        memoryHeight = output.memory.size?.height ?: 0,
                         // A named decoder ignores the preference.
                         decoderPreference = (decoder as? CodecPreference ?: CodecPreference.AUTO).toNative(),
                         decoderThreads = threads.toNative(),
-                        timeoutMicros = if (timeout.isInfinite()) 0L else timeout.inWholeMicroseconds,
+                        timeoutMicros = timeout.toNativeMicros(),
                         decoderThreadType = threads.toNativeThreadType(),
                         frameRing = ringSize,
                         decoderName = (decoder as? NamedCodec)?.name,
@@ -560,6 +603,8 @@ private fun DecoderThread.release(native: NativeVideoDecoder) {
     finish(DECODER_THREAD_CLOSE_BOUND) { native.close() }
 }
 
+private fun Duration.toNativeMicros(): Long = if (isInfinite()) 0L else inWholeMicroseconds
+
 private fun Duration.requireNonNegativeNanos(): Long {
     require(!isNegative()) { "Video position must not be negative: $this" }
     return inWholeNanoseconds
@@ -595,3 +640,10 @@ private inline fun <T> decoding(action: String, block: () -> T): T = try {
 } catch (failure: NativeBridgeUnavailableException) {
     throw VideoDecodingException(failure.message ?: "The FFmpegKMP native runtime is unavailable", failure)
 }
+
+/** How the frames that come in memory are handed out. */
+private val VideoOutput.memory: VideoOutput.Memory
+    get() = when (this) {
+        is VideoOutput.Memory -> this
+        is VideoOutput.GpuBuffers -> memory
+    }

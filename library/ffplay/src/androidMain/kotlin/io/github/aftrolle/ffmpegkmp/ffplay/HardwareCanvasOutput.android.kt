@@ -33,6 +33,9 @@ import io.github.aftrolle.ffmpegkmp.core.InternalFFmpegKmpApi
 internal class ImageReaderCanvasFrames(private val frames: Int) : CanvasHardwareFrames {
     private val images = GpuBufferImages(frames)
 
+    @Volatile
+    private var cancelled = false
+
     override val surface: Any get() = images.surface
 
     /**
@@ -81,9 +84,15 @@ internal class ImageReaderCanvasFrames(private val frames: Int) : CanvasHardware
                     else -> AVCOL_PRI_BT709
                 },
                 deadline = System.nanoTime() + BUFFER_WAIT_NANOS,
+                cancelled = { cancelled },
             )
             VideoFrame.of(gpu, pts, duration, width, height, rotation, sampleAspectRatio)
         }
+    }
+
+    override fun cancel() {
+        cancelled = true
+        images.wake()
     }
 
     override fun close() = images.close()

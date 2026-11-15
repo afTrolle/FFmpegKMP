@@ -188,7 +188,7 @@ class BrowserCodecTest {
         if (!webCodecs()) return@browserTest
         assertFailsWith<VideoDecodingException> { open("cfr-30-h264.mp4", VideoOutput.Memory(FrameFormat.RgbaF16)) }
         assertFailsWith<VideoDecodingException> { open("cfr-30-h264.mp4", decoder = CodecPreference.REQUIRE_HARDWARE) }
-        assertFailsWith<VideoDecodingException> { open("cfr-30-h264.mp4", VideoOutput.GpuBuffers) }
+        assertFailsWith<VideoDecodingException> { open("cfr-30-h264.mp4", VideoOutput.GpuBuffers()) }
     }
 
     @Test

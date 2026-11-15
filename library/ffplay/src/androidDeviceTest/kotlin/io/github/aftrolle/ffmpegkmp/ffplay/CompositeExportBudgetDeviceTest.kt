@@ -80,9 +80,9 @@ class CompositeExportBudgetDeviceTest {
         Case("Memory(canvasFormat)") { track -> VideoOutput.Memory(track.config.canvasFormat) },
         Case("Memory()") { VideoOutput.Memory() },
         // MediaCodec's frames, drawn from their HardwareBuffers.
-        Case("GpuBuffers", CodecPreference.AUTO) { VideoOutput.GpuBuffers },
+        Case("GpuBuffers", CodecPreference.AUTO) { VideoOutput.GpuBuffers() },
         // The same, drawn straight into the encoder's input surface: no copy, and `write` only queues the frame.
-        Case("GpuBuffersToSurface", CodecPreference.AUTO, surface = true) { VideoOutput.GpuBuffers },
+        Case("GpuBuffersToSurface", CodecPreference.AUTO, surface = true) { VideoOutput.GpuBuffers() },
     )
 
     /** Each frame's phases, in milliseconds. */

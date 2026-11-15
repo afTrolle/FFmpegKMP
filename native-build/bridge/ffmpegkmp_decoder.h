@@ -80,11 +80,12 @@ FFPLAYKMP_EXPORT void ffmpegkmp_decoded_frame_init(ffmpegkmp_decoded_frame *fram
 /*
  * Creates a decoder for `input` (a path, URL, or "ffmpegkmp:<id>" served by
  * `io_callback`) without touching it: start opens it. `memory_format` is the
- * MEMORY output's format, NULL for frames as decoded; a SURFACE output takes
- * NULL. `width` and `height` are the memory format's frame size, 0 and 0 for
- * the source's: frames are scaled to it as they are converted, keeping their
- * display aspect through their sample aspect ratio. A size needs a memory
- * format. `decoder_threads` is
+ * format of the frames handed out in memory, NULL for frames as decoded: a
+ * MEMORY output's, and a SURFACE output's software frames; MediaCodec's frames
+ * in the Surface keep theirs. `width` and `height` are the memory format's
+ * frame size, 0 and 0 for the source's: frames are scaled to it as they are
+ * converted, keeping their display aspect through their sample aspect ratio.
+ * A size needs a memory format. `decoder_threads` is
  * the software decoder's thread count, 0 for FFmpeg's automatic count capped
  * at 8; it decodes with slice threads only, so one frame is in progress,
  * unless set_thread_type says otherwise, and hardware decoders ignore it.
@@ -156,14 +157,39 @@ FFPLAYKMP_EXPORT const char *ffmpegkmp_video_decoder_error(const ffmpegkmp_video
  * Opens the input, selects its best video stream and decodes the first frame.
  * Under FFPLAYKMP_DECODER_AUTO a hardware decoder that fails or times out
  * before producing a frame is replaced once by the software one, which gets a
- * fresh deadline; a SURFACE output then returns frames in memory, as decoded,
- * instead (reported by `hardware == 0` and a non-NULL frame). A hardware
+ * fresh deadline; a SURFACE output then returns frames in memory, in the
+ * memory format or as decoded, instead (reported by `hardware == 0` and a non-NULL frame). A hardware
  * decoder holds a place in the process's budget (ffplaykmp_decoder_budget_set)
  * until the decoder is destroyed; with the budget full AUTO opens the software
  * one at once and REQUIRE_HARDWARE fails with FFPLAYKMP_ERROR_BUSY. The info's
  * decoder_fallback says why AUTO decodes in software.
  */
 FFPLAYKMP_EXPORT int ffmpegkmp_video_decoder_start(ffmpegkmp_video_decoder *decoder);
+/*
+ * Closes the input and makes the decoder ready for `input`, which the next
+ * start opens and decodes from, as a decoder created for it with this memory
+ * format, size, timeout and I/O would; the output, decoder preference or name,
+ * threads and ring stay. Between a successful start and this call nothing
+ * else may run on the decoder. The next start keeps the open codec, flushed,
+ * when the new input's video stream is coded the same way (codec, tag, size,
+ * pixel layout, profile, level, bit depth and setup bytes alike): a hardware
+ * decoder then keeps its budget place and the reason it was chosen. It closes
+ * the codec otherwise, and when it is a software one AUTO opened because the
+ * hardware one failed or the budget was full, before opening one for the new
+ * stream. The ring of the old memory format and size goes, as a resize lets it
+ * go; frames handed out keep their memory. Only MEMORY output reopens; others
+ * fail with FFPLAYKMP_ERROR_INVALID_ARGUMENT. Fails with
+ * FFPLAYKMP_ERROR_INVALID_STATE once aborted.
+ */
+FFPLAYKMP_EXPORT int ffmpegkmp_video_decoder_reopen(
+        ffmpegkmp_video_decoder *decoder,
+        const char *input,
+        const ffmpegkmp_frame_format *memory_format,
+        int32_t width,
+        int32_t height,
+        int64_t timeout_us,
+        ffplaykmp_io_callback io_callback,
+        void *io_opaque);
 /* Stream metadata, refined by the first decoded frame after start. */
 FFPLAYKMP_EXPORT int ffmpegkmp_video_decoder_get_info(
         const ffmpegkmp_video_decoder *decoder,

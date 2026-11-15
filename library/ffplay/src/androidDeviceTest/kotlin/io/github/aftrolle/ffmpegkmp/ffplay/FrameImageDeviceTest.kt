@@ -263,7 +263,7 @@ class FrameImageDeviceTest {
     @Test
     fun aGpuBuffersFrameDrawsAsTheSameFrameFromMemoryCroppedUprightAtItsDisplayAspect() = runBlocking<Unit> {
         assumeGpuBuffers()
-        open("cfr-30-h264-128.mp4", VideoOutput.GpuBuffers, CodecPreference.AUTO).use { gpuDecoder ->
+        open("cfr-30-h264-128.mp4", VideoOutput.GpuBuffers(), CodecPreference.AUTO).use { gpuDecoder ->
             open("cfr-30-h264-128.mp4", VideoOutput.Memory()).use { memoryDecoder ->
                 for (index in listOf(0, 13, 46, 149)) {
                     val time = index.seconds / 30
@@ -287,7 +287,7 @@ class FrameImageDeviceTest {
     @Test
     fun framesUpdatingAFrameImageBeforeEachRenderNeverWaitAndShowEachFramesOwnContentsWrappingOnEveryUpdate() = runBlocking<Unit> {
         assumeGpuBuffers()
-        open("cfr-30-h264-128.mp4", VideoOutput.GpuBuffers, CodecPreference.AUTO).use { decoder ->
+        open("cfr-30-h264-128.mp4", VideoOutput.GpuBuffers(), CodecPreference.AUTO).use { decoder ->
             FrameImage().use { image ->
                 renderer<FrameImage>(128, 128, gpu = true) { Canvas(Modifier.fillMaxSize()) { drawFrameImage(it) } }.use { renderer ->
                     val buffers = mutableSetOf<Long>()
@@ -314,7 +314,7 @@ class FrameImageDeviceTest {
     @Test
     fun aGpuBuffersFrameFailsClearlyOnTheSoftwarePath() = runBlocking<Unit> {
         assumeGpuBuffers()
-        open("cfr-30-h264-128.mp4", VideoOutput.GpuBuffers, CodecPreference.AUTO).use { decoder ->
+        open("cfr-30-h264-128.mp4", VideoOutput.GpuBuffers(), CodecPreference.AUTO).use { decoder ->
             FrameImage().use { image ->
                 decoder.frameAt(Duration.ZERO).use(image::update)
                 renderer<FrameImage>(128, 128, gpu = false) { Canvas(Modifier.fillMaxSize()) { drawFrameImage(it) } }.use { renderer ->
@@ -334,7 +334,7 @@ class FrameImageDeviceTest {
     fun anHdr10FrameInAGpuBufferKeepsItsHighlightOnAnF16CanvasAsFromMemory() = runBlocking<Unit> {
         assumeGpuBuffers()
         assumeHdrGpuCheck()
-        val highlights = listOf(VideoOutput.GpuBuffers, VideoOutput.Memory(FrameFormat.RgbaF16)).map { output ->
+        val highlights = listOf(VideoOutput.GpuBuffers(), VideoOutput.Memory(FrameFormat.RgbaF16)).map { output ->
             drawnOnF16("hdr10-pq-large.mp4", output) { it.half(y = 96, x = 280) }
         }
         println("FrameImageDeviceTest: HDR10 highlight ${highlights[0]} through GpuBuffers, ${highlights[1]} from memory")
@@ -351,7 +351,7 @@ class FrameImageDeviceTest {
     fun aPqRampInAGpuBufferStaysWithinOnePqCodeOfTheMemoryPathInEveryColumn() = runBlocking<Unit> {
         assumeGpuBuffers()
         assumeHdrGpuCheck()
-        val (gpu, memory) = listOf(VideoOutput.GpuBuffers, VideoOutput.Memory(FrameFormat.RgbaF16)).map { output ->
+        val (gpu, memory) = listOf(VideoOutput.GpuBuffers(), VideoOutput.Memory(FrameFormat.RgbaF16)).map { output ->
             drawnOnF16("hdr10-pq-gradient.mp4", output) { plane ->
                 DoubleArray(RAMP_STEPS * 3) { plane.half(y = 96, x = it / 3, channel = it % 3) }
             }
@@ -402,7 +402,7 @@ class FrameImageDeviceTest {
         val clip = File.createTempFile("h264-2160p", ".mp4")
         checkNotNull(resource).use { input -> clip.outputStream().use { input.copyTo(it) } }
         try {
-            val medians = listOf(VideoOutput.GpuBuffers, VideoOutput.Memory()).associateWith { output ->
+            val medians = listOf(VideoOutput.GpuBuffers(), VideoOutput.Memory()).associateWith { output ->
                 VideoDecoder.open(MediaSource(clip.path), output, CodecPreference.AUTO).use { decoder ->
                     FrameImage().use { image ->
                         val times = mutableListOf<Long>()
@@ -416,9 +416,9 @@ class FrameImageDeviceTest {
                     }
                 }
             }
-            println("FrameImageDeviceTest: a 4K H.264 update takes ${medians[VideoOutput.GpuBuffers]} ms through GpuBuffers, " +
+            println("FrameImageDeviceTest: a 4K H.264 update takes ${medians[VideoOutput.GpuBuffers()]} ms through GpuBuffers, " +
                 "${medians[VideoOutput.Memory()]} ms from memory")
-            assertTrue(checkNotNull(medians[VideoOutput.GpuBuffers]) < 1.0, "$medians")
+            assertTrue(checkNotNull(medians[VideoOutput.GpuBuffers()]) < 1.0, "$medians")
         } finally {
             clip.delete()
         }
@@ -431,7 +431,7 @@ class FrameImageDeviceTest {
     private suspend fun assertPatchesMatch(name: String, patches: List<Patch>) {
         assumeGpuBuffers()
         assumeHdrGpuCheck()
-        val (gpu, memory) = listOf(VideoOutput.GpuBuffers, VideoOutput.Memory(FrameFormat.RgbaF16)).map { output ->
+        val (gpu, memory) = listOf(VideoOutput.GpuBuffers(), VideoOutput.Memory(FrameFormat.RgbaF16)).map { output ->
             drawnOnF16(name, output) { plane -> patches.map { patch -> DoubleArray(3) { plane.half(patch.y, patch.x, it) } } }
         }
         var worst = 0.0
@@ -544,7 +544,7 @@ class FrameImageDeviceTest {
     /** The frame at 0.5 s of [name] through [output], drawn on a 320x192 F16 canvas and read from the canvas's plane. */
     private suspend fun <T : Any> drawnOnF16(name: String, output: VideoOutput, read: (FramePlane) -> T): T =
         open(name, output, CodecPreference.AUTO).use { decoder ->
-            if (output == VideoOutput.GpuBuffers && decoder.decoderKind != DecoderKind.HARDWARE) {
+            if (output is VideoOutput.GpuBuffers && decoder.decoderKind != DecoderKind.HARDWARE) {
                 println("FrameImageDeviceTest: no hardware decoder takes $name, skipping")
                 assumeTrue("a hardware decoder takes $name", false)
             }
@@ -553,7 +553,7 @@ class FrameImageDeviceTest {
                     Canvas(Modifier.fillMaxSize()) { drawFrameImage(it) }
                 }.use { renderer ->
                     decoder.frameAt(0.5.seconds).use { frame ->
-                        assertEquals(output == VideoOutput.GpuBuffers, frame.hardwareBuffer != null, "$output")
+                        assertEquals(output is VideoOutput.GpuBuffers, frame.hardwareBuffer != null, "$output")
                         image.update(frame)
                         renderer.render(frame.pts, image).use { drawn ->
                             assertTrue(renderer.drewOnGpu)

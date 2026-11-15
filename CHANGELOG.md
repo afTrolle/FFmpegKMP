@@ -14,9 +14,22 @@ may break the public API; every break is listed here with a migration note.
   `ImageBitmap` in the colour `toImageBitmap` and `FFplaySurface` show it. On Android 14 and later a PQ
   or HLG source keeps its codes in a tagged `RGBA_1010102` bitmap, so a poster looks as its playback
   does; elsewhere it is tone mapped to SDR as `extractFrame` does.
+- `VideoDecoder.reopen(source, output, timeout)` (codec, experimental): switches an open decoder
+  to another source, keeping its thread and, when the new video is coded as the old one was, its
+  codec, flushed, with its `DecoderBudget` place, so moving between a project's videos opens no new
+  MediaCodec session. Memory output only. Native runtime: `ffmpegkmp_video_decoder_reopen`.
+- `FrameExtractor` (codec, experimental) and `FrameExtractor.extractImageBitmap(...)` (ffplay):
+  `extractFrame`'s frames one at a time through one decoder it reopens for each source and closes
+  once idle, for a list of posters.
 
 ### Changed
 
+- **Breaking:** `VideoOutput.GpuBuffers` is a class, `GpuBuffers(memory = Memory())`: `memory` is how
+  the frames a software decoder hands out instead come, converted and scaled as with `Memory`, and
+  `VideoDecoder.resize` now scales them rather than throwing; MediaCodec's GPU frames keep their own
+  size. Migrate `VideoOutput.GpuBuffers` to `VideoOutput.GpuBuffers()`, and `== VideoOutput.GpuBuffers`
+  to `is VideoOutput.GpuBuffers`. Native runtime: `ffmpegkmp_video_decoder_create` takes a memory
+  format for a Surface output.
 - Android 14+: `FFplaySurface` and `toImageBitmap` hand PQ and HLG to the platform instead of tone
   mapping them. Frames from GPU memory are wrapped in a bitmap tagged `BT2020_PQ` or `BT2020_HLG`, and
   frames in memory are converted to `RGBA_1010102` with their own codes in a bitmap so tagged, so HWUI
@@ -24,6 +37,8 @@ may break the public API; every break is listed here with a migration note.
   replaces the GPU tone-map shader and the CPU tone map for playback; `ComposeFrameRenderer` still
   draws GPU frames as linear light for export. Android 13 and earlier keep FFmpeg's tone map. A
   tagged bitmap drawn on a software `Canvas` is not tone mapped: draw it on the GPU.
+- `extractFrame` and `extractImageBitmap` reopen the decoder for a format other than RGBA8 instead
+  of opening a second one.
 - Native runtime: converting into or out of an Android bitmap reads its data space
   (`AndroidBitmap_getDataSpace`, API 30), so a bitmap tagged BT.2020 PQ or HLG converts as such. A
   consumer's committed runtime has to be rebuilt for this and the fixes below.
@@ -44,12 +59,25 @@ may break the public API; every break is listed here with a migration note.
   it was open, and one reading a mounted source failed to prepare. Each callback type now has one
   native function for the process, which finds its receiver through the native `opaque`, so any
   number can be open.
-- A playing `FFplayPlayer` that decoded in software because the hardware decoder budget was full
-  stayed in software for its life, however many places were given back. It now moves to hardware
-  once the budget gives a place back or its limit is raised, and plays on where its clock is. So does
-  one whose hardware decoder failed while others were open (on a Galaxy S25 a second 8K HEVC
-  MediaCodec decoder fails while one is open). On Android only a Canvas output's player moves: a
-  Surface the canvas drew software frames on takes no MediaCodec.
+- An `FFplayPlayer` that fell back to software, because the hardware decoder budget was full or its
+  hardware decoder failed, now tries hardware again at its next startup: a prepare, an output
+  change, a new Android Surface, or the reopen after `decoderIdleRelease`, also with a software
+  decoder open. A seek, a loop, `play` or `pause` keeps its decoder, so players no longer take
+  hardware decoders from each other while they play. A budget fallback used to hold for one decoder
+  on the JVM and Apple platforms; it now holds until the next startup there too. On Android a Surface
+  the canvas drew software frames on still takes no MediaCodec until a new Surface.
+- A playing `FFplayPlayer` whose output stopped refreshing it, such as a Compose Canvas surface no
+  longer drawn, kept its decoder with a full frame queue. It now releases it after
+  `decoderIdleRelease`, and a second at least, as an idle player does, and reopens it where its
+  clock is once refreshed again.
+- Android: the frame a player shows no longer keeps a reference to its MediaCodec buffer, which kept
+  the codec alive after the player released it. A Compose Canvas surface that leaves the composition
+  stops waiting for a hardware frame's buffer at once, instead of up to 500 ms before the player
+  detaches.
+- Android: `ComposeFrameRenderer` waited for the GPU to finish each frame on the main thread, so an
+  export left the app's own animations little time to draw. It now waits off the main thread.
+- Android and the JVM: a native frame garbage-collected without being closed is freed, and logged
+  with where it was made.
 - 10-bit YUV converted into packed 10-bit RGB (`RGBA_1010102`) landed 6 to 9 codes low on a flat
   grey: swscale wrote it through its 8-bit tables. The converter now interpolates chroma fully for
   that output (`SWS_FULL_CHR_H_INT`), which also corrects 10-bit export canvases. Software and GPU

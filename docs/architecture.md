@@ -300,7 +300,12 @@ and `ffmpegkmp_frame_pool_trim` frees the old size's ring.
 size the box needs, takes one exact frame and turns it upright with libavfilter
 (`ffmpegkmp_frame_upright`: `transpose`, `hflip` and `vflip` chosen from the
 display matrix as FFmpeg's autorotate does, and a `CROP` crop in the same graph),
-on one thread.
+on one thread. `VideoDecoder.reopen` (`ffmpegkmp_video_decoder_reopen`) closes a
+`Memory` decoder's input and readies it for another; the next start keeps the
+open codec, flushed with `avcodec_flush_buffers`, when the new stream's codec
+parameters and extradata match the old one's, unless AUTO had opened it in
+software in place of a hardware decoder that failed or had no budget place.
+`FrameExtractor` reopens one such decoder for each frame it extracts.
 Pools are keyed by layout and size, pooled AVBuffers by default. The
 Kotlin/Native Apple runtimes (`FFMPEGKMP_PIXEL_BUFFER` in `bridge.mk`; the JVM
 bridge does not link CoreVideo) pool `NV12`, `P010`, `BGRA8` and `RGBA_F16`

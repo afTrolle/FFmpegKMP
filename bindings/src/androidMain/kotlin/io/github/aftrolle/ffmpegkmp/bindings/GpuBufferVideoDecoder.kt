@@ -10,7 +10,8 @@ internal const val GPU_BUFFER_RING = 3
  * A [NativeVideoDecoderOutput.GPU_BUFFERS] decoder: [decoder] renders each hardware frame into
  * [images]' Surface, stamped with its pts, and [frameAt] hands it out as the image with that
  * timestamp, in a [NativeGpuBuffer] that closes the image with the frame's last reference.
- * Software frames, from the `AUTO` fallback, pass through in memory. Sources deeper than 8 bits stay
+ * Software frames, from the `AUTO` fallback, pass through in memory, converted and scaled as the
+ * memory format says. Sources deeper than 8 bits stay
  * on the GPU when a hardware decoder takes them, 10 bits per component, and their frames carry the
  * source's transfer and primaries for the drawing to read them by.
  *
@@ -59,9 +60,8 @@ internal class GpuBufferVideoDecoder(
         )
     }
 
-    // The frames are MediaCodec's own buffers, drawn at any size by the GPU; the decoder scales nothing.
-    override suspend fun setSize(width: Int, height: Int): Unit =
-        throw UnsupportedOperationException("GPU buffer frames are MediaCodec's own buffers and are not scaled")
+    // Scales the software frames only: MediaCodec's are its own buffers, drawn at any size by the GPU.
+    override suspend fun setSize(width: Int, height: Int) = decoder.setSize(width, height)
 
     override fun interrupt() {
         interrupted = true

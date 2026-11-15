@@ -45,7 +45,8 @@ struct ffmpegkmp_video_decoder {
     ffplaykmp_input input;
     ffplaykmp_video_codec codec;
     ffmpegkmp_converter *converter;
-    /* MEMORY output: the frames' format, when has_memory_format, and their pool. */
+    /* The format of the frames handed out in memory, when has_memory_format, and their pool: every frame for a
+     * MEMORY output, and a SURFACE output's software frames. */
     ffmpegkmp_frame_format memory_format;
     int has_memory_format;
     /* The memory format's frame size; 0 for the source's. */
@@ -89,6 +90,9 @@ struct ffmpegkmp_video_decoder {
     /* av_gettime_relative() bound of the running call, 0 for none. */
     _Atomic int64_t deadline;
     atomic_bool timed_out;
+    /* After a reopen, until start: the coding of the stream the open codec decodes, and why it is the one open. */
+    AVCodecParameters *previous_stream;
+    ffplaykmp_decoder_fallback previous_fallback;
 #if defined(__ANDROID__)
     JavaVM *android_vm;
     jobject android_surface;
@@ -514,6 +518,16 @@ static int ffmpegkmp_hand_out(ffmpegkmp_video_decoder *decoder) {
     return 0;
 }
 
+/* A frame MediaCodec renders into the Surface, which keeps its own size. */
+static int ffmpegkmp_is_mediacodec(const AVFrame *frame) {
+#if defined(__ANDROID__)
+    return frame->format == AV_PIX_FMT_MEDIACODEC;
+#else
+    (void)frame;
+    return 0;
+#endif
+}
+
 static int ffmpegkmp_describe(const ffmpegkmp_video_decoder *decoder, ffmpegkmp_decoded_frame *frame) {
     const AVFrame *current = decoder->current;
     const AVFrameSideData *display_matrix =
@@ -528,8 +542,8 @@ static int ffmpegkmp_describe(const ffmpegkmp_video_decoder *decoder, ffmpegkmp_
             FFMPEGKMP_NANOSECONDS);
     frame->duration_ns = av_rescale_q(ffmpegkmp_current_end(decoder) - current->pts,
             decoder->time_base, FFMPEGKMP_NANOSECONDS);
-    frame->width = decoder->width > 0 ? decoder->width : current->width;
-    frame->height = decoder->height > 0 ? decoder->height : current->height;
+    frame->width = decoder->width > 0 && !ffmpegkmp_is_mediacodec(current) ? decoder->width : current->width;
+    frame->height = decoder->height > 0 && !ffmpegkmp_is_mediacodec(current) ? decoder->height : current->height;
     aspect = ffmpegkmp_scaled_aspect(aspect, current->width, current->height, frame->width, frame->height);
     frame->sample_aspect_ratio_num = aspect.num;
     frame->sample_aspect_ratio_den = aspect.den;
@@ -581,8 +595,7 @@ ffmpegkmp_video_decoder *ffmpegkmp_video_decoder_create(
         *error = 0;
     if (!input || !*input || timeout_us < 0 || decoder_threads < 0 ||
             output < FFMPEGKMP_VIDEO_OUTPUT_MEMORY || output > FFMPEGKMP_VIDEO_OUTPUT_SURFACE ||
-            (memory_format && (output != FFMPEGKMP_VIDEO_OUTPUT_MEMORY ||
-                    !ffmpegkmp_frame_format_is_valid(memory_format))) ||
+            (memory_format && !ffmpegkmp_frame_format_is_valid(memory_format)) ||
             width < 0 || height < 0 || (width > 0) != (height > 0) || (width > 0 && !memory_format) ||
             decoder_preference < FFPLAYKMP_DECODER_AUTO ||
             decoder_preference > FFPLAYKMP_DECODER_SOFTWARE) {
@@ -769,6 +782,39 @@ static int ffmpegkmp_open_codec(ffmpegkmp_video_decoder *decoder, ffplaykmp_deco
     return result;
 }
 
+/* Whether a codec opened for `opened` decodes `next` as it is: the same coding, size, layout and setup bytes. */
+static int ffmpegkmp_same_coding(const AVCodecParameters *opened, const AVCodecParameters *next) {
+    return opened->codec_id == next->codec_id && opened->codec_tag == next->codec_tag &&
+            opened->format == next->format && opened->width == next->width && opened->height == next->height &&
+            opened->profile == next->profile && opened->level == next->level &&
+            opened->bits_per_raw_sample == next->bits_per_raw_sample &&
+            opened->extradata_size == next->extradata_size &&
+            (opened->extradata_size == 0 || memcmp(opened->extradata, next->extradata, opened->extradata_size) == 0);
+}
+
+/*
+ * After a reopen, keeps the codec that decoded the previous input when this one is coded the same way,
+ * flushed, and closes it otherwise. Returns whether it was kept.
+ */
+static int ffmpegkmp_keep_codec(ffmpegkmp_video_decoder *decoder) {
+    const AVCodecParameters *next = decoder->input.format->streams[decoder->stream_index]->codecpar;
+    /* A software codec standing in for a hardware one that failed or had no place may not be needed any more. */
+    const int kept = decoder->codec.decoder && decoder->previous_stream &&
+            decoder->previous_fallback != FFPLAYKMP_DECODER_FALLBACK_FAILED &&
+            decoder->previous_fallback != FFPLAYKMP_DECODER_FALLBACK_BUDGET &&
+            ffmpegkmp_same_coding(decoder->previous_stream, next);
+    if (kept) {
+        avcodec_flush_buffers(decoder->codec.decoder);
+        decoder->codec.decoder->pkt_timebase = decoder->time_base;
+        decoder->codec.stream_index = decoder->stream_index;
+        decoder->info.decoder_fallback = decoder->previous_fallback;
+    } else {
+        ffplaykmp_video_codec_close(&decoder->codec);
+    }
+    avcodec_parameters_free(&decoder->previous_stream);
+    return kept;
+}
+
 int ffmpegkmp_video_decoder_start(ffmpegkmp_video_decoder *decoder) {
     int result;
     if (!decoder)
@@ -782,7 +828,7 @@ int ffmpegkmp_video_decoder_start(ffmpegkmp_video_decoder *decoder) {
     if ((result = ffmpegkmp_begin_call(decoder)) < 0)
         return result;
     result = ffmpegkmp_open_stream(decoder);
-    if (result >= 0)
+    if (result >= 0 && !ffmpegkmp_keep_codec(decoder))
         result = decoder->decoder_name
                 ? ffmpegkmp_open_named_codec(decoder)
                 : ffmpegkmp_open_codec(decoder, FFPLAYKMP_DECODER_FALLBACK_NONE);
@@ -810,6 +856,72 @@ int ffmpegkmp_video_decoder_start(ffmpegkmp_video_decoder *decoder) {
     decoder->info.active_decoder = ffplaykmp_video_codec_frame_is_hardware(&decoder->codec, decoder->current)
             ? FFPLAYKMP_DECODER_HARDWARE
             : FFPLAYKMP_DECODER_SOFTWARE_ACTIVE;
+    return 0;
+}
+
+int ffmpegkmp_video_decoder_reopen(
+        ffmpegkmp_video_decoder *decoder,
+        const char *input,
+        const ffmpegkmp_frame_format *memory_format,
+        int32_t width,
+        int32_t height,
+        int64_t timeout_us,
+        ffplaykmp_io_callback io_callback,
+        void *io_opaque) {
+    char *url;
+    int format_changed;
+    if (!decoder || !input || !*input || timeout_us < 0 || decoder->output != FFMPEGKMP_VIDEO_OUTPUT_MEMORY ||
+            (memory_format && !ffmpegkmp_frame_format_is_valid(memory_format)) ||
+            width < 0 || height < 0 || (width > 0) != (height > 0) || (width > 0 && !memory_format))
+        return FFPLAYKMP_ERROR_INVALID_ARGUMENT;
+    if (atomic_load(&decoder->aborted))
+        return FFPLAYKMP_ERROR_INVALID_STATE;
+    if (!(url = av_strdup(input)))
+        return AVERROR(ENOMEM);
+    ffmpegkmp_clear_frames(decoder);
+    ffmpegkmp_frame_unref(decoder->presented);
+    decoder->presented = NULL;
+    decoder->presented_serial = 0;
+    avcodec_parameters_free(&decoder->previous_stream);
+    if (decoder->codec.decoder && decoder->input.format && decoder->stream_index >= 0) {
+        /* Without the copy the codec is not kept: start closes it. */
+        decoder->previous_stream = avcodec_parameters_alloc();
+        if (decoder->previous_stream && avcodec_parameters_copy(decoder->previous_stream,
+                decoder->input.format->streams[decoder->stream_index]->codecpar) < 0)
+            avcodec_parameters_free(&decoder->previous_stream);
+        decoder->previous_fallback = decoder->info.decoder_fallback;
+    }
+    ffplaykmp_close_input(&decoder->input);
+    format_changed = decoder->has_memory_format != (memory_format != NULL) || width != decoder->width ||
+            height != decoder->height || (memory_format && (memory_format->layout != decoder->memory_format.layout ||
+                    memory_format->primaries != decoder->memory_format.primaries ||
+                    memory_format->transfer != decoder->memory_format.transfer ||
+                    memory_format->matrix != decoder->memory_format.matrix ||
+                    memory_format->range != decoder->memory_format.range));
+    /* The ring of the old format and size goes, as a resize lets it go; frames handed out keep their memory. */
+    if (format_changed)
+        ffmpegkmp_frame_pool_trim(decoder->pool);
+    decoder->has_memory_format = memory_format != NULL;
+    if (memory_format) {
+        decoder->memory_format = *memory_format;
+        decoder->memory_format.size = sizeof(decoder->memory_format);
+    }
+    decoder->width = width;
+    decoder->height = height;
+    av_free(decoder->url);
+    decoder->url = url;
+    decoder->host.callback = io_callback;
+    decoder->host.opaque = io_opaque;
+    decoder->timeout_us = timeout_us;
+    decoder->started = 0;
+    decoder->stream_index = -1;
+    decoder->first_pts = AV_NOPTS_VALUE;
+    decoder->seek_floor = AV_NOPTS_VALUE;
+    decoder->awaiting_seek_packet = 0;
+    decoder->resync = 0;
+    atomic_store(&decoder->interrupted, 0);
+    atomic_store(&decoder->timed_out, 0);
+    ffplaykmp_snapshot_init(&decoder->info);
     return 0;
 }
 
@@ -900,6 +1012,7 @@ void ffmpegkmp_video_decoder_destroy(ffmpegkmp_video_decoder *decoder) {
     ffmpegkmp_frame_pool_free(decoder->pool);
     av_packet_free(&decoder->packet);
     ffplaykmp_video_codec_close(&decoder->codec);
+    avcodec_parameters_free(&decoder->previous_stream);
     ffplaykmp_close_input(&decoder->input);
     ffmpegkmp_converter_free(&decoder->converter);
 #if defined(__ANDROID__)

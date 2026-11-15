@@ -93,7 +93,7 @@ public actual fun createPlatformVideoDecoder(
             "GPU buffer output needs Android 14 (API 34) or later; this is API ${Build.VERSION.SDK_INT}"
         }
         return createGpuBufferVideoDecoder(
-            source, decoderPreference, decoderThreads, timeoutMicros, decoderThreadType, frameRing, decoderName, decoderOptions,
+            source, memoryFormat, memoryWidth, memoryHeight, decoderPreference, decoderThreads, timeoutMicros, decoderThreadType, frameRing, decoderName, decoderOptions,
         )
     }
     return createJavaCppVideoDecoder(
@@ -116,6 +116,9 @@ public actual suspend fun createPlatformMediaWriter(
  */
 private fun createGpuBufferVideoDecoder(
     source: NativePlayerSource,
+    memoryFormat: NativeFrameFormat?,
+    memoryWidth: Int,
+    memoryHeight: Int,
     decoderPreference: NativePlayerDecoderPreference,
     decoderThreads: Int,
     timeoutMicros: Long,
@@ -127,7 +130,7 @@ private fun createGpuBufferVideoDecoder(
     val images = GpuBufferImages(frameRing)
     val decoder = try {
         createJavaCppVideoDecoder(
-            source, NativeVideoDecoderOutput.GPU_BUFFERS, null, 0, 0, decoderPreference, decoderThreads, timeoutMicros,
+            source, NativeVideoDecoderOutput.GPU_BUFFERS, memoryFormat, memoryWidth, memoryHeight, decoderPreference, decoderThreads, timeoutMicros,
             decoderThreadType, frameRing, decoderName, decoderOptions,
         ) { decoder -> attachDecoderSurface(images.surface, decoder) }
     } catch (failure: Throwable) {
