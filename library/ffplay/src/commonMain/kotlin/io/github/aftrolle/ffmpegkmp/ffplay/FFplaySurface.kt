@@ -352,6 +352,11 @@ internal class ComposeCanvasOutput(
                         drawn to refresh
                     }
                 }
+                // The refresh takes the image's lock and may wait for a buffer, so it stays off the drawing thread.
+                // TODO: each player allocates about ten short-lived objects here per display frame (the Deferred, the
+                //  pair, the lambdas and withContext's coroutine, some 500 bytes) and hops to a worker and back. With
+                //  many players on a fast display, a reusable Runnable per output, posted through the main looper to
+                //  one shared refresh thread without the coroutine waiting for it, would allocate nothing and hop once.
                 offFrame?.let { (drawn, refresh) ->
                     withContext(Dispatchers.Default) {
                         drawn.await()
