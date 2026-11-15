@@ -138,6 +138,16 @@ int ffplaykmp_find_video_stream(AVFormatContext *format, const AVCodec **codec);
 int ffplaykmp_decoder_thread_count(int threads);
 
 /*
+ * How many hardware decoder places have been given back, and limits raised,
+ * since the process started: a change says hardware may open where it found
+ * the budget full or busy before. Wraps.
+ */
+uint32_t ffplaykmp_decoder_budget_freed(void);
+
+/* Whether the hardware decoder budget has a place free now. */
+int ffplaykmp_decoder_budget_has_room(void);
+
+/*
  * Opens `stream_index`'s decoder. When `hardware` is requested but this host
  * has no hardware decoder for the codec, the software decoder is opened and
  * codec->hardware stays 0; `require_hardware` turns that into

@@ -210,6 +210,29 @@ class FFplayProductionJvmTest {
         }
     }
 
+    /** A playing player that found the budget full moves to hardware once a place is given back, and plays on from where it was. */
+    @Test
+    fun aPlayingBudgetFallbackMovesToHardwareWhenAPlaceIsGivenBack() = withBudget(extra = 1) {
+        val holder = budgetPlayer()
+        val late = budgetPlayer()
+        try {
+            holder.prepare(fixtureSource("hardware-h264.mp4"))
+            late.prepare(fixtureSource("hardware-h264.mp4"))
+            assertEquals(DecoderFallbackReason.BUDGET, late.snapshot.value.output?.decoderFallback)
+            late.play()
+            withTimeout(3_000) { late.snapshot.first { it.position >= 100.milliseconds } }
+            val before = late.snapshot.value.position
+
+            holder.close()
+            val moved = withTimeout(2_000) { late.snapshot.first { it.output?.decoder == DecoderKind.HARDWARE } }
+            assertNull(moved.output?.decoderFallback)
+            withTimeout(2_000) { late.snapshot.first { it.position > before } }
+        } finally {
+            holder.close()
+            late.close()
+        }
+    }
+
     /** Players and video decoders take places in one budget, and a closed decoder's place goes to the next player. */
     @Test
     fun playersAndVideoDecodersShareOneBudget() = withBudget(extra = 2) {

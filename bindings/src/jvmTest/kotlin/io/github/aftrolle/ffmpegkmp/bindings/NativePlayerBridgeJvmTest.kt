@@ -50,6 +50,39 @@ class NativePlayerBridgeJvmTest {
     }
 
     @Test
+    fun moreThanTenOpenPlayersEachHearTheirOwnNativeSide() {
+        // JavaCPP gives a callback class ten native functions; every player past them must still be called back.
+        val players = List(12) {
+            val updates = CopyOnWriteArrayList<NativePlayerSnapshot>()
+            val frames = CopyOnWriteArrayList<NativeVideoFrame>()
+            Triple(
+                refreshedPlayerBridge(
+                    NativePlayerConfiguration(NativePlayerDecoderPreference.SOFTWARE),
+                    update = updates::add,
+                    frame = frames::add,
+                ),
+                updates,
+                frames,
+            )
+        }
+        try {
+            players.forEach { (bridge) ->
+                assertEquals(0, bridge.setOutput(NativePlayerOutputCapabilities()))
+                assertEquals(0, bridge.prepare(clearVideoSource()))
+            }
+            players.forEachIndexed { index, (_, updates, frames) ->
+                assertEquals(NativePlayerState.READY, updates.lastOrNull()?.state, "player $index")
+                assertEquals(1, frames.size, "player $index")
+            }
+        } finally {
+            players.forEach { (bridge, _, frames) ->
+                frames.forEach { it.frame.close() }
+                bridge.close()
+            }
+        }
+    }
+
+    @Test
     fun compiledPlayerDecodesMountedVideoIntoARealPreviewFrame() {
         val frames = mutableListOf<NativeVideoFrame>()
         refreshedPlayerBridge(

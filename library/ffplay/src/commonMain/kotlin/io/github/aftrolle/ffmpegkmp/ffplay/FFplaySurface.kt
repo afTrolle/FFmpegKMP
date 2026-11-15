@@ -8,7 +8,6 @@ package io.github.aftrolle.ffmpegkmp.ffplay
 
 import androidx.compose.foundation.Canvas
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.RememberObserver
 import androidx.compose.runtime.remember
@@ -31,6 +30,8 @@ import kotlin.time.Duration.Companion.nanoseconds
 import kotlinx.coroutines.DelicateCoroutinesApi
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.GlobalScope
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.combine
@@ -122,17 +123,20 @@ internal fun ComposeCanvasFFplaySurface(
 ) {
     val output = remember(player) { ComposeCanvasOutput(player, playerClockNanos, hardwareFrames?.invoke()) }
     output.targetSize = targetSize
-    DisposableEffect(player, output) {
-        player.attachOutput(output)
-        onDispose {
-            player.detachOutput(output)
+    LaunchedEffect(player, output) {
+        try {
+            launch { output.redrawWhileStill() }
+            launch { output.driveRefresh() }
+            // A stream prepared already is negotiated for now, rather than attached twice once its video is known.
+            output.negotiatesFor(player.snapshot.value.video)
+            player.attachOutputOnWorker(output)
+            output.negotiateWithStream()
+            awaitCancellation()
+        } finally {
+            // Releasing a hardware output waits for a prepare running on the player.
+            withContext(NonCancellable + blockingDispatcher) { player.detachOutput(output) }
             output.close()
         }
-    }
-    LaunchedEffect(output) {
-        launch { output.redrawWhileStill() }
-        launch { output.negotiateWithStream() }
-        output.driveRefresh()
     }
     Canvas(modifier) {
         drawRect(backgroundColor)
@@ -261,7 +265,7 @@ internal class ComposeCanvasOutput(
     suspend fun negotiateWithStream() {
         if (hardware == null) return
         player.snapshot.map { it.video }.distinctUntilChanged().collect { video ->
-            if (negotiatesFor(video)) player.attachOutput(this)
+            if (negotiatesFor(video)) player.attachOutputOnWorker(this)
         }
     }
 

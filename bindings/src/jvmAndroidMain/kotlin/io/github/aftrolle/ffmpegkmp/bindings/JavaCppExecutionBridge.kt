@@ -4,14 +4,11 @@
 package io.github.aftrolle.ffmpegkmp.bindings
 
 import io.github.aftrolle.ffmpegkmp.bindings.generated.bridge.ffmpegkmp_context
-import io.github.aftrolle.ffmpegkmp.bindings.generated.bridge.ffmpegkmp_event_callback
-import io.github.aftrolle.ffmpegkmp.bindings.generated.bridge.ffplaykmp_io_callback
 import io.github.aftrolle.ffmpegkmp.bindings.generated.bridge.global.bridge
 import java.io.File
 import kotlinx.coroutines.Dispatchers
 import org.bytedeco.javacpp.BytePointer
 import org.bytedeco.javacpp.Loader
-import org.bytedeco.javacpp.Pointer
 import org.bytedeco.javacpp.PointerPointer
 
 @InternalFFmpegKmpApi
@@ -22,17 +19,16 @@ private class JavaCppCommandEngine : CommandEngineCalls {
     @Volatile
     private var eventConsumer: ((NativeExecutionEvent) -> Unit)? = null
 
-    private val callback: ffmpegkmp_event_callback
-    private val ioCallback: ffplaykmp_io_callback
+    private val callbacks: JavaCppCallbacks.Registration
     private val context: ffmpegkmp_context
     @Volatile
     private var mounts = MountTable.Empty
 
     init {
         JavaCppBridgeLoader.load()
-        callback = object : ffmpegkmp_event_callback() {
-            override fun call(opaque: Pointer?, kind: Int, level: Int, data: BytePointer?, size: Long) {
-                if (data == null || size <= 0L || size > Int.MAX_VALUE) return
+        callbacks = JavaCppCallbacks.register(
+            event = event@{ kind, level, data, size ->
+                if (size <= 0L || size > Int.MAX_VALUE) return@event
                 val bytes = ByteArray(size.toInt())
                 data.get(bytes)
                 val text = bytes.decodeToString()
@@ -44,12 +40,15 @@ private class JavaCppCommandEngine : CommandEngineCalls {
                         else -> NativeExecutionEvent.Output(NativeExecutionEvent.Stream.STDERR, text)
                     },
                 )
+            },
+            mounts = { mounts },
+        )
+        context = bridge.ffmpegkmp_context_create(JavaCppCallbacks.event, callbacks.opaque)
+            ?: run {
+                callbacks.close()
+                throw NativeBridgeUnavailableException("FFmpegKMP JavaCPP context allocation failed")
             }
-        }
-        ioCallback = mountedIoCallback { mounts }
-        context = bridge.ffmpegkmp_context_create(callback, null)
-            ?: throw NativeBridgeUnavailableException("FFmpegKMP JavaCPP context allocation failed")
-        bridge.ffmpegkmp_context_set_io_callback(context, ioCallback)
+        bridge.ffmpegkmp_context_set_io_callback(context, JavaCppCallbacks.io)
         // Android app processes have an unwritable cwd and no TMPDIR, which breaks the
         // bridge's ffprobe stdout redirect; java.io.tmpdir is always app-writable.
         System.getProperty("java.io.tmpdir")
@@ -88,8 +87,7 @@ private class JavaCppCommandEngine : CommandEngineCalls {
 
     override fun release() {
         bridge.ffmpegkmp_context_destroy(context)
-        ioCallback.close()
-        callback.close()
+        callbacks.close()
     }
 }
 
@@ -151,18 +149,3 @@ internal fun MountTable.dispatch(resourceId: Long, operation: Int, offset: Long,
         copyOut = { bytes, count -> checkNotNull(data).put(bytes, 0, count) },
         copyIn = { bytes, count -> checkNotNull(data).get(bytes, 0, count) },
     )
-
-/**
- * A callback serving the table [mounts] returns at each call. Native code calls it until the engine
- * holding it is freed; close it after that.
- */
-internal fun mountedIoCallback(mounts: () -> MountTable): ffplaykmp_io_callback = object : ffplaykmp_io_callback() {
-    override fun call(
-        opaque: Pointer?,
-        resourceId: Long,
-        operation: Int,
-        offset: Long,
-        data: BytePointer?,
-        size: Long,
-    ): Long = mounts().dispatch(resourceId, operation, offset, data, size)
-}

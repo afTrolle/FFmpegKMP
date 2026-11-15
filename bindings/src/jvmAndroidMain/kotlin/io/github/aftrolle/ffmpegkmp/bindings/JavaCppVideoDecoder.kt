@@ -6,7 +6,6 @@ package io.github.aftrolle.ffmpegkmp.bindings
 import io.github.aftrolle.ffmpegkmp.bindings.generated.bridge.ffmpegkmp_decoded_frame
 import io.github.aftrolle.ffmpegkmp.bindings.generated.bridge.ffmpegkmp_frame_format
 import io.github.aftrolle.ffmpegkmp.bindings.generated.bridge.ffmpegkmp_video_decoder
-import io.github.aftrolle.ffmpegkmp.bindings.generated.bridge.ffplaykmp_io_callback
 import io.github.aftrolle.ffmpegkmp.bindings.generated.bridge.ffplaykmp_snapshot
 import io.github.aftrolle.ffmpegkmp.bindings.generated.bridge.global.bridge
 import org.bytedeco.javacpp.BytePointer
@@ -29,7 +28,7 @@ internal fun createJavaCppVideoDecoder(
 ): NativeVideoDecoder {
     JavaCppBridgeLoader.load()
     val mounts = MountTable(source.mounts, replayableSources = true)
-    val ioCallback = mountedIoCallback { mounts }
+    val callbacks = JavaCppCallbacks.register(mounts = { mounts })
     val error = IntArray(1)
     fun create(format: ffmpegkmp_frame_format?) = bridge.ffmpegkmp_video_decoder_create(
         source.protocolInput(),
@@ -40,16 +39,16 @@ internal fun createJavaCppVideoDecoder(
         decoderPreference.ordinal,
         decoderThreads,
         timeoutMicros,
-        ioCallback,
-        null,
+        JavaCppCallbacks.io,
+        callbacks.opaque,
         error,
     )?.takeUnless(ffmpegkmp_video_decoder::isNull)
     val decoder = if (memoryFormat != null) memoryFormat.withNative(::create) else create(null)
     if (decoder == null) {
-        ioCallback.close()
+        callbacks.close()
         throw NativeVideoDecoderException("Could not create a decoder for '${source.input}' (error ${error[0]})", error[0])
     }
-    val engine = JavaCppVideoDecoderEngine(decoder, ioCallback)
+    val engine = JavaCppVideoDecoderEngine(decoder, callbacks)
     if (frameRing != DEFAULT_FRAME_RING) {
         val set = bridge.ffmpegkmp_video_decoder_set_frame_ring(decoder, frameRing)
         if (set < 0) {
@@ -95,8 +94,7 @@ internal fun createJavaCppVideoDecoder(
 
 private class JavaCppVideoDecoderEngine(
     private val decoder: ffmpegkmp_video_decoder,
-    /** Kept reachable for the decoder's lifetime: native code calls back into it. */
-    private val ioCallback: ffplaykmp_io_callback,
+    private val callbacks: JavaCppCallbacks.Registration,
 ) : VideoDecoderEngineCalls {
     private val frame = ffmpegkmp_decoded_frame().also(bridge::ffmpegkmp_decoded_frame_init)
 
@@ -149,6 +147,6 @@ private class JavaCppVideoDecoderEngine(
     override fun release() {
         bridge.ffmpegkmp_video_decoder_destroy(decoder)
         frame.close()
-        ioCallback.close()
+        callbacks.close()
     }
 }

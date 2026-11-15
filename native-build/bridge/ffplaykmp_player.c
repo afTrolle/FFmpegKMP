@@ -63,6 +63,15 @@ typedef struct ffplaykmp_session {
     int budget_fallback;
 #endif
     /*
+     * AUTO: the codec decodes in software only because hardware was busy: the
+     * budget had no place, or a hardware decoder failed while others were
+     * open, which may have taken what it needed. Once the budget has given a
+     * place back since `hardware_retry_freed`, a play run reopens the codec in
+     * hardware where the clock is (ffplaykmp_hardware_retry_due).
+     */
+    int hardware_retry;
+    uint32_t hardware_retry_freed;
+    /*
      * The decoder goes on from the last frame it gave out and the demuxer from
      * the last packet the decoder took, so a run forward needs no seek: the
      * frames after the one on screen are the queued ones, then `next`, then the
@@ -1208,6 +1217,8 @@ static int ffplaykmp_present_shown_frame(ffplaykmp_player *player, int64_t start
 
 /* What ffplaykmp_present_ready_frames returns when the session is to skip forward. */
 #define FFPLAYKMP_CATCH_UP 2
+/* A play run's software codec gives way to hardware (ffplaykmp_hardware_retry_due). */
+#define FFPLAYKMP_RETRY_HARDWARE FFERRTAG('R', 'T', 'H', 'W')
 
 /*
  * The master clock's position now: the host's audio clock, else the external
@@ -1444,6 +1455,82 @@ static void ffplaykmp_session_close_codec(ffplaykmp_player *player) {
     session->codec_open = 0;
 }
 
+/* A hardware decoder may open again: on a new Surface, or where the budget has made room since it was busy. */
+static void ffplaykmp_session_forget_fallback(ffplaykmp_session *session) {
+    session->hardware_failed = 0;
+#if defined(__ANDROID__)
+    session->budget_fallback = 0;
+#endif
+    session->hardware_retry = 0;
+}
+
+/*
+ * Records whether the codec a hardware attempt opened may try hardware again:
+ * after a full budget, counted from `freed`, the budget's count before the
+ * attempt; or after a failure while other hardware decoders were open,
+ * counted from now, past the place the failed one gave back.
+ */
+static void ffplaykmp_session_note_fallback(
+        ffplaykmp_session *session,
+        ffplaykmp_decoder_fallback fallback,
+        uint32_t freed) {
+    if (fallback == FFPLAYKMP_DECODER_FALLBACK_BUDGET) {
+        session->hardware_retry = 1;
+        session->hardware_retry_freed = freed;
+    } else if (fallback == FFPLAYKMP_DECODER_FALLBACK_FAILED) {
+        session->hardware_retry = ffplaykmp_decoder_budget_in_use() > 0;
+        session->hardware_retry_freed = ffplaykmp_decoder_budget_freed();
+    } else {
+        session->hardware_retry = 0;
+    }
+}
+
+/*
+ * Whether the session's software codec is to give way to hardware now: it
+ * fell back only because hardware was busy, and the budget has given a place
+ * back since and has one free. On Android only into the output's own
+ * ImageReader: a Surface the canvas drew software frames on takes no
+ * MediaCodec.
+ */
+static int ffplaykmp_hardware_retry_due(ffplaykmp_player *player) {
+    const ffplaykmp_session *session = &player->session;
+    if (!session->hardware_retry || (session->codec_open && session->codec.hardware) ||
+            ffplaykmp_decoder_budget_freed() == session->hardware_retry_freed)
+        return 0;
+#if defined(__ANDROID__)
+    {
+        int own_surface;
+        pthread_mutex_lock(&player->mutex);
+        own_surface = (player->snapshot.output_flags & FFPLAYKMP_OUTPUT_PREPARE_HARDWARE_FRAMES) != 0;
+        pthread_mutex_unlock(&player->mutex);
+        if (!own_surface)
+            return 0;
+    }
+#endif
+    return ffplaykmp_decoder_budget_has_room();
+}
+
+/*
+ * Gives up a play run's software codec for hardware: closes it, with the
+ * frames it queued, which the new decoder goes past, and returns where the
+ * run goes on from, the master clock's position, or the frame on screen's.
+ */
+static int64_t ffplaykmp_session_retry_hardware(ffplaykmp_player *player) {
+    ffplaykmp_session *session = &player->session;
+    int64_t position_us;
+    ffplaykmp_session_forget_fallback(session);
+    ffplaykmp_queue_release_all(player, 1);
+    ffplaykmp_session_close_codec(player);
+    session->in_sync = 0;
+    session->chain++;
+    if (ffplaykmp_master_now(player, &position_us))
+        return position_us;
+    pthread_mutex_lock(&player->mutex);
+    position_us = player->snapshot.position_us;
+    pthread_mutex_unlock(&player->mutex);
+    return position_us;
+}
+
 /*
  * Closes the session's input, with session_mutex held; the next run opens it
  * again. A codec still open stays for the session thread to close: it no
@@ -1538,7 +1625,8 @@ static void ffplaykmp_set_error_message(ffplaykmp_player *player, const char *me
  * source. Under AUTO a hardware decoder that will not open gives way to
  * software, for the source's later runs too, and one the hardware decoder
  * budget has no place for gives way to software for this codec only (on
- * Android, for the Surface). A configured decoder_name opens that decoder
+ * Android, for the Surface); either tries hardware again once the budget has
+ * given a place back, when hardware was busy (ffplaykmp_hardware_retry_due). A configured decoder_name opens that decoder
  * alone, its reason in the snapshot when it does not. Publishes why a wanted
  * hardware decoder is not the one open, and what a preview learns from a new
  * codec.
@@ -1596,8 +1684,11 @@ static int ffplaykmp_session_open_codec(
             return result;
         }
     } else {
-        ffplaykmp_decoder_fallback earlier = session->hardware_failed ? FFPLAYKMP_DECODER_FALLBACK_FAILED
-                : FFPLAYKMP_DECODER_FALLBACK_NONE;
+        const uint32_t freed = ffplaykmp_decoder_budget_freed();
+        ffplaykmp_decoder_fallback earlier;
+        if (hardware_wanted && ffplaykmp_hardware_retry_due(player))
+            ffplaykmp_session_forget_fallback(session);
+        earlier = session->hardware_failed ? FFPLAYKMP_DECODER_FALLBACK_FAILED : FFPLAYKMP_DECODER_FALLBACK_NONE;
 #if defined(__ANDROID__)
         if (!session->hardware_failed && session->budget_fallback)
             earlier = FFPLAYKMP_DECODER_FALLBACK_BUDGET;
@@ -1618,6 +1709,9 @@ static int ffplaykmp_session_open_codec(
         if (fallback == FFPLAYKMP_DECODER_FALLBACK_BUDGET)
             session->budget_fallback = 1;
 #endif
+        /* An earlier reason opened software without asking for hardware: what it may retry stands. */
+        if (earlier == FFPLAYKMP_DECODER_FALLBACK_NONE)
+            ffplaykmp_session_note_fallback(session, fallback, freed);
     }
     session->codec_open = 1;
     session->codec_hardware_wanted = hardware_wanted;
@@ -1806,6 +1900,10 @@ static int ffplaykmp_session_decode(
         }
         if (result != 0 || session->draining || ffplaykmp_is_aborted(player))
             break;
+        if (continuous && ffplaykmp_hardware_retry_due(player)) {
+            result = FFPLAYKMP_RETRY_HARDWARE;
+            break;
+        }
         if (!session->packet_pending) {
             if ((result = av_read_frame(session->input.format, packet)) < 0) {
                 /* The read may have lost its packet; an abort leaves the next run to seek. */
@@ -1872,6 +1970,8 @@ static int ffplaykmp_session_decode(
             result = ffplaykmp_present_ready_frames(
                     player, start_position_us, continuous, require_hardware, 0, decoded_frames);
     }
+    if (result == FFPLAYKMP_RETRY_HARDWARE)
+        return result;
     if (result > 0)
         return 0;  /* The preview frame was presented, or was on screen already. */
     if (ffplaykmp_is_aborted(player))
@@ -1947,6 +2047,10 @@ static int ffplaykmp_run_job(
             result = ffplaykmp_session_decode(player, start_position_us, continuous,
                     preference == FFPLAYKMP_DECODER_REQUIRE_HARDWARE, continuing, &decoded_frames);
         }
+        if (result == FFPLAYKMP_RETRY_HARDWARE) {
+            start_position_us = ffplaykmp_session_retry_hardware(player);
+            continue;
+        }
         if (result >= 0 || ffplaykmp_is_aborted(player))
             break;
         ffplaykmp_session_close_codec(player);
@@ -1965,6 +2069,7 @@ static int ffplaykmp_run_job(
         /* The software retry keeps the input; it seeks back to the start position. A hardware decoder
          * that stalled before its first frame is a failed one too; its reason goes with it. */
         session->hardware_failed = 1;
+        ffplaykmp_session_note_fallback(session, FFPLAYKMP_DECODER_FALLBACK_FAILED, 0);
         ffplaykmp_set_error_message(player, NULL);
     }
     /* Opening the codec forgot the decoder kind until a frame decided it; a run a pause or
@@ -2023,6 +2128,7 @@ static int ffplaykmp_inspect_source(ffplaykmp_player *player, const char *url) {
     pthread_mutex_unlock(&player->mutex);
     ffplaykmp_session_close_input(session);
     session->hardware_failed = 0;
+    session->hardware_retry = 0;
     result = ffplaykmp_session_open_input(player, url);
     if (result >= 0) {
         const AVFormatContext *format = session->input.format;
@@ -2625,8 +2731,7 @@ int ffplaykmp_player_set_android_surface(
     /* A hardware decoder that failed on another Surface, or found the budget full, may open on this one. */
     if (retained) {
         pthread_mutex_lock(&player->session_mutex);
-        player->session.hardware_failed = 0;
-        player->session.budget_fallback = 0;
+        ffplaykmp_session_forget_fallback(&player->session);
         pthread_mutex_unlock(&player->session_mutex);
     }
     return 0;

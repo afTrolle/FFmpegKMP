@@ -508,7 +508,9 @@ int ffplaykmp_decoder_thread_count(int threads) {
 /*
  * The hardware decoder budget: how many hardware decoders may be open at
  * once, 0 for any number, and how many are. Places are taken and given back
- * under the mutex, without waiting.
+ * under the mutex, without waiting. `freed` counts the places given back and
+ * the limits raised, for a decoder kept to software to see that hardware may
+ * open now.
  */
 #if defined(__EMSCRIPTEN__)
 #define FFPLAYKMP_DEFAULT_HARDWARE_DECODERS 0
@@ -523,11 +525,14 @@ int ffplaykmp_decoder_thread_count(int threads) {
 static pthread_mutex_t ffplaykmp_budget_mutex = PTHREAD_MUTEX_INITIALIZER;
 static int32_t ffplaykmp_budget_limit = FFPLAYKMP_DEFAULT_HARDWARE_DECODERS;
 static int32_t ffplaykmp_budget_in_use;
+static uint32_t ffplaykmp_budget_freed;
 
 int ffplaykmp_decoder_budget_set(int32_t hardware_decoders) {
     if (hardware_decoders < 0)
         return FFPLAYKMP_ERROR_INVALID_ARGUMENT;
     pthread_mutex_lock(&ffplaykmp_budget_mutex);
+    if (hardware_decoders == 0 || (ffplaykmp_budget_limit > 0 && hardware_decoders > ffplaykmp_budget_limit))
+        ffplaykmp_budget_freed++;
     ffplaykmp_budget_limit = hardware_decoders;
     pthread_mutex_unlock(&ffplaykmp_budget_mutex);
     return 0;
@@ -547,6 +552,22 @@ int32_t ffplaykmp_decoder_budget_in_use(void) {
     in_use = ffplaykmp_budget_in_use;
     pthread_mutex_unlock(&ffplaykmp_budget_mutex);
     return in_use;
+}
+
+uint32_t ffplaykmp_decoder_budget_freed(void) {
+    uint32_t freed;
+    pthread_mutex_lock(&ffplaykmp_budget_mutex);
+    freed = ffplaykmp_budget_freed;
+    pthread_mutex_unlock(&ffplaykmp_budget_mutex);
+    return freed;
+}
+
+int ffplaykmp_decoder_budget_has_room(void) {
+    int room;
+    pthread_mutex_lock(&ffplaykmp_budget_mutex);
+    room = ffplaykmp_budget_limit == 0 || ffplaykmp_budget_in_use < ffplaykmp_budget_limit;
+    pthread_mutex_unlock(&ffplaykmp_budget_mutex);
+    return room;
 }
 
 #if defined(__APPLE__)
@@ -611,6 +632,7 @@ static void ffplaykmp_budget_return(ffplaykmp_video_codec *codec) {
     codec->leased = 0;
     pthread_mutex_lock(&ffplaykmp_budget_mutex);
     ffplaykmp_budget_in_use--;
+    ffplaykmp_budget_freed++;
     pthread_mutex_unlock(&ffplaykmp_budget_mutex);
 }
 

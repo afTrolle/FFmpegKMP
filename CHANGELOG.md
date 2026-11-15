@@ -30,6 +30,26 @@ may break the public API; every break is listed here with a migration note.
 
 ### Fixed
 
+- `FFplaySurface` attached its output on the main thread, and the native attach opens the decoder
+  and decodes the frame it shows before it returns, so opening a screen of videos held the UI for up
+  to two seconds. Android's surfaces and the Compose Canvas surface now attach and detach on
+  `Dispatchers.IO`, and commands such as `play`, `seekTo` and `follow` given meanwhile are queued as
+  during a prepare instead of waiting for the attach. A Compose Canvas surface on a stream prepared
+  already negotiates hardware frames before its first attach instead of attaching a second time once
+  the stream's video is known. A native prepare runs on `Dispatchers.IO` too, rather than
+  `Dispatchers.Default`.
+- On Android and the JVM, an eleventh player, decoder, writer or command open at once never heard from
+  its native side: JavaCPP gives each callback class ten native functions and hands later ones a null
+  function without a word. Such an `FFplayPlayer` stayed `PREPARING` with nothing shown however long
+  it was open, and one reading a mounted source failed to prepare. Each callback type now has one
+  native function for the process, which finds its receiver through the native `opaque`, so any
+  number can be open.
+- A playing `FFplayPlayer` that decoded in software because the hardware decoder budget was full
+  stayed in software for its life, however many places were given back. It now moves to hardware
+  once the budget gives a place back or its limit is raised, and plays on where its clock is. So does
+  one whose hardware decoder failed while others were open (on a Galaxy S25 a second 8K HEVC
+  MediaCodec decoder fails while one is open). On Android only a Canvas output's player moves: a
+  Surface the canvas drew software frames on takes no MediaCodec.
 - 10-bit YUV converted into packed 10-bit RGB (`RGBA_1010102`) landed 6 to 9 codes low on a flat
   grey: swscale wrote it through its 8-bit tables. The converter now interpolates chroma fully for
   that output (`SWS_FULL_CHR_H_INT`), which also corrects 10-bit export canvases. Software and GPU

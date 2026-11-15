@@ -57,13 +57,13 @@ public class FFplayPlayer internal constructor(
     private val operationLock = FFplayOperationLock()
 
     /**
-     * Held for a blocking native prepare, which may also present its preview frame on the attached
-     * output. Only close and releasing a native surface wait for it; other commands are queued.
-     * Always taken before [operationLock].
+     * Held for a blocking native prepare or attach, which may also present its preview frame on the
+     * attached output. Only close and releasing a native surface wait for it; other commands are
+     * queued. Always taken before [operationLock].
      */
     private val prepareLock = FFplayOperationLock()
 
-    /** Guarded by [operationLock]. */
+    /** Whether a native prepare or attach holds [prepareLock], so commands are queued; guarded by [operationLock]. */
     private var preparing = false
 
     /** The clock the player follows; guarded by [operationLock]. */
@@ -251,6 +251,25 @@ public class FFplayPlayer internal constructor(
     internal fun attachOutput(output: FFplayVideoOutput): Unit =
         command(needsSource = false) { engine.attachOutput(output) }
 
+    /**
+     * [attachOutput] on [blockingDispatcher], with commands queued meanwhile as during a prepare: a
+     * native attach opens the decoder and decodes the frame it shows before it returns, which would
+     * otherwise hold the UI thread, and any thread waiting on the player, for each player it attaches.
+     */
+    internal suspend fun attachOutputOnWorker(output: FFplayVideoOutput): Unit = withContext(blockingDispatcher) {
+        prepareLock.withLock {
+            operationLock.withLock {
+                checkOpen()
+                preparing = true
+            }
+            try {
+                engine.attachOutput(output)
+            } finally {
+                operationLock.withLock { finishPreparing(prepared = true) }
+            }
+        }
+    }
+
     internal fun detachOutput(output: FFplayVideoOutput) {
         if (output.platformTarget == null) {
             // Frames reach a software output through the engine, which drops them once detached.
@@ -301,7 +320,7 @@ public class FFplayPlayer internal constructor(
     }
 
     private suspend fun prepareOnWorker(source: MediaSource, protection: FFplayContentProtection): Unit = coroutineScope {
-        val preparation = async(Dispatchers.Default) {
+        val preparation = async(blockingDispatcher) {
             prepareLock.withLock {
                 operationLock.withLock {
                     checkOpen()
@@ -338,7 +357,7 @@ public class FFplayPlayer internal constructor(
         if (preparing) pending += PendingCommand(needsSource, action) else action()
     }
 
-    /** Applies what was queued during the prepare; after a failed one, only output changes and stop. */
+    /** Applies what was queued during the prepare or attach; after a failed prepare, only output changes and stop. */
     private fun finishPreparing(prepared: Boolean) {
         preparing = false
         val queued = pending.toList()

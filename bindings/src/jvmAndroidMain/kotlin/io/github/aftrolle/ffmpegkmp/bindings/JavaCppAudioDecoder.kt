@@ -5,7 +5,6 @@ package io.github.aftrolle.ffmpegkmp.bindings
 
 import io.github.aftrolle.ffmpegkmp.bindings.generated.bridge.ffmpegkmp_player
 import io.github.aftrolle.ffmpegkmp.bindings.generated.bridge.ffplaykmp_input_hint
-import io.github.aftrolle.ffmpegkmp.bindings.generated.bridge.ffplaykmp_io_callback
 import io.github.aftrolle.ffmpegkmp.bindings.generated.bridge.global.bridge
 import org.bytedeco.javacpp.BytePointer
 import org.bytedeco.javacpp.FloatPointer
@@ -19,26 +18,25 @@ public actual fun openPlatformAudioDecoder(
 ): NativeAudioDecoder {
     JavaCppBridgeLoader.load()
     val mounts = MountTable(source.mounts, replayableSources = true)
-    val ioCallback = mountedIoCallback { mounts }
+    val callbacks = JavaCppCallbacks.register(mounts = { mounts })
     val error = IntArray(1)
     val nativeHint = hint?.toNative()
     val player = try {
-        bridge.ffmpegkmp_player_open_hinted(source.protocolInput(), ioCallback, null, sampleRate, channels, nativeHint, error)
+        bridge.ffmpegkmp_player_open_hinted(source.protocolInput(), JavaCppCallbacks.io, callbacks.opaque, sampleRate, channels, nativeHint, error)
             ?.takeUnless(ffmpegkmp_player::isNull)
     } finally {
         nativeHint?.close()
     }
     if (player == null) {
-        ioCallback.close()
+        callbacks.close()
         throw NativeAudioDecoderException("Could not open audio input '${source.input}' (error ${error[0]})", error[0])
     }
-    return GuardedAudioDecoder(JavaCppAudioEngine(player, ioCallback, channels), sampleRate, channels)
+    return GuardedAudioDecoder(JavaCppAudioEngine(player, callbacks, channels), sampleRate, channels)
 }
 
 private class JavaCppAudioEngine(
     private val player: ffmpegkmp_player,
-    /** Kept reachable for the player's lifetime: native code calls back into it. */
-    private val ioCallback: ffplaykmp_io_callback,
+    private val callbacks: JavaCppCallbacks.Registration,
     private val channels: Int,
 ) : AudioEngineCalls {
     /** Reused across reads so steady-state decoding allocates nothing off-heap. */
@@ -77,7 +75,7 @@ private class JavaCppAudioEngine(
     override fun release() {
         bridge.ffmpegkmp_player_close(player)
         pcm.close()
-        ioCallback.close()
+        callbacks.close()
     }
 }
 
